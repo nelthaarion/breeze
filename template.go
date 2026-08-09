@@ -1044,6 +1044,39 @@ func breezeRuntime() string {
     _routeCache.clear();
   }
 
+  // Cache policy. A fragment is stored only when the server has not marked
+  // it as private or uncacheable. This follows HTTP semantics rather than
+  // guessing: Cache-Control: no-store | no-cache | private means the body
+  // is tied to one user or one moment, so replaying it later — after a
+  // logout, or under a different session — would show one user content
+  // rendered for another. Responses that say nothing about caching keep
+  // the previous behaviour and are cached, so public routes are unaffected.
+  function _isCacheable(res) {
+    var cc = (res.headers.get('Cache-Control') || '').toLowerCase();
+    if (cc === '') return true;
+    return cc.indexOf('no-store') === -1 &&
+           cc.indexOf('no-cache') === -1 &&
+           cc.indexOf('private')  === -1;
+  }
+
+  // Authentication epoch. A server may stamp responses with
+  //   X-Breeze-Auth: <opaque identity>
+  // carrying a user id, session id, or hash of either. Any change in that
+  // value is an authentication state transition — login, logout, or a
+  // switch of user — and every fragment cached for the previous identity
+  // is dropped at once, because those fragments were rendered for someone
+  // who is no longer the one looking at the screen. Responses that omit
+  // the header leave the epoch untouched.
+  var _authEpoch = null;
+
+  function _syncAuthEpoch(res) {
+    var id = res.headers.get('X-Breeze-Auth');
+    if (id === null) return;
+    if (_authEpoch !== null && _authEpoch !== id) _invalidateCache();
+    _authEpoch = id;
+  }
+
+
   // Monotonic sequence guard: if a newer navigation starts while an older
   // one is still in flight, the older response is discarded on arrival so
   // out-of-order fetches can never clobber newer content (duplicate/stale
@@ -1087,6 +1120,11 @@ func breezeRuntime() string {
 
         if (!res.ok) { window.location.href = url; return; }
 
+        // An identity change invalidates everything cached for whoever
+        // was signed in before, and must be applied before this response
+        // is itself considered for caching.
+        _syncAuthEpoch(res);
+
         // A response in a different language than the page was rendered
         // with means the locale changed (e.g. a ?lang= switch). Fall back
         // to a full page load so the embedded i18n dictionary, template
@@ -1098,8 +1136,9 @@ func breezeRuntime() string {
         }
 
         html = await res.text();
-        _cacheRoute(key, html);
+        if (_isCacheable(res)) _cacheRoute(key, html);
       }
+
 
       // A newer navigation started while this fetch was in flight — drop
       // this stale response rather than render/push it out of order.
@@ -1138,8 +1177,10 @@ func breezeRuntime() string {
   }
 
   document.addEventListener('click', function (e) {
+    if (!e.target || e.target.nodeType !== 1) return;
     var a = e.target.closest('a[href]');
     if (!a) return;
+
     var href = a.getAttribute('href');
     if (!href) return;
     if (
@@ -1226,7 +1267,7 @@ func breezeRuntime() string {
       var params = new URLSearchParams();
       data.forEach(function (val, key) { params.append(key, val); });
       var qs  = params.toString();
-      var url = actionUrl.pathname + (qs ? '?' + qs : '');
+      var url = actionUrl.pathname + (qs ? '?' + qs : '') + actionUrl.hash;
       _saveScroll();
       navigate(url, true).finally(_loadingEnd);
       return;
@@ -1260,9 +1301,17 @@ func breezeRuntime() string {
       ct   = 'application/x-www-form-urlencoded';
     }
 
+    // The action query string is part of the endpoint, not decoration:
+    // POST /items?list=2 addresses a different resource than POST /items,
+    // and dropping it sent every such form to the wrong place. Only the
+    // fragment is left off the request, since it is never sent to a server;
+    // it is kept for the URL the user ends up looking at.
+    var actionPath = actionUrl.pathname + actionUrl.search;
+    var actionHref = actionPath + actionUrl.hash;
+
     _saveScroll();
 
-    fetch(actionUrl.pathname, {
+    fetch(actionPath, {
       method:      method,
       credentials: 'same-origin',
       headers: {
@@ -1274,7 +1323,7 @@ func breezeRuntime() string {
       return res.text().then(function (html) {
         if (!res.ok) {
           // Server error — fall back to a real navigation so the user sees it.
-          window.location.href = actionUrl.pathname;
+          window.location.href = actionHref;
           return;
         }
         var target = getAppTarget();
@@ -1284,16 +1333,21 @@ func breezeRuntime() string {
         // entries are affected. The response we just got is re-cached
         // fresh immediately after.
         _invalidateCache();
+        _syncAuthEpoch(res);
         swap(target, html);
-        _cacheRoute(_normalizeUrl(actionUrl.pathname), html);
-        history.pushState({ breezeUrl: actionUrl.pathname, scrollY: 0 }, '', actionUrl.pathname);
+        if (_isCacheable(res)) _cacheRoute(_normalizeUrl(actionPath), html);
+        history.pushState({ breezeUrl: actionHref, scrollY: 0 }, '', actionHref);
         window.scrollTo(0, 0);
-        window.dispatchEvent(new CustomEvent('breeze:navigate', { detail: { url: actionUrl.pathname } }));
-        _runHooks('afterSubmit', { form: form, url: actionUrl.pathname, html: html });
+        window.dispatchEvent(new CustomEvent('breeze:navigate', { detail: { url: actionPath } }));
+        _runHooks('afterSubmit', { form: form, url: actionPath, html: html });
       });
     }).catch(function () {
       // Network failure — fall back to normal browser submit.
-      form.submit();
+      // Taken from the prototype: a control named or id'd "submit" shadows
+      // form.submit with the element itself, so calling it directly throws
+      // instead of submitting, losing the user input at the exact moment
+      // this fallback exists to save it.
+      HTMLFormElement.prototype.submit.call(form);
     }).finally(function () {
       _loadingEnd();
     });
@@ -1322,10 +1376,26 @@ func breezeRuntime() string {
   // mutation: direct property/index writes, deletes, or array mutator
   // methods. Nested objects/arrays are wrapped lazily on read, so the
   // whole tree stays reactive without an eager deep walk.
+  //
+  // One Proxy per underlying object, remembered in a WeakMap. Nested values
+  // are wrapped on read, and a template that walks the same branch a
+  // thousand times used to mint a thousand throwaway Proxies for the same
+  // object. Reusing the wrapper makes reads allocation-free after the first
+  // and — just as importantly — keeps identity stable, so data.user ===
+  // data.user holds and code that compares or keys off a nested object
+  // behaves. The map is weak, so a value dropped from the store is still
+  // collectable along with its wrapper.
+  var _proxyCache = new WeakMap();
+
   function _makeReactive(value, onChange) {
     if (value === null || typeof value !== 'object' || value.__breezeReactive__) return value;
 
-    return new Proxy(value, {
+    // Cached per (object, onChange): a wrapper carries its callback, so a
+    // second store with a different callback must not reuse the first's.
+    var hit = _proxyCache.get(value);
+    if (hit !== undefined && hit.fn === onChange) return hit.proxy;
+
+    var proxy = new Proxy(value, {
       get: function (target, prop, receiver) {
         if (prop === '__breezeReactive__') return true;
         var val = Reflect.get(target, prop, receiver);
@@ -1339,17 +1409,30 @@ func breezeRuntime() string {
         return (val !== null && typeof val === 'object') ? _makeReactive(val, onChange) : val;
       },
       set: function (target, prop, val, receiver) {
-        var ok = Reflect.set(target, prop, val, receiver);
-        onChange();
+        // Assigning the value a property already holds is not a change.
+        // Firing onChange for it would schedule a render whose output is
+        // byte-for-byte what is already on screen — and for a server-side
+        // template, a network round-trip to produce it. Object.is is the
+        // right comparison: NaN equals itself, and 0 differs from -0.
+        var had  = Object.prototype.hasOwnProperty.call(target, prop);
+        var prev = had ? target[prop] : undefined;
+        var ok   = Reflect.set(target, prop, val, receiver);
+        if (ok && (!had || !Object.is(prev, val))) onChange();
         return ok;
       },
       deleteProperty: function (target, prop) {
-        var ok = Reflect.deleteProperty(target, prop);
-        onChange();
+        // Deleting an absent property changes nothing either.
+        var had = Object.prototype.hasOwnProperty.call(target, prop);
+        var ok  = Reflect.deleteProperty(target, prop);
+        if (ok && had) onChange();
         return ok;
       },
     });
+
+    _proxyCache.set(value, { fn: onChange, proxy: proxy });
+    return proxy;
   }
+
 
   // Debounced (via setTimeout 0) so several synchronous mutations in the
   // same tick — e.g. a loop of list.add() calls — collapse into a single
@@ -1364,11 +1447,23 @@ func breezeRuntime() string {
     }, 0);
   }
 
+  // Set for the duration of one binding pass. Bindings asking for the same
+  // template with the same data share a single server render through it;
+  // see _rerender. Null outside a pass, so a direct breeze.render() call is
+  // never folded into anything else.
+  var _renderBatch = null;
+
   function _renderBindings() {
-    for (var i = 0; i < _bindings.length; i++) {
-      var b = _bindings[i];
-      var data = b.key ? (_store ? _store[b.key] : undefined) : _store;
-      _rerender(b.name, data, b.target);
+    var outer = _renderBatch;
+    _renderBatch = new Map();
+    try {
+      for (var i = 0; i < _bindings.length; i++) {
+        var b = _bindings[i];
+        var data = b.key ? (_store ? _store[b.key] : undefined) : _store;
+        _rerender(b.name, data, b.target);
+      }
+    } finally {
+      _renderBatch = outer;
     }
   }
 
@@ -1662,21 +1757,38 @@ func breezeRuntime() string {
       });
     }
 
-    return postRender({ component: name, data: data })
-      .then(function(res) {
-        if (res.status === 400) return postRender({ view: name, data: data });
-        return res;
-      })
-      .then(function(res) {
-        return res.text().then(function(html) {
-          if (!res.ok) { console.error('breeze.render error:', html); return html; }
-          if (el) { swap(el, html); }
-          window.dispatchEvent(new CustomEvent('breeze:render', {
-            detail: { name: name, target: target, html: html, local: false }
-          }));
-          return html;
+    // Ten regions bound to one template and one object used to fire ten
+    // identical POSTs for a single state change, each returning the same
+    // HTML. Within a binding pass they share one request; the reply is
+    // swapped into every target separately, so each still renders itself.
+    var pending = null;
+    if (_renderBatch !== null) {
+      var hit = _renderBatch.get(name);
+      if (hit !== undefined && hit.data === data) pending = hit.promise;
+    }
+
+    if (pending === null) {
+      pending = postRender({ component: name, data: data })
+        .then(function(res) {
+          if (res.status === 400) return postRender({ view: name, data: data });
+          return res;
+        })
+        .then(function(res) {
+          return res.text().then(function(html) {
+            return { ok: res.ok, html: html };
+          });
         });
-      });
+      if (_renderBatch !== null) _renderBatch.set(name, { data: data, promise: pending });
+    }
+
+    return pending.then(function(out) {
+      if (!out.ok) { console.error('breeze.render error:', out.html); return out.html; }
+      if (el) { swap(el, out.html); }
+      window.dispatchEvent(new CustomEvent('breeze:render', {
+        detail: { name: name, target: target, html: out.html, local: false }
+      }));
+      return out.html;
+    });
   }
 
   // ── Public API ─────────────────────────────────────────────────────────
@@ -1790,10 +1902,18 @@ func breezeRuntime() string {
     // out and back in. Returns a function that removes the listener.
     on: function(selector, event, handler) {
       var listener = function(e) {
-        var el = e.target.closest(selector);
+        // A target is not always an Element: clicks can land on a text
+        // node, and events retargeted from the document or window have no
+        // closest() at all. Walk up to the nearest element first so those
+        // cases match normally instead of throwing inside the listener.
+        var node = e.target;
+        if (node && node.nodeType !== 1) node = node.parentElement;
+        if (!node || typeof node.closest !== 'function') return;
+        var el = node.closest(selector);
         if (el) handler.call(el, e, el);
       };
       document.addEventListener(event, listener);
+
       return function off() { document.removeEventListener(event, listener); };
     },
 

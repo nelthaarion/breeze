@@ -290,18 +290,47 @@ async function main() {
   eq('public response is served from cache', calls.filter((c) => c.url === '/public').length, 1);
 
   // 10. An identity change drops everything cached for the previous user.
+  //
+  // The identity flip has to arrive on some *other* route, and nothing may
+  // invalidate /acct by hand — otherwise the refetch below is guaranteed by
+  // the test itself and says nothing about the epoch logic. So: cache /acct
+  // as user-1, then visit /login (uncached, and the only route that reports
+  // user-2). That response is what must clear the cache, forcing the second
+  // /acct visit back onto the network.
   applyUrl('/');
   breeze.invalidateAll();
-  resetNet({ '/acct': { headers: { 'X-Breeze-Auth': 'user-1' } } });
-  breeze.navigate('/acct'); await tick();          // cached under user-1
+  resetNet({
+    '/acct':  { headers: { 'X-Breeze-Auth': 'user-1' } },
+    '/login': { headers: { 'X-Breeze-Auth': 'user-2' } },
+  });
+
+  breeze.navigate('/acct'); await tick();          // cached, epoch = user-1
   applyUrl('/');
-  routes['/acct'] = { headers: { 'X-Breeze-Auth': 'user-2' } };
-  breeze.invalidate('/acct');                      // force one refetch to observe the new identity
-  breeze.navigate('/acct'); await tick();          // epoch flips to user-2, cache cleared
+  eq('identity: /acct cached under the first user',
+    calls.filter((c) => c.url === '/acct').length, 1);
+
+  breeze.navigate('/login'); await tick();         // epoch flips -> cache cleared
   applyUrl('/');
-  breeze.navigate('/acct'); await tick();
-  const acctCalls = calls.filter((c) => c.url === '/acct').length;
-  check('cache does not survive an identity change', acctCalls >= 2, 'fetches=' + acctCalls);
+
+  breeze.navigate('/acct'); await tick();          // must hit the network again
+  eq('cache does not survive an identity change',
+    calls.filter((c) => c.url === '/acct').length, 2);
+
+  // A stable identity must NOT keep dropping the cache, or every response
+  // carrying the header would defeat caching entirely.
+  applyUrl('/');
+  breeze.invalidateAll();
+  resetNet({
+    '/acct':  { headers: { 'X-Breeze-Auth': 'user-2' } },
+    '/other': { headers: { 'X-Breeze-Auth': 'user-2' } },
+  });
+  breeze.navigate('/acct');  await tick();
+  applyUrl('/');
+  breeze.navigate('/other'); await tick();
+  applyUrl('/');
+  breeze.navigate('/acct');  await tick();
+  eq('an unchanged identity leaves the cache alone',
+    calls.filter((c) => c.url === '/acct').length, 1);
 
   // ── Report ────────────────────────────────────────────────────────────────
   if (failures.length) {

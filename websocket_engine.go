@@ -23,6 +23,23 @@ type wsConnState struct {
 // guarding against memory exhaustion attacks.
 const wsMaxPayloadDefault = 4 << 20
 
+// WebSocket close status codes (RFC 6455 §7.4.1)
+//
+// These codes are sent in Close frames to indicate the reason for closing
+// the connection. Applications may use these codes or define custom ones
+// in the 3000-3999 and 4000-4999 ranges.
+const (
+	WsCloseNormalClosure           = 1000 // Normal closure; normal shutdown
+	WsCloseGoingAway               = 1001 // Endpoint is going away (browser tab closed, etc.)
+	WsCloseProtocolError           = 1002 // Protocol error; endpoint terminated due to error
+	WsCloseUnsupportedData         = 1003 // Received data of unsupported type
+	WsCloseNoStatusRcvd            = 1005 // Reserved; must not be set in Close frame
+	WsCloseAbnormalClosure         = 1006 // Reserved; abnormal closure (no Close frame received)
+	WsCloseInvalidFramePayloadData = 1007 // Invalid frame payload data (e.g., invalid UTF-8)
+	WsClosePolicyViolation         = 1008 // Policy violation (e.g., authorization failure)
+	WsCloseMessageTooBig           = 1009 // Message too large for endpoint to process
+)
+
 // ─── Breeze extension ────────────────────────────────────────────────────────
 
 // wsConns maps fd → *wsConnState for every active WebSocket connection.
@@ -166,8 +183,8 @@ func (b *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 		frame, consumed := parseWSFrame(buf, state.maxPayload)
 		if consumed == -1 {
 			// Protocol error — send close and drop.
-			wc.Close(1002, "protocol error")
-			b.cleanupWS(fd, wc, state.handler, 1002, "protocol error")
+			wc.Close(WsCloseProtocolError, "protocol error")
+			b.cleanupWS(fd, wc, state.handler, WsCloseProtocolError, "protocol error")
 			return gnet.Close
 		}
 		if frame == nil {
@@ -179,22 +196,23 @@ func (b *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 		case wsOpPing:
 			// RFC 6455 §5.5.2: respond with Pong, same payload.
 			pong := buildWSFrame(wsOpPong, frame.payload)
-			wsFramePool.Put(frame)
+			frame.release()
 			_ = c.AsyncWrite(pong, nil)
 
 		case wsOpPong:
 			// Unsolicited pong — ignore per spec.
-			wsFramePool.Put(frame)
+			frame.release()
 
 		case wsOpClose:
 			// FIX: Use frame.payload BEFORE returning frame to the pool.
-			// The original code called wsFramePool.Put(frame) and then
+			// The original code called frame.release() and then
 			// read frame.payload to build the echo — a use-after-free
 			// because parseWSFrame may have reused the pooled *wsFrame
 			// and overwritten its payload slice.
-			code, reason := parseClosePayload(frame.payload)
-			echo := buildWSFrame(wsOpClose, frame.payload)
-			wsFramePool.Put(frame)
+			payload := frame.payload
+			code, reason := parseClosePayload(payload)
+			echo := buildWSFrame(wsOpClose, payload)
+			frame.release()
 			_ = c.AsyncWrite(echo, nil)
 			b.cleanupWS(fd, wc, state.handler, code, reason)
 			return gnet.Close
@@ -206,10 +224,10 @@ func (b *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 			b.handleContinuation(wc, state, frame)
 
 		default:
-			// Unknown opcode — close with 1003 Unsupported Data.
-			wc.Close(1003, "unsupported opcode")
-			b.cleanupWS(fd, wc, state.handler, 1003, "unsupported opcode")
-			wsFramePool.Put(frame)
+			// Unknown opcode — close with WsCloseUnsupportedData (1003).
+			wc.Close(WsCloseUnsupportedData, "unsupported opcode")
+			b.cleanupWS(fd, wc, state.handler, WsCloseUnsupportedData, "unsupported opcode")
+			frame.release()
 			return gnet.Close
 		}
 	}
@@ -236,14 +254,14 @@ func (b *Breeze) handleDataFrame(wc *WSConn, state *wsConnState, frame *wsFrame)
 		// Complete single-frame message — fast path, no fragBuf allocation.
 		payload := frame.payload
 		opcode := frame.opcode
-		wsFramePool.Put(frame)
+		frame.release()
 		b.dispatchMessage(wc, state.handler, opcode, payload)
 		return
 	}
 	// Begin fragmented message.
 	wc.fragOp = frame.opcode
 	wc.fragBuf = append(wc.fragBuf[:0], frame.payload...)
-	wsFramePool.Put(frame)
+	frame.release()
 }
 
 // handleContinuation appends a continuation frame to the in-progress message.
@@ -254,11 +272,11 @@ func (b *Breeze) handleContinuation(wc *WSConn, state *wsConnState, frame *wsFra
 		copy(payload, wc.fragBuf)
 		wc.fragBuf = wc.fragBuf[:0]
 		opcode := wc.fragOp
-		wsFramePool.Put(frame)
+		frame.release()
 		b.dispatchMessage(wc, state.handler, opcode, payload)
 		return
 	}
-	wsFramePool.Put(frame)
+	frame.release()
 }
 
 // dispatchMessage routes a complete message to the handler via the worker pool.
@@ -287,10 +305,10 @@ func (b *Breeze) cleanupWS(fd int, wc *WSConn, handler WSHandler, code uint16, r
 }
 
 // parseClosePayload extracts the close code and reason from a Close frame payload.
-// Returns 1000 (Normal Closure) if the payload is empty.
+// Returns WsCloseNormalClosure (1000) if the payload is empty.
 func parseClosePayload(p []byte) (uint16, string) {
 	if len(p) < 2 {
-		return 1000, ""
+		return WsCloseNormalClosure, ""
 	}
 	code := uint16(p[0])<<8 | uint16(p[1])
 	reason := ""

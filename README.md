@@ -38,7 +38,10 @@ efficiently while keeping your code clean and maintainable.
     - [gRPC Code Generation](#-grpc-code-generation)
   - [Production Middleware](#-production-middleware)
   - [OAuth2 / Social Login](#-oauth2--social-login)
+  - [Event System](#-event-system)
+  - [Durable Workflows](#-durable-workflows)
   - [Built-in Developer Dashboard](#-built-in-developer-dashboard)
+
   - [Developer Experience](#-developer-experience)
   - [Performance Optimizations](#-performance-optimizations)
 - [Support the Project](#-support-the-project)
@@ -274,7 +277,79 @@ func dashboard(ctx *breeze.Context) {
 
 See [`middlewares/oauth2/README.md`](./middlewares/oauth2/README.md) for full documentation.
 
+### 🔔 Event System
+
+The framework's internal communication layer lives in `events` — a typed,
+reflection-free publish/subscribe bus that every subsystem (router, OAuth2,
+dashboard, scheduler, plugins, WebSocket) uses to observe and extend
+behaviour without importing each other.
+
+- 🧩 Events are **plain Go structs** — no interfaces, no registration ceremony
+- ⚡ Generic `On` / `Once` / `Off` / `Emit` with **zero reflection during dispatch**
+- 🔒 Lock-free reads: registration publishes an immutable snapshot via `atomic.Pointer`
+- 🎯 Deterministic order: before-hooks → listeners by descending priority → after-hooks
+- 🛑 Flow control via `events.Stop`, `ctx.Cancel()`, and `Config.ContinueOnError`
+- 🔁 Async emission — goroutine or worker-pool modes with overflow policies
+- 🛡 Panic recovery, dispatch middleware, filters, and once-listeners
+- 📈 Per-event metrics + optional ring-buffer recorder for debugging
+- 🏗 Built-in framework events: application lifecycle, HTTP, WebSocket, OAuth2,
+  routing, plugins, scheduler, and configuration reload
+
+```go
+import "github.com/nelthaarion/breeze/events"
+
+// Events are just structs.
+type UserCreated struct{ UserID uint64 }
+
+// Listen — plain function, compiler-typed, no reflection.
+events.On(UserCreated{}, func(ctx *events.Context, e UserCreated) error {
+    return sendWelcomeEmail(e.UserID)
+})
+
+// Emit — listeners run in priority order.
+events.Emit(UserCreated{UserID: 10})
+```
+
+See [`events/README.md`](./events/README.md) for full documentation.
+
+### 🧬 Durable Workflows
+
+`workflow` brings durable, in-process orchestration to Breeze: multi-step
+business processes with retries, timeouts, parallelism, rollback (Saga)
+and crash recovery — no broker, and no required database.
+
+- 🧩 Declarative steps; `WithDependsOn` opts into a validated DAG with parallelism
+- 🔁 Retries with exponential backoff + jitter; `NonRetryable` marks permanent failures
+- ↩️ Automatic compensation: rollback runs in reverse over completed steps
+- ⏱ Per-attempt and per-execution timeouts, cancellable retry backoff
+- 💾 Optional `Store` for durability; `Resume` continues interrupted executions
+  **without re-running completed steps**
+- 🔑 Idempotency keys — safe with at-least-once event delivery
+- 📡 Triggered by bus events via `OnType[UserRegistered](def)`
+- 👁 Publishes `WorkflowStarted`/`StepFailed`/`CompensationStarted`/… events, and the
+  dashboard shows **in-flight executions live**, step by step
+
+```go
+import "github.com/nelthaarion/breeze/workflow"
+
+def := workflow.New("order-processing").
+    Step("validate", ValidateOrder).
+    Step("charge", ChargeCard, workflow.WithCompensation(RefundCard)).
+    Step("ship", CreateShipment)
+
+engine := workflow.NewEngine()
+engine.Register(def)
+
+res, err := engine.Run(ctx, "order-processing", order)
+```
+
+If `ship` fails, `RefundCard` runs automatically — the failure path is
+declared next to the work, not scattered through error handling.
+
+See [`workflow/README.md`](./workflow/README.md) for full documentation.
+
 ### 📊 Built-in Developer Dashboard
+
 
 - 🔧 Native module under `/dashboard` (zero-overhead when disabled)
 - 📈 Real-time overview: RPS, latency, memory, goroutines, CPU

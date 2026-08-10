@@ -13,8 +13,9 @@
 //		Step("charge-payment", ChargePayment).
 //		Step("create-shipment", CreateShipment)
 //
-//	workflow.Register(def)
-//	res, err := workflow.Run(ctx, "order-processing", order)
+//	engine := workflow.NewEngine()
+//	engine.Register(def)
+//	res, err := engine.Run(ctx, "order-processing", order)
 //
 // That is the whole API for the simple case. Everything below is
 // opt-in: a workflow that sets nothing gets sequential execution, no

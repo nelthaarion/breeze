@@ -9,7 +9,6 @@ import (
 	"github.com/nelthaarion/breeze/observability"
 )
 
-
 // This file is the dashboard's bridge to the observability layer.
 //
 // It is deliberately the only place in the dashboard that imports
@@ -91,7 +90,6 @@ func (c *Collector) attachEvents(bus *events.Bus, payload bool) func() {
 	c.eventCol = col
 	c.wfLive = live
 	c.eventsMu.Unlock()
-
 
 	// Bridge the collector's live stream onto the dashboard hub. The
 	// forwarding goroutine is what makes the Events page live rather than
@@ -300,7 +298,6 @@ func (c *Collector) liveWorkflows() []liveExecution {
 	return live.Snapshot()
 }
 
-
 // eventMetric is one event's aggregate row.
 type eventMetric struct {
 	Name        string  `json:"name"`
@@ -315,12 +312,12 @@ type eventMetric struct {
 
 // eventTotals summarises the whole event system.
 type eventTotals struct {
-	Signals     uint64  `json:"signals"`
-	Failed      uint64  `json:"failed"`
-	Listeners   uint64  `json:"listeners"`
-	Dropped     uint64  `json:"dropped"`
-	DistinctEvents int  `json:"distinct_events"`
-	RatePerSec  float64 `json:"rate_per_sec"`
+	Signals        uint64  `json:"signals"`
+	Failed         uint64  `json:"failed"`
+	Listeners      uint64  `json:"listeners"`
+	Dropped        uint64  `json:"dropped"`
+	DistinctEvents int     `json:"distinct_events"`
+	RatePerSec     float64 `json:"rate_per_sec"`
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────
@@ -382,7 +379,6 @@ func (c *Collector) handleEvents(ctx *breeze.Context) {
 	for _, s := range sigs {
 		rows = append(rows, eventRowFrom(s))
 	}
-
 
 	metrics := col.TopNames(50)
 	mrows := make([]eventMetric, 0, len(metrics))

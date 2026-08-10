@@ -200,7 +200,6 @@ func TestWorkflowLiveSweepDropsFinished(t *testing.T) {
 	// platform's timer granularity, not of the tracker.
 	live.sweep(-time.Second)
 
-
 	ids := map[string]bool{}
 	for _, ex := range live.Snapshot() {
 		ids[ex.ExecutionID] = true

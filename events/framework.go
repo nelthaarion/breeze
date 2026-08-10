@@ -262,7 +262,6 @@ type WorkflowStarted struct {
 	Time      time.Time
 }
 
-
 // WorkflowStepStarted is emitted before a step's handler runs.
 type WorkflowStepStarted struct {
 	Workflow    string

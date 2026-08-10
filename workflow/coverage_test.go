@@ -959,7 +959,7 @@ func TestCompensationRunsAfterCancellation(t *testing.T) {
 
 func TestWorkflowTimeoutIsReportedAsSuch(t *testing.T) {
 	engine := NewEngine(Config{Bus: events.New(), DisableObservability: true})
-	def := New("wf").Timeout(20 * time.Millisecond).
+	def := New("wf").Timeout(20*time.Millisecond).
 		Step("slow", func(c *Context) error {
 			<-c.Done()
 			return c.Err()

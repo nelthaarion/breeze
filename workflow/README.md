@@ -188,10 +188,10 @@ Design choices behind those numbers:
 
 ## Observability
 
-Every execution publishes framework events (`workflow.started`,
-`workflow.step.failed`, `workflow.compensation.started`, …) and one
+Every execution publishes framework events (`WorkflowStarted`,
+`WorkflowStepFailed`, `WorkflowCompensationStarted`, …) and one
 observability signal carrying each step as a span. The dashboard renders
-workflows through the same pipeline as HTTP requests and event
+finished workflows through the same pipeline as HTTP requests and event
 dispatches, with no workflow-specific code.
 
 ```go
@@ -200,6 +200,49 @@ events.On(events.WorkflowFailed{}, func(_ *events.Context, e events.WorkflowFail
     return nil
 })
 ```
+
+### Watching an execution in flight
+
+The observability signal is written when an execution *ends*, so it can
+only ever describe history. A long workflow — one that retries with
+backoff, or waits on a slow third party — is exactly the one you want to
+look at while it is still running, and that is the case the signal
+cannot serve.
+
+The dashboard therefore also assembles a live view from the step events
+as they arrive. It appears under `live` in the `/events` API payload and
+needs no configuration: attaching the dashboard to a bus is enough.
+
+```json
+{
+  "execution_id": "…", "workflow": "checkout", "trigger": "http",
+  "steps": [
+    {"name": "reserve", "state": "done",      "duration_ms": 12.4},
+    {"name": "charge",  "state": "retrying",  "attempt": 2, "error": "timeout"},
+    {"name": "ship",    "state": "pending"}
+  ]
+}
+```
+
+Every step of the plan is present from the first frame, so the whole
+chain is visible immediately rather than materialising one node at a
+time. A step is `pending`, `running`, `done`, `failed`, `retrying` or
+`compensated`.
+
+Two of those states carry a distinction worth stating, because getting
+them wrong reports an outcome that is not true yet:
+
+- A failure that will be retried is **`retrying`**, not `failed`. The
+  step has no verdict until its last attempt.
+- After a successful rollback, steps that had completed become
+  **`compensated`** rather than staying `done` — the work was undone,
+  and showing it green would claim an effect that no longer holds.
+
+In-flight state is deliberately kept out of the observability ring
+buffer, where a half-finished execution would masquerade as history.
+Tracking is bounded (64 executions, finished ones evicted first) and
+finished executions are swept ~30s after they end, so the final frame
+reaches the browser and is then released.
 
 ---
 

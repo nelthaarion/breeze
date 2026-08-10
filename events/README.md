@@ -673,7 +673,8 @@ The test suite covers:
 - Recorder and metrics
 - Framework events
 
-Coverage: **96.7%** of statements, clean under `-race`.
+Coverage: **97.1%** of statements, clean under `-race`.
+
 
 ## License
 

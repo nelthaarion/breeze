@@ -74,7 +74,6 @@ type liveExecution struct {
 	stepIdx map[string]int
 }
 
-
 // workflowLive tracks in-flight executions.
 //
 // It is a separate type from Collector so the locking stays obvious: one
@@ -110,18 +109,9 @@ func (w *workflowLive) Snapshot() []liveExecution {
 	return out
 }
 
-// get returns a tracked execution, or nil when it is not tracked. An
-// untracked execution is normal rather than exceptional: the dashboard
-// may have attached midway through a run, and events for it must be
-// ignored rather than resurrecting a partial execution with no plan.
-func (w *workflowLive) get(execID string) *liveExecution {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	return w.execs[execID]
-}
-
 // start begins tracking an execution, seeding every step as pending so
 // the whole chain is drawable from the first frame.
+
 func (w *workflowLive) start(e events.WorkflowStarted) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

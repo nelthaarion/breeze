@@ -81,9 +81,17 @@ func (c *Collector) attachEvents(bus *events.Bus, payload bool) func() {
 		detachBus = observability.AttachEvents(bus, col)
 	}
 
+	// Live workflow progress is accumulated from step events on the bus,
+	// because the ring buffer only ever receives an execution once it has
+	// already finished.
+	live := newWorkflowLive()
+	detachLive := live.attach(bus)
+
 	c.eventsMu.Lock()
 	c.eventCol = col
+	c.wfLive = live
 	c.eventsMu.Unlock()
+
 
 	// Bridge the collector's live stream onto the dashboard hub. The
 	// forwarding goroutine is what makes the Events page live rather than
@@ -92,11 +100,14 @@ func (c *Collector) attachEvents(bus *events.Bus, payload bool) func() {
 
 	return func() {
 		detachBus()
+		detachLive()
 		stopStream()
 		col.Close()
 
 		c.eventsMu.Lock()
 		c.eventCol = nil
+		c.wfLive = nil
+
 		c.eventsMu.Unlock()
 	}
 }
@@ -151,6 +162,29 @@ func (c *Collector) eventsCollector() *observability.Collector {
 // "wired up but idle", which are very different things to be looking at.
 func (c *Collector) EventsAttached() bool { return c.eventsCollector() != nil }
 
+// Observability returns the collector backing the Events page, or nil
+// when no bus has been attached yet.
+//
+// Most subsystems reach the dashboard by emitting on the event bus. A
+// few produce observability signals directly instead, because one
+// signal describes a whole execution with its steps as spans — the
+// workflow engine is the current example. Those subsystems must publish
+// into *this* collector, not a private one, or their signals will never
+// reach the page:
+//
+//	coll := dashboard.Install(app, router, cfg)
+//	detach := coll.AttachEvents(events.Default)
+//	engine := workflow.NewEngine(workflow.Config{
+//	    Collector: coll.Observability(),
+//	})
+//
+// Call it after AttachEvents; before that there is no collector to
+// return and the result is nil, which every consumer treats as "do not
+// publish".
+func (c *Collector) Observability() *observability.Collector {
+	return c.eventsCollector()
+}
+
 // ─── Wire format ──────────────────────────────────────────────────────────
 
 // eventRow is one dispatch as the Events page consumes it.
@@ -171,7 +205,16 @@ type eventRow struct {
 	Error      string  `json:"error,omitempty"`
 	RequestID  string  `json:"request_id,omitempty"`
 	Payload    string  `json:"payload,omitempty"`
-	Spans      []eventSpan `json:"spans,omitempty"`
+
+	// ExecutionID and State are populated for sources that model a
+	// long-running execution rather than a single dispatch, such as
+	// workflows. They stay empty for plain events, so the table can
+	// show a state column only where one exists.
+	ExecutionID string `json:"execution_id,omitempty"`
+	State       string `json:"state,omitempty"`
+	Trigger     string `json:"trigger,omitempty"`
+
+	Spans []eventSpan `json:"spans,omitempty"`
 }
 
 // eventSpan is one listener execution within a dispatch.
@@ -204,6 +247,12 @@ func eventRowFrom(s observability.Signal) eventRow {
 	}
 	if s.Attrs != nil {
 		row.Payload = s.Attrs["payload"]
+		// Workflow executions carry their identity in attrs. Reading
+		// them here keeps the projection generic: any source that
+		// adopts the same keys gets the same columns for free.
+		row.ExecutionID = s.Attrs["execution_id"]
+		row.State = s.Attrs["state"]
+		row.Trigger = s.Attrs["trigger"]
 	}
 	if len(s.Spans) > 0 {
 		row.Spans = make([]eventSpan, 0, len(s.Spans))
@@ -234,9 +283,23 @@ type eventsPayload struct {
 	Metrics []eventMetric `json:"metrics"`
 	// Graph is the observed execution graph.
 	Graph []observability.GraphNode `json:"graph"`
+	// Live holds workflow executions that have not finished yet, newest
+	// first. Recent only ever contains completed executions, so this is
+	// the only place an in-progress step can be seen.
+	Live []liveExecution `json:"live,omitempty"`
 	// Totals summarises lifetime activity.
 	Totals eventTotals `json:"totals"`
 }
+
+// liveWorkflows returns the in-flight executions, or nil when no bus is
+// attached.
+func (c *Collector) liveWorkflows() []liveExecution {
+	c.eventsMu.RLock()
+	live := c.wfLive
+	c.eventsMu.RUnlock()
+	return live.Snapshot()
+}
+
 
 // eventMetric is one event's aggregate row.
 type eventMetric struct {
@@ -270,6 +333,7 @@ type eventTotals struct {
 //	name=user.created  exact event name filter
 //	q=user           case-insensitive substring filter
 //	failed=1         only failed dispatches
+//	source=workflow  restrict to one producing subsystem
 //
 // An unattached dashboard returns Attached:false with empty collections
 // rather than an error, so the page can render a clear explanation
@@ -304,6 +368,11 @@ func (c *Collector) handleEvents(ctx *breeze.Context) {
 		FailedOnly:   ctx.Query("failed") == "1" || ctx.Query("failed") == "true",
 		Limit:        limit,
 		Newest:       true,
+	}
+	// An empty or "all" source means no restriction, so the filter
+	// degrades to the previous behaviour rather than matching nothing.
+	if src := ctx.Query("source"); src != "" && src != "all" {
+		q.Source = observability.Source(src)
 	}
 
 	// Find with Newest already returns newest-first, which is the order the
@@ -344,6 +413,8 @@ func (c *Collector) handleEvents(ctx *breeze.Context) {
 		Recent:   rows,
 		Metrics:  mrows,
 		Graph:    graph,
+		Live:     c.liveWorkflows(),
+
 		Totals: eventTotals{
 			Signals:        st.Signals,
 			Failed:         st.Failed,

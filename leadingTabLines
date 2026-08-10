@@ -1,0 +1,3 @@
+dashboard\attach.go -=2 leadingSpaceLines=0
+dashboard\collector.go -=0 leadingSpaceLines=334
+dashboard\events.go -=237 leadingSpaceLines=0

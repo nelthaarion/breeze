@@ -93,7 +93,6 @@ type Bus struct {
 	eventSeq    atomic.Uint64
 	listenerSeq atomic.Uint64
 
-
 	closed atomic.Bool
 }
 

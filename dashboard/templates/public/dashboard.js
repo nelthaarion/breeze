@@ -1050,23 +1050,229 @@ function renderArchitecture(){
 }
 
 // ─── Events ────────────────────────────────────────────────────────────
+
+// isWorkflow reports whether a row describes a workflow execution rather
+// than a single event dispatch. Workflows are the one source whose spans
+// are ordered steps with levels, so they get the timeline treatment.
+function isWorkflow(row){ return row && row.source === 'workflow'; }
+
+// stepStateOf reduces a finished span to one of the states the chain
+
+// renders. Terminal rows never produce 'running': a stored span is by
+// definition finished, so a spinner there would be a lie.
+function stepStateOf(sp){
+  if(sp.panicked) return 'panic';
+  if(sp.failed)   return 'failed';
+  if(sp.stopped)  return 'stopped';
+  if(sp.skipped)  return 'skipped';
+  return 'done';
+}
+
+// STEP_GLYPH maps a state to its marker. Shape carries the meaning
+// alongside colour, so the chain stays readable to a colour-blind user
+// and in a screenshot printed in greyscale.
+var STEP_GLYPH = {
+  done:      '\u2713',  // check
+  failed:    '\u2715',  // cross
+  panic:     '\u26A1',  // bolt
+  stopped:   '\u25A0',  // square
+  skipped:   '\u2013',  // dash
+  running:   '',        // filled by a CSS spinner
+  pending:   '',
+  retrying:  '\u21BB',  // open-circle arrow
+  compensated:'\u21A9'  // hook arrow: undone
+};
+
+// renderStepChain draws steps as connected nodes rather than bars.
+//
+// A workflow is a sequence of stages, and the question asked of it is
+// "where did it get to", not "which stage was slowest". Nodes joined by
+// arrows answer that at a glance; the duration stays on the node for
+// when the follow-up question is about cost. Bars answer the second
+// question first, which is why they read poorly here.
+function renderStepChain(steps, opts){
+  opts = opts || {};
+  if(!steps || !steps.length) return '';
+
+  var html = '<div class="wf-chain'+(opts.compensating?' compensating':'')+'">';
+  steps.forEach(function(st, i){
+    var state = st.state || 'done';
+    var glyph = STEP_GLYPH[state] || '';
+    var dur = st.duration_ms ? fmtMS(st.duration_ms) : '';
+    var attempt = (st.attempt && st.attempt > 1) ? '<span class="try">#'+st.attempt+'</span>' : '';
+
+    if(i > 0){
+      // The connector takes the colour of the state it flows *into*, so
+      // the eye follows the run to the point it stopped.
+      html += '<div class="wf-arrow '+state+'"><i></i></div>';
+    }
+    html += '<div class="wf-node '+state+'" title="'+escapeHTML(st.name+(st.error?(' — '+st.error):''))+'">'+
+      '<div class="dot"><span class="glyph">'+glyph+'</span></div>'+
+      '<div class="body">'+
+        '<div class="nm">'+escapeHTML(st.name)+'</div>'+
+        '<div class="sub">'+
+          '<span class="st">'+escapeHTML(state)+'</span>'+
+          (dur?'<span class="dur">'+dur+'</span>':'')+
+          attempt+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  });
+  html += '</div>';
+
+  // Errors go under the chain rather than inside a node, so a long
+  // message cannot stretch the row and break the alignment.
+  var errs = steps.filter(function(s){return s.error;});
+  if(errs.length){
+    html += '<div class="wf-errs">';
+    errs.forEach(function(s){
+      html += '<div class="wf-err"><b>'+escapeHTML(s.name)+'</b>'+escapeHTML(s.error)+'</div>';
+    });
+    html += '</div>';
+  }
+  return html;
+}
+
+// renderLiveWorkflows draws the executions that have not finished.
+function renderLiveWorkflows(){
+  var wrap = $('#ev-live-wrap');
+  var host = $('#ev-live');
+  if(!wrap || !host) return;
+
+  var live = (S.eventsMeta && S.eventsMeta.live) || [];
+  if(!live.length){ wrap.style.display='none'; host.innerHTML=''; return; }
+
+  wrap.style.display = '';
+  var cnt = $('#ev-live-count');
+  if(cnt) cnt.textContent = live.length;
+
+  var html = '';
+  live.forEach(function(ex){
+    var steps = ex.steps || [];
+    var total = steps.length;
+    var done = steps.filter(function(s){return s.state==='done';}).length;
+    var failed = steps.some(function(s){return s.state==='failed';});
+    var running = steps.some(function(s){return s.state==='running'||s.state==='retrying';});
+    var cls = failed ? 'red' : (ex.compensating ? 'yellow' : (running ? 'blue' : 'green'));
+    var label = failed ? 'failed' : (ex.compensating ? 'compensating' : (running ? 'running' : (ex.done?'finished':'queued')));
+
+    html += '<div class="wf-exec">'+
+      '<div class="wf-exec-head">'+
+        '<span class="nm">'+escapeHTML(ex.workflow)+'</span>'+
+        '<span class="badge '+cls+'">'+label+'</span>'+
+        '<span class="prog">'+done+' / '+total+' steps</span>'+
+        (ex.trigger?'<span class="trg">via '+escapeHTML(ex.trigger)+'</span>':'')+
+        '<span class="eid">'+escapeHTML(ex.execution_id||'')+'</span>'+
+      '</div>'+
+      renderStepChain(steps, {compensating: ex.compensating})+
+    '</div>';
+  });
+  host.innerHTML = html;
+}
+
+function renderSpanTimeline(target){
+  var spans = target.spans || [];
+  if(!spans.length) return '';
+
+  // A workflow reads as a chain of stages; a plain event dispatch reads
+  // as a list of listeners competing for time. Those are different
+  // questions, so they get different renderings rather than one
+  // compromise that serves neither.
+  if(isWorkflow(target)){
+    return renderStepChain(spans.map(function(sp){
+      return {
+        name: sp.name,
+        state: stepStateOf(sp),
+        duration_ms: sp.duration_ms,
+        error: sp.error
+      };
+    }), {});
+  }
+
+  var maxMS = 0;
+  spans.forEach(function(sp){ if(sp.duration_ms > maxMS) maxMS = sp.duration_ms; });
+  if(maxMS <= 0) maxMS = 1;
+
+
+  // Group by phase, preserving first-seen order. Non-workflow sources
+  // have a single phase, so they render as one flat group exactly as
+  // before.
+  var order = [], groups = {};
+  spans.forEach(function(sp){
+    var key = sp.phase || 'normal';
+    if(!groups[key]){ groups[key] = []; order.push(key); }
+    groups[key].push(sp);
+  });
+
+  var wf = isWorkflow(target);
+  var html = '', idx = 0;
+  order.forEach(function(key){
+    var group = groups[key];
+    var parallel = wf && group.length > 1;
+    if(wf){
+      // The level header states the concurrency explicitly, so the user
+      // does not have to infer it from overlapping durations.
+      var levelMS = 0, sumMS = 0;
+      group.forEach(function(sp){
+        if(sp.duration_ms > levelMS) levelMS = sp.duration_ms;
+        sumMS += sp.duration_ms;
+      });
+      html += '<div class="wf-level'+(parallel?' parallel':'')+'">'+
+        '<span class="lvl">'+escapeHTML(key)+'</span>'+
+        (parallel
+          ? '<span class="tag">'+group.length+' in parallel \u00b7 '+fmtMS(levelMS)+
+            ' wall vs '+fmtMS(sumMS)+' total</span>'
+          : '<span class="tag">sequential \u00b7 '+fmtMS(levelMS)+'</span>')+
+        '</div>';
+    }
+    group.forEach(function(sp){
+      idx++;
+      var scls = sp.failed?'red':(sp.panicked?'red':(sp.stopped?'yellow':(sp.skipped?'gray':'green')));
+      var pct = Math.max(1, (sp.duration_ms / maxMS) * 100);
+      html += '<div class="ev-span'+(parallel?' par':'')+'">'+
+        '<span class="idx">'+idx+'</span>'+
+        '<span class="name">'+(parallel?'\u251c\u2500 ':'')+escapeHTML(sp.name)+'</span>'+
+        (wf?'':'<span class="phase">'+escapeHTML(sp.phase||'normal')+'</span>')+
+        (wf?'':'<span class="prio">p'+sp.priority+'</span>')+
+        '<span class="bar"><i class="'+scls+'" style="width:'+pct.toFixed(1)+'%"></i></span>'+
+        '<span class="dur">'+fmtMS(sp.duration_ms)+'</span>'+
+        '<span class="badge '+scls+'">'+(sp.failed?'failed':(sp.panicked?'panic':(sp.stopped?'stopped':(sp.skipped?'skipped':'ok'))))+'</span>'+
+        (sp.error?'<span class="err">'+escapeHTML(sp.error)+'</span>':'')+
+        '</div>';
+    });
+  });
+  return html;
+}
+
 function initEvents(){
   loadEvents();
   var s = $('#ev-search');
   if(s) s.addEventListener('input', function(){S.eventFilter.q=s.value; renderEvents(); s.focus();});
   var fo = $('#ev-failed-only');
   if(fo) fo.addEventListener('change', function(){S.eventFilter.failedOnly=fo.checked; renderEvents();});
+  var src = $('#ev-source');
+  // The source filter is applied server-side, so switching it reloads
+  // rather than filtering the page's current slice: the newest 200
+  // workflow executions are not necessarily in the newest 200 signals.
+  if(src) src.addEventListener('change', function(){S.eventFilter.source=src.value; loadEvents();});
   setInterval(function(){ if(S.page==='events') loadEvents(); }, 10000);
 }
 function loadEvents(){
-  api('events?limit=200').then(function(d){
+  var src = S.eventFilter.source||'';
+  api('events?limit=200'+(src?'&source='+encodeURIComponent(src):'')).then(function(d){
     S.eventsMeta = d;
     // Merge: keep live WS rows that are newer than the API snapshot, then
     // prepend the snapshot's rows. WS rows carry the same shape, so a
     // dedupe by id keeps the list stable while filtering.
     var byId = {};
     (d.recent||[]).forEach(function(r){byId[r.id]=r;});
-    S.events.forEach(function(r){ if(!byId[r.id]) byId[r.id]=r; });
+    // Live WebSocket rows are unfiltered, so drop the ones the active
+    // source filter excludes; otherwise a filtered view would slowly
+    // refill with other sources as events streamed in.
+    S.events.forEach(function(r){
+      if(src && r.source !== src) return;
+      if(!byId[r.id]) byId[r.id]=r;
+    });
     var merged = [];
     for(var k in byId) merged.push(byId[k]);
     merged.sort(function(a,b){return b.id-a.id;});
@@ -1094,6 +1300,9 @@ function renderEvents(){
     if(attached) na.style.display='none';
     else na.style.display='block';
   }
+
+  renderLiveWorkflows();
+
 
   var list = S.events.slice();
   var q = (S.eventFilter.q||'').toLowerCase();
@@ -1144,23 +1353,17 @@ function renderEvents(){
           '<div><span>Source</span>'+escapeHTML(target.source||'-')+'</div>'+
           '<div><span>Started</span>'+fmtTime(target.time)+'</div>'+
           '<div><span>Duration</span>'+fmtMS(target.duration_ms)+'</div>'+
-          '<div><span>Listeners</span>'+fmtNum(target.listeners)+'</div>'+
+          '<div><span>'+(isWorkflow(target)?'Steps':'Listeners')+'</span>'+fmtNum(target.listeners)+'</div>'+
+          (target.execution_id?'<div><span>Execution</span>'+escapeHTML(target.execution_id)+'</div>':'')+
+          (target.state?'<div><span>State</span><b class="wf-state '+escapeHTML(target.state)+'">'+escapeHTML(target.state)+'</b></div>':'')+
+          (target.trigger?'<div><span>Trigger</span>'+escapeHTML(target.trigger)+'</div>':'')+
           (target.request_id?'<div><span>Request</span>'+escapeHTML(target.request_id)+'</div>':'')+
         '</div>'+
+        (target.error?'<div class="ev-payload"><span>error</span><pre>'+escapeHTML(target.error)+'</pre></div>':'')+
         (target.payload?'<div class="ev-payload"><span>payload</span><pre>'+escapeHTML(target.payload)+'</pre></div>':'')+
-        '<div class="ev-spans"><div class="head2">Execution order</div>';
-      (target.spans||[]).forEach(function(sp, i){
-        var scls = sp.failed?'red':(sp.panicked?'red':(sp.stopped?'yellow':(sp.skipped?'gray':'green')));
-        dhtml += '<div class="ev-span"><span class="idx">'+(i+1)+'</span>'+
-          '<span class="name">'+escapeHTML(sp.name)+'</span>'+
-          '<span class="phase">'+escapeHTML(sp.phase||'normal')+'</span>'+
-          '<span class="prio">p'+sp.priority+'</span>'+
-          '<span class="dur">'+fmtMS(sp.duration_ms)+'</span>'+
-          '<span class="badge '+scls+'">'+(sp.failed?'failed':(sp.panicked?'panic':(sp.stopped?'stopped':(sp.skipped?'skipped':'ok'))))+'</span>'+
-          (sp.error?'<span class="err">'+escapeHTML(sp.error)+'</span>':'')+
-          '</div>';
-      });
-      if(!target.spans || !target.spans.length) dhtml += '<div class="empty">No listener detail</div>';
+        '<div class="ev-spans"><div class="head2">'+(isWorkflow(target)?'Execution timeline':'Execution order')+'</div>';
+      dhtml += renderSpanTimeline(target);
+      if(!target.spans || !target.spans.length) dhtml += '<div class="empty">No step detail</div>';
       dhtml += '</div></div>';
       detail.innerHTML = dhtml;
       var cl = $('#ev-close');

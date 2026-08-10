@@ -240,6 +240,138 @@ type MessageSent struct {
 	Size         int
 }
 
+// --- Workflow ---
+//
+// Workflow events carry identifiers and primitives only, never the
+// workflow's payload or its step handlers, so that this package stays
+// free of any dependency on the workflow engine.
+
+// WorkflowStarted is emitted when a workflow execution begins.
+type WorkflowStarted struct {
+	Workflow    string
+	ExecutionID string
+	// Trigger names the event type that started the execution, or is
+	// empty when it was started directly.
+	Trigger string
+	Steps   int
+	// StepNames lists every step in declaration order, including the
+	// ones that have not run yet. A consumer watching an execution
+	// unfold needs the whole plan up front: knowing only the count
+	// would let it show progress but never say what comes next.
+	StepNames []string
+	Time      time.Time
+}
+
+
+// WorkflowStepStarted is emitted before a step's handler runs.
+type WorkflowStepStarted struct {
+	Workflow    string
+	ExecutionID string
+	Step        string
+	// Attempt is 1 for the first try and increments on every retry.
+	Attempt int
+}
+
+// WorkflowStepCompleted is emitted when a step's handler returns nil.
+type WorkflowStepCompleted struct {
+	Workflow    string
+	ExecutionID string
+	Step        string
+	Attempt     int
+	Duration    time.Duration
+}
+
+// WorkflowStepFailed is emitted when a step's handler returns an error,
+// panics, or times out. It is emitted for every failed attempt, including
+// those that will be retried.
+type WorkflowStepFailed struct {
+	Workflow    string
+	ExecutionID string
+	Step        string
+	Attempt     int
+	Duration    time.Duration
+	Err         string
+	// Retryable reports whether another attempt is scheduled.
+	Retryable bool
+}
+
+// WorkflowRetrying is emitted when a failed step is scheduled for another
+// attempt, after the backoff delay has been computed.
+type WorkflowRetrying struct {
+	Workflow    string
+	ExecutionID string
+	Step        string
+	// Attempt is the attempt number that is about to run.
+	Attempt int
+	Delay   time.Duration
+}
+
+// WorkflowTimedOut is emitted when a workflow or one of its steps exceeds
+// its deadline. Step is empty when the whole execution timed out.
+type WorkflowTimedOut struct {
+	Workflow    string
+	ExecutionID string
+	Step        string
+	Timeout     time.Duration
+}
+
+// WorkflowCancelled is emitted when an execution stops because its
+// context was cancelled.
+type WorkflowCancelled struct {
+	Workflow    string
+	ExecutionID string
+	Step        string
+	Reason      string
+}
+
+// WorkflowCompleted is emitted when every required step has succeeded.
+type WorkflowCompleted struct {
+	Workflow    string
+	ExecutionID string
+	Steps       int
+	Duration    time.Duration
+}
+
+// WorkflowFailed is emitted when an execution ends without completing.
+type WorkflowFailed struct {
+	Workflow    string
+	ExecutionID string
+	// Step names the step that caused the failure, when there was one.
+	Step     string
+	Duration time.Duration
+	Err      string
+}
+
+// WorkflowCompensationStarted is emitted when a failure triggers rollback
+// of the steps that had already succeeded.
+type WorkflowCompensationStarted struct {
+	Workflow    string
+	ExecutionID string
+	// Steps is the number of completed steps that will be compensated.
+	Steps int
+	// Cause is the error that triggered compensation.
+	Cause string
+}
+
+// WorkflowCompensationCompleted is emitted when every compensation
+// handler has run successfully.
+type WorkflowCompensationCompleted struct {
+	Workflow    string
+	ExecutionID string
+	Steps       int
+	Duration    time.Duration
+}
+
+// WorkflowCompensationFailed is emitted when a compensation handler
+// itself fails, which leaves the execution in a state that needs
+// operator attention.
+type WorkflowCompensationFailed struct {
+	Workflow    string
+	ExecutionID string
+	Step        string
+	Err         string
+}
+
 // --- Scheduler ---
 
 // JobStarted is emitted when a scheduled job begins.
@@ -313,6 +445,19 @@ func init() {
 	SetName[ClientDisconnected]("ws.client.disconnected")
 	SetName[MessageReceived]("ws.message.received")
 	SetName[MessageSent]("ws.message.sent")
+
+	SetName[WorkflowStarted]("workflow.started")
+	SetName[WorkflowStepStarted]("workflow.step.started")
+	SetName[WorkflowStepCompleted]("workflow.step.completed")
+	SetName[WorkflowStepFailed]("workflow.step.failed")
+	SetName[WorkflowRetrying]("workflow.retrying")
+	SetName[WorkflowTimedOut]("workflow.timed_out")
+	SetName[WorkflowCancelled]("workflow.cancelled")
+	SetName[WorkflowCompleted]("workflow.completed")
+	SetName[WorkflowFailed]("workflow.failed")
+	SetName[WorkflowCompensationStarted]("workflow.compensation.started")
+	SetName[WorkflowCompensationCompleted]("workflow.compensation.completed")
+	SetName[WorkflowCompensationFailed]("workflow.compensation.failed")
 
 	SetName[JobStarted]("scheduler.job.started")
 	SetName[JobFinished]("scheduler.job.finished")

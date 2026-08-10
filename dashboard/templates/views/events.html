@@ -1,23 +1,42 @@
 {{define "content"}}
 <div id="ev-not-attached" class="ev-warn" style="display:none">
   No event bus is attached. Call
-  <code>observability.Attach(bus, collector)</code>
+  <code>collector.AttachEvents(events.Default)</code>
   during startup to stream dispatches into the dashboard.
 </div>
 
 <div class="cards" id="ev-totals"></div>
+
+<!-- Running workflow executions. Hidden entirely when nothing is in
+     flight, so applications that use no workflows see the page exactly
+     as before. -->
+<div class="table-wrap" id="ev-live-wrap" style="display:none;margin-bottom:16px">
+  <div class="table-head">
+    <h3>Running Workflows (<span id="ev-live-count">0</span>)</h3>
+    <span class="ev-live-hint">updates as steps execute</span>
+  </div>
+  <div id="ev-live"></div>
+</div>
+
 
 <div class="table-wrap">
   <div class="table-head">
     <h3>Recent Dispatches (<span id="ev-count">0</span>)</h3>
     <div class="filters">
       <input id="ev-search" placeholder="Search event, source, error...">
+      <select id="ev-source" title="Filter by producing subsystem">
+        <option value="">All sources</option>
+        <option value="events">Events</option>
+        <option value="workflow">Workflows</option>
+        <option value="http">HTTP</option>
+        <option value="scheduler">Scheduler</option>
+      </select>
       <label class="chk"><input type="checkbox" id="ev-failed-only"> Failed only</label>
     </div>
   </div>
   <div class="table-scroll">
     <table>
-      <thead><tr><th>Time</th><th>Event</th><th>Source</th><th>Duration</th><th>Listeners</th><th>Result</th><th>Error</th><th>Payload</th></tr></thead>
+      <thead><tr><th>Time</th><th>Event</th><th>Source</th><th>Duration</th><th>Steps</th><th>Result</th><th>Error</th><th>Payload</th></tr></thead>
       <tbody id="ev-tbody"></tbody>
     </table>
   </div>

@@ -24,7 +24,6 @@ type Config struct {
 	ErrSink func(error)
 }
 
-
 // Collector is the hub of the observability layer.
 //
 // Producers emit Signals through it; the dashboard reads them back
@@ -229,7 +228,6 @@ func (c *Collector) MetricForSource(src Source, name string) *Metric {
 	cp := *m
 	return &cp
 }
-
 
 // Stats returns the aggregate counters.
 func (c *Collector) Stats() Stats {

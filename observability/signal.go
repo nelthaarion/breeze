@@ -26,6 +26,7 @@ const (
 	SourceWebSocket Source = "websocket"
 	SourceOAuth2    Source = "oauth2"
 	SourcePlugin    Source = "plugin"
+	SourceWorkflow  Source = "workflow"
 )
 
 // Kind describes the shape of a signal within its source.
@@ -40,6 +41,14 @@ const (
 	// KindListener is a child unit that completed after its parent was
 	// already recorded, which is how asynchronous work is reported.
 	KindListener Kind = "listener"
+
+	// KindWorkflow is one workflow execution. Its steps are carried as
+	// [Span] values, in the order they ran.
+	KindWorkflow Kind = "workflow"
+
+	// KindStep is a single workflow step recorded on its own, used when a
+	// step is durable and outlives the execution that started it.
+	KindStep Kind = "step"
 )
 
 // Signal is one observed occurrence anywhere in the framework.

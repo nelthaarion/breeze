@@ -92,6 +92,48 @@ pre{background:var(--bg);padding:12px;border-radius:var(--r-sm);overflow:auto;bo
 .table-head h3{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim)}
 .table-head .filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .table-head .filters input,.table-head .filters select{width:auto;min-width:120px}
+
+/* ── Event / workflow detail pane ─────────────────────────────────────
+   Shared by event dispatches and workflow executions. A workflow's
+   spans are grouped by DAG level, so steps that ran concurrently are
+   drawn under one .wf-level header instead of looking sequential. */
+.ev-meta{display:flex;flex-wrap:wrap;gap:8px 20px;padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px}
+.ev-meta>div{display:flex;gap:6px;align-items:center}
+.ev-meta>div>span{color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+.ev-payload{padding:10px 14px;border-bottom:1px solid var(--border)}
+.ev-payload>span{color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px}
+.ev-payload pre{margin:0;font-family:var(--mono);font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--text)}
+.ev-spans{padding:10px 14px}
+.ev-spans .head2{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);margin-bottom:8px;font-weight:600}
+.ev-span{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;border-bottom:1px solid rgba(48,54,61,.35)}
+.ev-span:last-child{border-bottom:none}
+.ev-span.par{padding-left:14px}
+.ev-span .idx{color:var(--text-muted);font-family:var(--mono);font-size:10px;min-width:18px}
+.ev-span .name{font-family:var(--mono);font-size:11px;min-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ev-span .phase,.ev-span .prio{color:var(--text-dim);font-size:10px}
+.ev-span .dur{font-family:var(--mono);font-size:11px;min-width:64px;text-align:right;color:var(--text-dim)}
+.ev-span .err{color:var(--err);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The bar makes relative step cost readable at a glance; it is scaled
+   against the slowest span in the same execution. */
+.ev-span .bar{flex:1;min-width:60px;height:6px;background:rgba(48,54,61,.5);border-radius:3px;overflow:hidden}
+.ev-span .bar i{display:block;height:100%;border-radius:3px}
+.ev-span .bar i.green{background:var(--green)}
+.ev-span .bar i.red{background:var(--err)}
+.ev-span .bar i.yellow{background:var(--yellow)}
+.ev-span .bar i.gray{background:var(--text-muted)}
+.wf-level{display:flex;align-items:center;gap:8px;margin:10px 0 4px}
+.wf-level .lvl{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--text-dim);background:rgba(48,54,61,.5);padding:1px 6px;border-radius:3px}
+.wf-level .tag{font-size:10px;color:var(--text-muted)}
+/* A parallel level is called out in colour, because "these ran at the
+   same time" is the single most important thing to see here. */
+.wf-level.parallel .lvl{color:var(--primary);background:rgba(88,166,255,.15)}
+.wf-level.parallel .tag{color:var(--primary)}
+.wf-state{font-weight:600;text-transform:capitalize}
+.wf-state.completed{color:var(--green)}
+.wf-state.failed{color:var(--err)}
+.wf-state.compensated,.wf-state.compensating{color:var(--yellow)}
+.wf-state.cancelled,.wf-state.timed_out{color:var(--text-muted)}
+.wf-state.running,.wf-state.pending{color:var(--primary)}
 .table-scroll{max-height:560px;overflow:auto}
 .method-pill{display:inline-block;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:.5px;font-family:var(--mono);min-width:42px;text-align:center}
 .method-pill.GET{background:rgba(63,185,80,.15);color:var(--green)}

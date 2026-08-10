@@ -84,8 +84,14 @@ type Collector struct {
         // Event observability. eventCol is nil until the application calls
         // AttachEvents; every read path tolerates that, so a dashboard
         // without the event system wired up costs nothing. See events.go.
-        eventsMu sync.RWMutex
-        eventCol *observability.Collector
+	eventsMu sync.RWMutex
+	eventCol *observability.Collector
+
+	// wfLive tracks workflow executions that are still running. The
+	// event ring buffer only ever holds finished executions, so live
+	// progress has to be accumulated separately as step events arrive.
+	wfLive *workflowLive
+
 
 
         // Database writer used by the database browser's CRUD UI. Optional —

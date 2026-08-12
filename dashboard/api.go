@@ -62,8 +62,7 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
                 })
         } else {
                 templatesDir = dir
-                engine := templateEngine(dir)
-                c.engine = engine
+                c.engine = templateEngine(dir)
 
                 // ── Static assets (CSS/JS) — no auth required ─────────────────────
                 publicDir := dir + "/public"
@@ -149,34 +148,36 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
                         }
                 })
 
-                // ── View routes — one per dashboard page ──────────────────────────
-                pages := []string{
+                legacyPages := []string{
                         "overview", "routes", "api", "requests",
-                        "cache", "logs",
-                        "health", "performance", "timeline", "architecture",
-                        "events",
+                        "database", "queries",
+                        "cache", "queue", "scheduler", "logs",
+                        "health", "performance", "timeline",
                 }
 
-
-                // Index route — auth + render overview
+                // Index route — auth + render SPA shell
                 router.Handle(breeze.GET, base, func(ctx *breeze.Context) {
                         auth(ctx)
                         if ctx.Res != nil && (ctx.Res.Status == 302 || ctx.Res.Status == 401) {
                                 return
                         }
-                        data := c.viewData(ctx, "overview")
-                        engine.RenderView(ctx, "overview", data)
+                        ctx.HTML([]byte(SPA()))
                 })
 
-                for _, page := range pages {
+                for _, page := range legacyPages {
                         pageName := page
                         router.Handle(breeze.GET, base+"/"+pageName, func(ctx *breeze.Context) {
                                 auth(ctx)
                                 if ctx.Res != nil && (ctx.Res.Status == 302 || ctx.Res.Status == 401) {
                                         return
                                 }
-                                data := c.viewData(ctx, pageName)
-                                engine.RenderView(ctx, pageName, data)
+                                ctx.Res = &breeze.HTTPResponse{
+                                        Status: 302,
+                                        Headers: map[string]string{
+                                        	"Location": base + "#/" + pageName,
+                                        },
+                                        Body: []byte("redirecting..."),
+                                }
                         })
                 }
         }
@@ -774,4 +775,3 @@ func buildPerfMetrics(c *Collector) PerfMetrics {
                 },
         }
 }
-

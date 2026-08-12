@@ -77,3 +77,17 @@ func TestLegacyDashboardPagesRedirectToHashRoutes(t *testing.T) {
 		})
 	}
 }
+
+func TestSPAScriptRedirectsUnauthorizedAPICallsToLogin(t *testing.T) {
+	shell := SPA()
+	checks := []string{
+		"if(r.status === 401){",
+		"window.location.href = S.base + '/login';",
+		"throw new Error('unauthorized');",
+	}
+	for _, check := range checks {
+		if !strings.Contains(shell, check) {
+			t.Fatalf("SPA shell missing unauthorized redirect snippet: %q", check)
+		}
+	}
+}

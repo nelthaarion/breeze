@@ -119,6 +119,10 @@ function escapeHTML(s){
 function api(path, opts){
   opts = opts||{};
   return fetch(S.base + '/api/' + path, opts).then(function(r){
+    if(r.status === 401){
+      window.location.href = S.base + '/login';
+      throw new Error('unauthorized');
+    }
     if(!r.ok) throw new Error('HTTP '+r.status);
     return r.json();
   });
@@ -128,7 +132,13 @@ function apiPost(path, body){
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body||{})
-  }).then(function(r){return r.json()});
+  }).then(function(r){
+    if(r.status === 401){
+      window.location.href = S.base + '/login';
+      throw new Error('unauthorized');
+    }
+    return r.json();
+  });
 }
 function apiSend(path, method, body){
   return fetch(S.base + '/api/' + path, {
@@ -136,6 +146,10 @@ function apiSend(path, method, body){
     headers: {'Content-Type': 'application/json'},
     body: body===undefined ? undefined : JSON.stringify(body)
   }).then(function(r){
+    if(r.status === 401){
+      window.location.href = S.base + '/login';
+      throw new Error('unauthorized');
+    }
     return r.json().catch(function(){return {};}).then(function(data){
       return {ok:r.ok, status:r.status, data:data};
     });

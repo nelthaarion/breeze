@@ -88,7 +88,9 @@ Create `scripts/next-version.sh`:
 #!/usr/bin/env bash
 set -euo pipefail
 
-latest=$(git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)
+# `|| true` is required: with `pipefail`, grep exits non-zero when no tag matches,
+# which would abort the script under `set -e` before the fallback below can run.
+latest=$(git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
 
 if [ -z "$latest" ]; then
   echo "v0.1.0"
@@ -269,3 +271,28 @@ Do not merge this PR automatically — merging to `main` is the action that make
 - Spec coverage: trigger (Task 2 Step 1), concurrency group (Task 2 Step 1), skip-on-`[skip release]` (Task 2 Step 1 job `if`), version resolution + malformed-tag exclusion + fallback (Task 1), tag+push+release (Task 2 Step 1), `contents: write` (Task 2 Step 1), manual-bump compatibility (unchanged — script always reads current tags at run time, verified by Task 1's design). All covered.
 - No placeholders: every step has literal code/commands, no "TBD" or "add appropriate handling".
 - Type/name consistency: `scripts/next-version.sh` is invoked identically in Task 1 Step 5 and Task 2 Step 1 (`bash scripts/next-version.sh`); output variable name `next` in `steps.version.outputs.next` is defined once (Task 2 Step 1) and used consistently in the same task.
+
+## Execution Notes (2026-08-13)
+
+Executed and merged to `main` as `093d293`. Three deviations from the plan as written:
+
+1. **Script bug fixed.** The implementation in Task 1 Step 3 combined `set -euo pipefail` with
+   an unguarded `grep`, so when no tag matched, `grep` exited non-zero and killed the script
+   before the `v0.1.0` fallback could run — making the spec-required fallback unreachable.
+   Fixed with `|| true` on the pipeline (now reflected in the code block above). This turned
+   out to be the path actually taken on the first real run, so without the fix the workflow
+   would have hard-failed.
+
+2. **Pre-merge dry run is impossible.** Task 2 Steps 3–5 assume `gh workflow run
+   release.yml --ref feature/...` works before merge. It does not: GitHub only exposes
+   `workflow_dispatch` for workflows present on the **default branch**, so the trigger is
+   rejected until `release.yml` is on `main`. The `dry_run` input remains useful afterwards.
+   Verification was instead done by merging and observing the real run. `gh` was also not
+   installed on the dev machine, so the PR in Task 3 was skipped and the branch merged
+   locally, by explicit decision.
+
+3. **Expected version was wrong.** Task 1 Step 5 and Task 2 Step 4 expect `v1.5.3`. The
+   `v1.5.x` tags live on `upstream` (`nelthaarion/breeze`), not on the fork; `origin` had no
+   tags at all. Local runs print `v1.5.3` only because the dev clone has `upstream` fetched.
+   The workflow correctly took the fallback and cut **`v0.1.0`** plus a matching release. The
+   fork now versions independently of upstream — see the design spec's "Version line" note.

@@ -43,11 +43,24 @@ docs-only) guard is included, per explicit decision during design review.
 
 ## Version resolution
 
-1. List tags matching the regex `^v[0-9]+\.[0-9]+\.[0-9]+$` only. This repo's tag history
-   contains malformed entries (`v.1.4.1`, bare `1.0.1`) that must be excluded from consideration.
-2. Sort matching tags by semver and take the highest. As of this writing that is `v1.5.2`.
-3. Bump the **patch** segment only: `v1.5.2` → `v1.5.3`. Minor/major bumps are never automatic.
-4. If no tag matches the regex at all (fresh repo edge case), fall back to `v0.1.0`.
+1. List tags matching the regex `^v[0-9]+\.[0-9]+\.[0-9]+$` only. Malformed entries
+   (`v.1.4.1`, bare `1.0.1`, `v1.0`) must be excluded from consideration.
+2. Sort matching tags by semver and take the highest.
+3. Bump the **patch** segment only: `v0.1.0` → `v0.1.1`. Minor/major bumps are never automatic.
+4. If no tag matches the regex at all, fall back to `v0.1.0`.
+
+**Which tags count.** Only tags on `Znow/breeze` (`origin`) — the workflow runs against the
+fork, and `actions/checkout` fetches only that remote's tags. The `v1.x` history
+(`v1.5.2`, `v1.3.x`) and the malformed entries above all live on `upstream`
+(`nelthaarion/breeze`); none of them were ever on the fork. A local clone with `upstream`
+fetched shows the union of both, which is misleading — an earlier draft of this spec read
+local tag state and wrongly asserted the fork's highest tag was `v1.5.2`.
+
+**Version line.** As of 2026-08-13 the fork had no tags, so the first workflow run took the
+fallback and cut `v0.1.0`; subsequent merges produce `v0.1.1`, `v0.1.2`, and so on. The fork
+therefore versions **independently of upstream** and will not track upstream's `v1.5.x`
+numbering. This was a deliberate choice — the alternative (seeding the fork with upstream's
+`v1.5.2` so auto-bumps continue from `v1.5.3`) was considered and declined.
 
 ## Tagging & release
 

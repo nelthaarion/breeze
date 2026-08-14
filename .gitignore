@@ -14,3 +14,6 @@
 # Coverage artifacts
 *.out
 coverage.html
+
+# Local worktrees
+/.worktrees/

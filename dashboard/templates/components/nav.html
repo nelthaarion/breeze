@@ -17,7 +17,12 @@
     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 13 2 L 4 14 L 11 14 L 11 22 L 20 10 L 13 10 Z"/></svg>
     <span>Events</span>
   </a>
+  <a class="nav-item{{if eq .Data.Page "video"}} active{{end}}" href="{{.Data.BasePath}}/video" data-nav="video">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 3 6 L 15 6 L 15 18 L 3 18 Z M 15 10 L 21 7 L 21 17 L 15 14 Z"/></svg>
+    <span>Video</span>
+  </a>
   <a class="nav-item{{if eq .Data.Page "performance"}} active{{end}}" href="{{.Data.BasePath}}/performance" data-nav="performance">
+
     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 3 17 L 9 11 L 13 15 L 21 7 M 14 7 L 21 7 L 21 14"/></svg>
     <span>Performance</span>
 

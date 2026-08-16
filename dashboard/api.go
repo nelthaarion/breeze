@@ -154,7 +154,8 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
                         "overview", "routes", "api", "requests",
                         "cache", "logs",
                         "health", "performance", "timeline", "architecture",
-                        "events",
+                        "events", "video",
+
                 }
 
 
@@ -198,6 +199,8 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
         router.Handle(breeze.GET, api+"/timeline/:id", c.wrap(auth, c.handleTimelineGet))
         router.Handle(breeze.GET, api+"/architecture", c.wrap(auth, c.handleArchitecture))
         router.Handle(breeze.GET, api+"/events", c.wrap(auth, c.handleEvents))
+        router.Handle(breeze.GET, api+"/video", c.wrap(auth, c.handleVideo))
+
 
                 router.Handle(breeze.GET, api+"/db/tables", c.wrap(auth, c.handleDBTables))
                 router.Handle(breeze.GET, api+"/db/tables/:name", c.wrap(auth, c.handleDBTableData))
@@ -237,7 +240,9 @@ func pageLabelFor(page string) string {
                 "timeline":    "Timeline",
                 "architecture": "Architecture",
                 "events":      "Events",
+                "video":       "Video Streaming",
         }
+
 
         if t, ok := titles[page]; ok {
                 return t

@@ -212,7 +212,9 @@ var PAGES = {
   timeline: {title:'Timeline', init: initTimeline},
   architecture: {title:'Architecture', init: initArchitecture},
   events: {title:'Events', init: initEvents},
+  video: {title:'Video Streaming', init: initVideo},
 };
+
 
 
 function initPage(page){
@@ -1391,8 +1393,92 @@ function renderEvents(){
   var mtb = $('#ev-metrics-tbody');
   if(mtb) mtb.innerHTML = mhtml;
 }
+// ─── Video Streaming ───────────────────────────────────────────────────
+
+// The video page groups by file rather than by request. One viewer
+// generates hundreds of range requests, so a per-request table would show
+// the same film several hundred times and answer no useful question. The
+// server aggregates; this renders that aggregate.
+function initVideo(){
+  loadVideo();
+  // Two seconds rather than the ten used elsewhere: bandwidth is the
+  // point of this page, and a rate that updates every ten seconds reads
+  // as stale while a video is visibly playing.
+  setInterval(function(){ if(S.page==='video') loadVideo(); }, 2000);
+}
+function loadVideo(){
+  api('video').then(function(d){ S.video = d; renderVideo(); }).catch(function(){});
+}
+
+// fmtRate renders a byte rate. It is separate from fmtBytes because a
+// rate needs the "/s" and reads better in bits for network figures — but
+// bytes are kept here to stay consistent with every other size on the
+// dashboard.
+function fmtRate(bps){
+  if(!bps) return '0 B/s';
+  return fmtBytes(bps) + '/s';
+}
+
+function renderVideo(){
+  var d = S.video || {};
+  var files = d.files || [];
+
+  var na = $('#vid-not-attached');
+  if(na) na.style.display = (d.attached === false) ? 'block' : 'none';
+
+  var tc = $('#vid-totals');
+  if(tc){
+    tc.innerHTML =
+      '<div class="card"><div class="label">Bandwidth</div><div class="value">'+fmtRate(d.total_bytes_per_sec)+'</div><div class="delta">'+fmtNum(d.window_seconds,0)+'s window</div></div>'+
+      '<div class="card"><div class="label">Streaming Now</div><div class="value" style="color:var(--primary)">'+fmtNum(d.active_files)+'</div><div class="delta">files</div></div>'+
+      '<div class="card"><div class="label">Tracked Files</div><div class="value">'+fmtNum(files.length)+'</div></div>'+
+      '<div class="card"><div class="label">Total Sent</div><div class="value">'+fmtBytes(d.total_bytes)+'</div></div>'+
+      '<div class="card"><div class="label">Requests</div><div class="value">'+fmtNum(d.total_requests)+'</div></div>';
+  }
+
+  var cnt = $('#vid-count');
+  if(cnt) cnt.textContent = files.length;
+
+  var html = '';
+  files.forEach(function(f){
+    // A file with recent traffic is the one worth looking at, so it gets
+    // the live badge; everything else is history that has not aged out.
+    var badge = f.active
+      ? '<span class="badge blue">streaming</span>'
+      : '<span class="badge gray">idle</span>';
+
+    // Disconnects are shown plainly rather than in red: abandoning a
+    // response is how seeking works, and flagging it as a problem would
+    // train the reader to ignore the column that does matter.
+    var disc = f.disconnects ? fmtNum(f.disconnects) : '-';
+    var errs = f.errors ? '<span class="badge red">'+fmtNum(f.errors)+'</span>' : '-';
+    var cached = f.not_modified ? fmtNum(f.not_modified) : '-';
+
+    html += '<tr>'+
+      '<td style="font-family:var(--mono);font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis">'+escapeHTML(f.file)+'</td>'+
+      '<td>'+badge+'</td>'+
+      '<td style="font-family:var(--mono)">'+fmtRate(f.bytes_per_sec)+'</td>'+
+      '<td>'+fmtBytes(f.bytes)+'</td>'+
+      '<td>'+fmtNum(f.requests)+'</td>'+
+      '<td>'+fmtNum(f.partial)+'</td>'+
+      '<td>'+cached+'</td>'+
+      '<td>'+disc+'</td>'+
+      '<td>'+errs+'</td>'+
+      '<td>'+fmtMS(f.avg_ms)+'</td>'+
+      '<td style="font-size:11px;color:var(--text-dim)">'+fmtTime(f.last_seen)+'</td>'+
+      '</tr>';
+  });
+  if(!files.length){
+    html = '<tr><td colspan="11" class="empty">No video served yet'+
+      (d.attached === false ? ' — attach video tracking first' : '')+'</td></tr>';
+  }
+  var tb = $('#vid-tbody');
+  if(tb) tb.innerHTML = html;
+}
+
 // ─── Canvas charts ─────────────────────────────────────────────────────
 function drawLineChart(canvas, data, color){
+
 
   if(!canvas) return;
   var dpr = window.devicePixelRatio || 1;

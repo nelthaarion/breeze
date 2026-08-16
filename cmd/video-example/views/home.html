@@ -1,0 +1,30 @@
+{{define "content"}}
+<p class="lede">
+  Every response here is a <code>206 Partial Content</code> carrying at most
+  one chunk. Drag the scrubber to a point that has not downloaded yet — each
+  jump is a fresh range request, which is the behaviour this package exists
+  to provide.
+</p>
+
+{{if .Data.Videos}}
+  {{range .Data.Videos}}
+  <div class="clip">
+    <h2>{{.Name}}</h2>
+    <video controls preload="metadata" src="{{.URL}}"></video>
+  </div>
+  {{end}}
+{{else}}
+  <div class="empty">
+    <strong>No videos found.</strong>
+    Drop an <code>.mp4</code> into <code>{{.Data.Root}}</code> and reload.
+  </div>
+{{end}}
+
+<p class="note">
+  Serving <code>{{.Data.Root}}</code> ·
+  chunk size {{.Data.ChunkSize}} ·
+  signed URLs {{if .Data.Signed}}on{{else}}off{{end}}<br>
+  Verify from a shell:
+  <code>curl -r 0-1023 -D - -o /dev/null http://localhost:3000/videos/&lt;name&gt;</code>
+</p>
+{{end}}

@@ -396,12 +396,12 @@ pre{background:var(--surface2);padding:14px;border-radius:var(--r-md);overflow:a
 
 /* ─── Stat cards ──────────────────────────────────────────────────────── */
 
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:16px;margin-bottom:20px}
-.card{border-radius:var(--r);padding:20px;position:relative;overflow:hidden;transition:transform .2s,box-shadow .2s}
+.cards{background-color: transparent!important ;display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:16px;margin-bottom:20px}
+.card{background-color: transparent!important ;border-radius:var(--r);padding:20px;position:relative;overflow:hidden;transition:transform .2s,box-shadow .2s}
 .card:hover{transform:translateY(-3px);box-shadow:var(--sh-3),var(--sh-inset)}
-.card .label{font-size:var(--fs-2xs);text-transform:uppercase;letter-spacing:var(--ls-wider);color:var(--text-muted);font-weight:var(--fw-black);margin-bottom:10px}
-.card .value{font-size:var(--fs-display);font-weight:var(--fw-black);letter-spacing:var(--ls-tighter);font-variant-numeric:tabular-nums;line-height:1.1}
-.card .delta{font-size:var(--fs-xs);color:var(--text-dim);margin-top:8px;font-weight:var(--fw-med)}
+.card .label{background-color: transparent!important ;font-size:var(--fs-2xs);text-transform:uppercase;letter-spacing:var(--ls-wider);color:var(--text-muted);font-weight:var(--fw-black);margin-bottom:10px}
+.card .value{background-color: transparent!important ;font-size:var(--fs-display);font-weight:var(--fw-black);letter-spacing:var(--ls-tighter);font-variant-numeric:tabular-nums;line-height:1.1}
+.card .delta{background-color: transparent!important ;font-size:var(--fs-xs);color:var(--text-dim);margin-top:8px;font-weight:var(--fw-med)}
 .card.red .value{color:var(--err)}
 
 /* ─── Charts ──────────────────────────────────────────────────────────── */

@@ -4,7 +4,93 @@ All changes made to the Breeze framework.
 
 ---
 
+## [v1.7.0] — Video Streaming
+
+### New Features
+
+#### Byte-Range Video Streaming (`video`)
+
+A media handler that lets browsers **seek**, which is the whole difficulty:
+a `<video>` element never downloads a file in one go — it reads the
+container header, jumps to wherever the viewer clicked, and reads forward
+from there. Each jump is a separate request carrying a `Range` header.
+Ignore it and the video still plays, which is what makes the bug expensive
+to find: the scrubber is simply dead.
+
+- **`video.Mount(router, video.Config{Root: "./media"})`** registers `GET`
+  and `HEAD` on `/videos/*filepath`. Correct `206 Partial Content` with
+  `Content-Range`, `416` for unsatisfiable ranges, and `200` for malformed
+  ones (which RFC 9110 requires be ignored rather than rejected).
+- **Bounded memory**: one pooled chunk in flight per response (256 KiB
+  default), so ten thousand viewers cost ten thousand chunks rather than
+  ten thousand copies of the file. Open-ended `Range: bytes=0-` — which
+  players routinely send — is capped at `MaxChunkSize` (4 MiB) so an
+  opening request cannot pin an entire movie in memory.
+- **Traversal defence ordered deliberately**: percent-decode *first* (or
+  `%2e%2e%2f` walks past a literal-dot check), reject NUL and backslash,
+  reject any `..` segment outright rather than cleaning it away — cleaning
+  is safe but silently rewrites an attack into a legitimate-looking lookup,
+  so neither the logs nor `Authorize` ever learn it happened — hide
+  dotfiles, allow-list extensions, and only then touch the disk, proving
+  containment against the symlink-resolved real path.
+- **404, never 403**, for everything about a file's existence, so the
+  filesystem cannot be mapped by watching which refusals differ. The real
+  reason goes to `OnError`, never to the wire.
+- **Optional signed, expiring URLs** (`video.Sign`) verified *before* any
+  filesystem access, so an unauthenticated flood costs no disk I/O.
+  Constant-time comparison, with the expiry inside the signed payload so it
+  cannot be extended by editing the query string.
+- **Conditional requests answered before the file is opened**, so a
+  revalidation costs a stat instead of a transfer. `If-None-Match` takes
+  precedence over `If-Modified-Since`, and `If-Range` is honoured so a
+  resumed download cannot be silently corrupted.
+- **Publishes `StreamServed` and an `observability.Signal`.** A viewer who
+  closes the tab is reported as **cancelled, not failed** — in video that
+  is the most common way a request ends, and counting those as errors would
+  make a healthy server look like an outage.
+
+Structurally this could not be a thin wrapper: `HTTPResponse.Bytes()`
+always emits `Content-Length: len(Body)` and always writes `Body`, so a
+`206` covering one slice of a file, a bodyless `304`, and a multi-write
+stream whose head goes out before the bytes exist are all outside what it
+can express. The package therefore takes over the connection and serialises
+its own head.
+
+#### Dashboard: Video page (`dashboard`)
+
+- **`Collector.AttachVideo(bus) func()`** aggregates `StreamServed` **by
+  file** — throughput, seeks, disconnects and errors per title. Separate
+  from `AttachEvents` on purpose, so a dashboard with no media allocates
+  nothing; every tracker method tolerates a nil receiver.
+- Streaming breaks the one-row-per-request model the Live Requests feed
+  assumes: a single viewer emits hundreds of range requests for one file,
+  so that page shows the same filename repeatedly, interleaved with
+  unrelated traffic — and it cannot report throughput at all, because
+  bandwidth is a property of a stream, not of any one request.
+- Rates use a fixed 10-second window rather than the span between samples,
+  which would read two requests 3 ms apart as tens of MB/s of "sustained"
+  throughput. `304`s are excluded so a well-cached file does not look slow.
+  The file table is bounded with idle-first eviction, so path-probing
+  cannot push a live stream off the page.
+
+### Maintenance
+
+- Toolchain moved to **Go 1.25.13**, which clears five standard-library
+  advisories (`net/url`, `html/template`, `crypto/tls`, `encoding/asn1`,
+  `net/http`). Both CI workflows resolve their toolchain with
+  `go-version-file: go.mod`, so the `go` directive is the single source of
+  truth — and it is also what `govulncheck` reads to decide which stdlib to
+  analyse.
+- `Dockerfile` `GO_VERSION` raised from `1.24`, which had fallen below the
+  `go.mod` requirement. That failure is quiet rather than loud: the
+  toolchain simply downloads the needed version, and the image stops
+  matching the base layer it advertises.
+- `golang.org/x/sync` → v0.22.0, `golang.org/x/sys` → v0.47.0.
+
+---
+
 ## [v1.6.0] — Event System & Workflow Orchestration
+
 
 ### New Features
 

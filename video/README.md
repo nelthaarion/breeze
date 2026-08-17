@@ -137,6 +137,38 @@ errors would make a healthy server look like an outage. `Bytes` reports what
 actually left, so a transfer abandoned at 90% is distinguishable from one
 that never started.
 
+### The dashboard's Video tab
+
+The dashboard can consume that event and show what is playing right now:
+
+```go
+coll := dashboard.Install(app, router, dashboard.Config{})
+defer coll.AttachVideo(events.Default)()
+```
+
+This is a separate call from `AttachEvents` on purpose, so an application
+with no media pays nothing: the tracker is only allocated when you attach
+it.
+
+The reason it is not just the Live Requests feed is that streaming breaks
+the one-row-per-request model. A single viewer emits hundreds of range
+requests for one file, so that feed shows the same filename repeatedly,
+interleaved with unrelated traffic, with the oldest entries evicted first —
+and it cannot report throughput at all, because bandwidth is a property of
+a *stream*, not of any single request. The Video tab therefore aggregates
+**by file**: bytes in flight, MB/s, seeks, disconnects and errors per title.
+
+Rates are computed over a fixed 10-second window rather than the span
+between samples, because two requests 3 ms apart would otherwise read as
+tens of MB/s of "sustained" throughput. `304`s are excluded from that
+window, so a well-cached file does not appear slow. The file table is
+bounded, and idle files are evicted before active ones, so a client probing
+random paths cannot push a live stream off the page.
+
+Finished requests remain in the observability ring buffer either way — the
+tab is a live view, not the historical record.
+
+
 ## Configuration
 
 | Field | Default | Notes |

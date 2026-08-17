@@ -3,19 +3,67 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
+
   <title>Breeze Dashboard — Login</title>
   <style>
+    /* The login page is served before the stylesheet is reachable, so it
+       carries its own copy of the tokens. Kept in step with
+       public/dashboard.css: light by default, dark on OS preference.
+
+       color-scheme is declared here because the CSS property overrides the
+       color-scheme meta above, which is what keeps the native form controls
+       light in the default theme. */
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     :root{
-      --bg:#0d1117;--surface:#161b22;--surface2:#1c2128;--border:#30363d;
-      --text:#e6edf3;--text-dim:#8b949e;--text-muted:#6e7681;
-      --primary:#58a6ff;--primary-dim:#1f6feb;--purple:#bc8cff;
-      --err:#f85149;
-      --sans:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',Helvetica,Arial,sans-serif;
+      color-scheme:light;
+      --bg:linear-gradient(155deg,#f7f9ff 0%,#eef1ff 45%,#f8f4ff 100%);
+      --field-1:#dbe0ff;--field-2:#cfe4ff;--field-3:#f0e2ff;
+      --glass:linear-gradient(150deg,rgba(255,255,255,.9),rgba(255,255,255,.74));
+      --glass-brd:rgba(255,255,255,.9);
+      --surface:#ffffff;--surface2:#f4f5ff;--border:#e6e6f8;
+      --text:#171334;--text-dim:#565277;--text-muted:#8b87ab;
+      --primary:#4f46e5;--primary-dim:#4338ca;--primary-lift:#6366f1;--purple:#7c3aed;
+      --err:#dc2626;--t-red:rgba(220,38,38,.1);--t-red-b:rgba(220,38,38,.24);
+      --sh-card:0 6px 14px rgba(28,24,90,.07),0 24px 60px rgba(28,24,90,.13);
+      --sh-inset:inset 0 1px 0 rgba(255,255,255,.75);
+      --sh-primary:0 8px 22px rgba(79,70,229,.32);
+      --sh-focus:0 0 0 3px rgba(79,70,229,.2);
+      --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
     }
-    body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
+    @media (prefers-color-scheme:dark){
+      :root{
+        color-scheme:dark;
+        --bg:linear-gradient(155deg,#0d0b1c 0%,#110e26 45%,#150f2a 100%);
+        --field-1:#241d55;--field-2:#152a4d;--field-3:#331b4d;
+        --glass:linear-gradient(150deg,rgba(38,34,66,.86),rgba(28,25,52,.72));
+        --glass-brd:rgba(255,255,255,.09);
+        --surface:#1a1733;--surface2:#221e40;--border:#302b55;
+        --text:#eeecfb;--text-dim:#a8a2cc;--text-muted:#807aa8;
+        --primary:#8b83ff;--primary-dim:#6f63f5;--primary-lift:#a99fff;--purple:#c084fc;
+        --err:#fb7185;--t-red:rgba(251,113,133,.14);--t-red-b:rgba(251,113,133,.3);
+        --sh-card:0 8px 18px rgba(0,0,0,.45),0 28px 70px rgba(0,0,0,.5);
+        --sh-inset:inset 0 1px 0 rgba(255,255,255,.06);
+        --sh-primary:0 8px 24px rgba(111,99,245,.45);
+        --sh-focus:0 0 0 3px rgba(139,131,255,.3);
+      }
+    }
+    body{
+      font-family:var(--sans);
+      background:
+        radial-gradient(1100px 760px at 4% -10%,var(--field-1) 0%,transparent 58%),
+        radial-gradient(900px 640px at 98% 4%,var(--field-2) 0%,transparent 55%),
+        radial-gradient(1000px 720px at 50% 108%,var(--field-3) 0%,transparent 58%),
+        var(--bg);
+      background-attachment:fixed;
+      color:var(--text);font-size:13px;line-height:1.55;
+      letter-spacing:-.1px;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+
   </style>
+
 </head>
 <body>
   {{template "content" .}}

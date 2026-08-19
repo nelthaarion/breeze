@@ -92,6 +92,18 @@ type Collector struct {
 	// progress has to be accumulated separately as step events arrive.
 	wfLive *workflowLive
 
+	// vidLive tracks video streaming per file. Like wfLive it is nil
+	// until explicitly attached, because a server that serves no video
+	// should not pay for a tracker or a sweep goroutine.
+	vidLive *videoLive
+
+	// vidDetach releases the previous video subscription. It is held so
+	// a second AttachVideo replaces the first rather than leaving two
+	// trackers counting the same events.
+	vidDetach func()
+
+
+
 
 
         // Database writer used by the database browser's CRUD UI. Optional —

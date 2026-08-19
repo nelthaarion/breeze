@@ -1,0 +1,42 @@
+{{define "content"}}
+<div id="vid-not-attached" class="ev-warn" style="display:none">
+  Video tracking is not attached. Call
+  <code>collector.AttachVideo(bus)</code>
+  during startup, passing the same bus given to <code>video.Config.Bus</code>,
+  to stream streaming activity into the dashboard.
+</div>
+
+<div class="cards" id="vid-totals"></div>
+
+<div class="table-wrap">
+  <div class="table-head">
+    <h3>Streaming Files (<span id="vid-count">0</span>)</h3>
+    <span class="ev-live-hint">grouped by file &middot; a single viewer makes many range requests</span>
+  </div>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>File</th>
+          <th>State</th>
+          <th>Rate</th>
+          <th>Sent</th>
+          <th>Requests</th>
+          <th title="206 Partial Content responses — the normal case for video">Partial</th>
+          <th title="304 Not Modified — served from the client cache">Cached</th>
+          <th title="Viewers who went away mid-transfer. Normal: seeking abandons the current response.">Aborted</th>
+          <th>Errors</th>
+          <th title="Mean request duration. Read next to Rate to tell a slow disk from a slow link.">Avg</th>
+          <th>Last Seen</th>
+        </tr>
+      </thead>
+      <tbody id="vid-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>window.__breezeDashPage='video';</script>
+<script data-spa-run="always">
+if(window.BreezeDash) BreezeDash.initPage('video');
+</script>
+{{end}}

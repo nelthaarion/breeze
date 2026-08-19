@@ -39,7 +39,9 @@ efficiently while keeping your code clean and maintainable.
   - [Production Middleware](#-production-middleware)
   - [OAuth2 / Social Login](#-oauth2--social-login)
   - [Event System](#-event-system)
+  - [Video Streaming](#-video-streaming)
   - [Durable Workflows](#-durable-workflows)
+
   - [Built-in Developer Dashboard](#-built-in-developer-dashboard)
 
   - [Developer Experience](#-developer-experience)
@@ -52,7 +54,8 @@ efficiently while keeping your code clean and maintainable.
 
 ## Installation
 
-Requires **Go 1.25.12** or later.
+Requires **Go 1.25.13** or later.
+
 
 ```bash
 go get github.com/nelthaarion/breeze
@@ -312,7 +315,57 @@ events.Emit(UserCreated{UserID: 10})
 
 See [`events/README.md`](./events/README.md) for full documentation.
 
+### 🎬 Video Streaming
+
+`video` serves a directory of media files with byte-range support, so
+browsers can **seek**. A static file handler cannot do this: ignore the
+`Range` header and the video still plays, which is what makes the bug
+expensive to find — the scrubber is simply dead, because the browser cannot
+ask for the middle of a file it is being handed sequentially.
+
+- 🎯 `206 Partial Content` with correct `Content-Range`; `416` for
+  unsatisfiable ranges, `200` for malformed ones (as RFC 9110 requires)
+- 🧠 One pooled chunk in flight per response — 256 KiB by default, so ten
+  thousand viewers cost ten thousand chunks, not ten thousand copies
+- 🚧 Open-ended `Range: bytes=0-` capped at `MaxChunkSize` (4 MiB), so a
+  player's opening request cannot pin an entire movie in memory
+- 🛡 Traversal defence in a deliberate order: percent-decode first, reject
+  NUL/backslash and any `..`, hide dotfiles, allow-list extensions, then
+  prove containment against the symlink-resolved path
+- 🕵️ Existence questions always answer **404, never 403**, so the filesystem
+  cannot be mapped by watching which refusals differ
+- 🔐 Optional signed, expiring URLs — verified *before* any disk access, so
+  an unauthenticated flood costs no I/O
+- ⚡ `ETag`/`Last-Modified` answered **before the file is opened**;
+  `If-Range` honoured so resumed downloads cannot be corrupted
+- 👁 Publishes `StreamServed`; a viewer closing the tab is reported as
+  **cancelled, not failed**, and the dashboard's Video tab groups live
+  traffic **by file** with throughput per stream
+
+```go
+import "github.com/nelthaarion/breeze/video"
+
+if err := video.Mount(router, video.Config{Root: "./media"}); err != nil {
+    log.Fatal(err)
+}
+```
+
+That registers `GET` and `HEAD` on `/videos/*filepath`. To make every URL a
+capability that expires, add a secret:
+
+```go
+video.Mount(router, video.Config{
+    Root:   "./media",
+    Secret: []byte(os.Getenv("VIDEO_SECRET")),
+})
+
+url := "/videos/movie.mp4?" + video.Sign(secret, "movie.mp4", 10*time.Minute)
+```
+
+See [`video/README.md`](./video/README.md) for full documentation.
+
 ### 🧬 Durable Workflows
+
 
 `workflow` brings durable, in-process orchestration to Breeze: multi-step
 business processes with retries, timeouts, parallelism, rollback (Saga)
@@ -357,7 +410,10 @@ See [`workflow/README.md`](./workflow/README.md) for full documentation.
 - 🛣 Routes Explorer with per-route latency stats
 - 🧪 API Explorer with multi-language code generation (curl / Go / JS / Python / C# / PHP)
 - 📡 Live Requests feed with WebSocket push
+- 🎬 Video monitor — live streams grouped **by file**, with throughput,
+  range/seek counts and abandoned transfers
 - 🗄 Database Browser (paginated; optional inline Create/Update/Delete via `DBWriter`)
+
 - 🔍 ORM Query Monitor with slow-query detection
 - 💾 Cache, Queue, and Scheduler monitors
 - 📝 Logs with five tabs (App / HTTP / Errors / Panics / Warnings)

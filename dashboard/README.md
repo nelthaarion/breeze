@@ -43,7 +43,8 @@ A fully runnable example is at `cmd/dashboard-example/main.go`.
 
 ## Features
 
-The dashboard provides **13 pages** grouped into Monitor / Develop / System sections.
+The dashboard provides **14 pages** grouped into Monitor / Develop / System sections. Thirteen are always present; the Video page appears once you attach a video bus.
+
 
 ### Monitor
 
@@ -90,7 +91,13 @@ Five tabs (Application / HTTP / Errors / Panics / Warnings), each with full-text
 #### 13. Health
 Configurable probes for Database, Redis, Cache, Storage, Queue, Mail — anything you register. Green/Yellow/Red indicators with latency.
 
+#### 14. Video (opt-in)
+Live streams grouped **by file** — throughput, seeks, disconnects and errors per title, with totals for bandwidth and bytes served. Requires one call, `coll.AttachVideo(bus)`, so a dashboard with no media allocates nothing.
+
+Streaming does not fit the Live Requests feed: one viewer emits hundreds of range requests for a single file, so that page shows the same filename over and over, interleaved with unrelated traffic — and it cannot report throughput at all, because bandwidth belongs to a stream rather than to any one request.
+
 ---
+
 
 ## Configuration
 
@@ -214,7 +221,12 @@ coll.RegisterHealthCheck("database", func() (string, string) {
 
 // Register a database inspector for the DB Browser page
 coll.SetDBInspector(myORMAdapter)
+
+// Populate the Video page from the bus video.Mount publishes on.
+// Returns a detach func; skip this call and the page stays hidden.
+defer coll.AttachVideo(events.Default)()
 ```
+
 
 ### Implementing a DBInspector
 
@@ -248,7 +260,8 @@ dashboard/
   mask.go          — Header / log secret masking
   auth.go          — HTTP Basic Auth (constant-time)
   wshub.go         — WebSocket hub for real-time updates
-  api.go           — REST API handlers (all 13 pages)
+  api.go           — REST API handlers (all 14 pages)
+  video_live.go    — Per-file live stream tracker (opt-in via AttachVideo)
   api_explorer.go  — API Explorer + multi-language code generation
   install.go       — Install() entry point + push API
   attach.go        — Attach() one-liner convenience

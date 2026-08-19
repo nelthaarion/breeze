@@ -212,7 +212,9 @@ var PAGES = {
   timeline: {title:'Timeline', init: initTimeline},
   architecture: {title:'Architecture', init: initArchitecture},
   events: {title:'Events', init: initEvents},
+  video: {title:'Video Streaming', init: initVideo},
 };
+
 
 
 function initPage(page){
@@ -258,10 +260,10 @@ function renderOverview(){
   var container = $('#overview-cards');
   if(container) container.innerHTML = html;
 
-  drawLineChart($('#chart-rps'), S.history.map(function(h){return h.requests_per_sec||0;}), '#58a6ff');
-  drawLineChart($('#chart-latency'), S.history.map(function(h){return h.avg_resp_time_ms||0;}), '#3fb950');
-  drawLineChart($('#chart-mem'), S.history.map(function(h){return (h.heap_alloc||0)/1024/1024;}), '#bc8cff');
-  drawLineChart($('#chart-goroutines'), S.history.map(function(h){return h.goroutines||0;}), '#d29922');
+  drawLineChart($('#chart-rps'), S.history.map(function(h){return h.requests_per_sec||0;}), chartColor(1));
+  drawLineChart($('#chart-latency'), S.history.map(function(h){return h.avg_resp_time_ms||0;}), chartColor(2));
+  drawLineChart($('#chart-mem'), S.history.map(function(h){return (h.heap_alloc||0)/1024/1024;}), chartColor(3));
+  drawLineChart($('#chart-goroutines'), S.history.map(function(h){return h.goroutines||0;}), chartColor(4));
 }
 
 // ─── Routes ────────────────────────────────────────────────────────────
@@ -515,7 +517,7 @@ function renderCache(){
     '<div class="card"><div class="label">Memory</div><div class="value">'+fmtBytes(c.memory_bytes)+'</div></div>';
   var container = $('#cache-cards');
   if(container) container.innerHTML = html;
-  drawLineChart($('#chart-cache'), S.history.map(function(h){return (h.cache_hit_ratio||0)*100;}), '#3fb950');
+  drawLineChart($('#chart-cache'), S.history.map(function(h){return (h.cache_hit_ratio||0)*100;}), chartColor(2));
 }
 
 // ─── Queue ─────────────────────────────────────────────────────────────
@@ -703,29 +705,29 @@ function renderPerformance(){
 
   // Heap Allocation chart — plots HeapAlloc ONLY (live heap bytes).
   // This DROPS after GC. Never mix with TotalAlloc or HeapSys.
-  drawLineChart($('#chart-perf-heap'), hist.map(function(h){return (h.heap_alloc||0)/1024/1024;}), '#bc8cff');
+  drawLineChart($('#chart-perf-heap'), hist.map(function(h){return (h.heap_alloc||0)/1024/1024;}), chartColor(3));
 
   // Goroutines chart
-  drawLineChart($('#chart-perf-goro'), hist.map(function(h){return h.goroutines||0;}), '#d29922');
+  drawLineChart($('#chart-perf-goro'), hist.map(function(h){return h.goroutines||0;}), chartColor(4));
 
   // CPU Usage chart
-  drawLineChart($('#chart-perf-cpu'), hist.map(function(h){return h.cpu_usage||0;}), '#f85149');
+  drawLineChart($('#chart-perf-cpu'), hist.map(function(h){return h.cpu_usage||0;}), chartColor(5));
 
   // GC chart — plots NumGC (GC count) over time.
   // Each step up represents a GC event. This shows ACTUAL GC events
   // instead of a flat line (which is what plotting pause_ns would show,
   // since pause_ns is constant between GCs).
-  drawLineChart($('#chart-perf-gc'), hist.map(function(h){return h.num_gc||0;}), '#39d0d8');
+  drawLineChart($('#chart-perf-gc'), hist.map(function(h){return h.num_gc||0;}), chartColor(6));
 
   // Memory from OS chart — plots Sys (total bytes from OS).
   // This is separate from HeapAlloc (live heap). Sys grows when Go
   // requests memory from the OS and shrinks when Go returns it
   // (HeapReleased).
-  drawLineChart($('#chart-perf-mem-sys'), hist.map(function(h){return (h.sys||0)/1024/1024;}), '#f0883e');
+  drawLineChart($('#chart-perf-mem-sys'), hist.map(function(h){return (h.sys||0)/1024/1024;}), chartColor(7));
 
   // GC Pause chart — plots the most recent GC pause duration at each
   // sample. Shows how long the last GC took.
-  drawLineChart($('#chart-perf-pause'), hist.map(function(h){return (h.pause_ns||0)/1000/1000;}), '#a371f7');
+  drawLineChart($('#chart-perf-pause'), hist.map(function(h){return (h.pause_ns||0)/1000/1000;}), chartColor(8));
 }
 
 // ─── Timeline ──────────────────────────────────────────────────────────
@@ -1391,11 +1393,139 @@ function renderEvents(){
   var mtb = $('#ev-metrics-tbody');
   if(mtb) mtb.innerHTML = mhtml;
 }
+// ─── Video Streaming ───────────────────────────────────────────────────
+
+// The video page groups by file rather than by request. One viewer
+// generates hundreds of range requests, so a per-request table would show
+// the same film several hundred times and answer no useful question. The
+// server aggregates; this renders that aggregate.
+function initVideo(){
+  loadVideo();
+  // Two seconds rather than the ten used elsewhere: bandwidth is the
+  // point of this page, and a rate that updates every ten seconds reads
+  // as stale while a video is visibly playing.
+  setInterval(function(){ if(S.page==='video') loadVideo(); }, 2000);
+}
+function loadVideo(){
+  api('video').then(function(d){ S.video = d; renderVideo(); }).catch(function(){});
+}
+
+// fmtRate renders a byte rate. It is separate from fmtBytes because a
+// rate needs the "/s" and reads better in bits for network figures — but
+// bytes are kept here to stay consistent with every other size on the
+// dashboard.
+function fmtRate(bps){
+  if(!bps) return '0 B/s';
+  return fmtBytes(bps) + '/s';
+}
+
+function renderVideo(){
+  var d = S.video || {};
+  var files = d.files || [];
+
+  var na = $('#vid-not-attached');
+  if(na) na.style.display = (d.attached === false) ? 'block' : 'none';
+
+  var tc = $('#vid-totals');
+  if(tc){
+    tc.innerHTML =
+      '<div class="card"><div class="label">Bandwidth</div><div class="value">'+fmtRate(d.total_bytes_per_sec)+'</div><div class="delta">'+fmtNum(d.window_seconds,0)+'s window</div></div>'+
+      '<div class="card"><div class="label">Streaming Now</div><div class="value" style="color:var(--primary)">'+fmtNum(d.active_files)+'</div><div class="delta">files</div></div>'+
+      '<div class="card"><div class="label">Tracked Files</div><div class="value">'+fmtNum(files.length)+'</div></div>'+
+      '<div class="card"><div class="label">Total Sent</div><div class="value">'+fmtBytes(d.total_bytes)+'</div></div>'+
+      '<div class="card"><div class="label">Requests</div><div class="value">'+fmtNum(d.total_requests)+'</div></div>';
+  }
+
+  var cnt = $('#vid-count');
+  if(cnt) cnt.textContent = files.length;
+
+  var html = '';
+  files.forEach(function(f){
+    // A file with recent traffic is the one worth looking at, so it gets
+    // the live badge; everything else is history that has not aged out.
+    var badge = f.active
+      ? '<span class="badge blue">streaming</span>'
+      : '<span class="badge gray">idle</span>';
+
+    // Disconnects are shown plainly rather than in red: abandoning a
+    // response is how seeking works, and flagging it as a problem would
+    // train the reader to ignore the column that does matter.
+    var disc = f.disconnects ? fmtNum(f.disconnects) : '-';
+    var errs = f.errors ? '<span class="badge red">'+fmtNum(f.errors)+'</span>' : '-';
+    var cached = f.not_modified ? fmtNum(f.not_modified) : '-';
+
+    html += '<tr>'+
+      '<td style="font-family:var(--mono);font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis">'+escapeHTML(f.file)+'</td>'+
+      '<td>'+badge+'</td>'+
+      '<td style="font-family:var(--mono)">'+fmtRate(f.bytes_per_sec)+'</td>'+
+      '<td>'+fmtBytes(f.bytes)+'</td>'+
+      '<td>'+fmtNum(f.requests)+'</td>'+
+      '<td>'+fmtNum(f.partial)+'</td>'+
+      '<td>'+cached+'</td>'+
+      '<td>'+disc+'</td>'+
+      '<td>'+errs+'</td>'+
+      '<td>'+fmtMS(f.avg_ms)+'</td>'+
+      '<td style="font-size:11px;color:var(--text-dim)">'+fmtTime(f.last_seen)+'</td>'+
+      '</tr>';
+  });
+  if(!files.length){
+    html = '<tr><td colspan="11" class="empty">No video served yet'+
+      (d.attached === false ? ' — attach video tracking first' : '')+'</td></tr>';
+  }
+  var tb = $('#vid-tbody');
+  if(tb) tb.innerHTML = html;
+}
+
+// ─── Theme ─────────────────────────────────────────────────────────────
+// Canvas can't inherit CSS, so the chart palette is read back out of the
+// stylesheet. That keeps every colour defined in dashboard.css.
+function cssVar(name, fallback){
+  try{
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }catch(e){ return fallback; }
+}
+var CHART_FALLBACK = ['#4f46e5','#12a37a','#8b5cf6','#d97706','#e11d48','#0891b2','#ea580c','#7c3aed'];
+function chartColor(n){ return cssVar('--chart-'+n, CHART_FALLBACK[n-1]); }
+
+// Resolved theme, honouring an explicit choice then the OS preference.
+function currentTheme(){
+  var t = document.documentElement.getAttribute('data-theme');
+  if(t==='dark'||t==='light') return t;
+  try{
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }catch(e){ return 'light'; }
+}
+
+function setTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  try{ localStorage.setItem('breeze-theme', t); }catch(e){}
+  // Charts hold no colour state of their own, so they need a repaint.
+  try{
+    if(S.page==='overview') renderOverview();
+    else if(S.page==='performance') loadPerf();
+    else if(S.page==='cache') loadCache();
+  }catch(e){}
+}
+
+function initTheme(){
+  var btn = document.getElementById('theme-toggle');
+  if(!btn) return;
+  btn.addEventListener('click', function(){
+    setTheme(currentTheme()==='dark' ? 'light' : 'dark');
+  });
+}
+
 // ─── Canvas charts ─────────────────────────────────────────────────────
 function drawLineChart(canvas, data, color){
-
   if(!canvas) return;
+  // Resolved per draw, so a theme switch repaints in the new palette.
+  var lineColor = color || chartColor(1);
+  var gridColor = cssVar('--chart-grid', '#e4e5f7');
+  var labelColor = cssVar('--chart-label', '#8b87ab');
+
   var dpr = window.devicePixelRatio || 1;
+
   var w = canvas.clientWidth || 600;
   var h = canvas.clientHeight || 200;
   canvas.width = w * dpr;
@@ -1403,8 +1533,9 @@ function drawLineChart(canvas, data, color){
   var ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, w, h);
-  ctx.strokeStyle = 'rgba(48,54,61,0.5)';
+  ctx.strokeStyle = gridColor;
   ctx.lineWidth = 1;
+
   ctx.beginPath();
   for(var i=0;i<=4;i++){
     var y = (i/4)*(h-20)+10;
@@ -1412,7 +1543,7 @@ function drawLineChart(canvas, data, color){
   }
   ctx.stroke();
   if(!data.length){
-    ctx.fillStyle = '#6e7681';
+    ctx.fillStyle = labelColor;
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('No data', w/2, h/2);
@@ -1423,7 +1554,7 @@ function drawLineChart(canvas, data, color){
   if(min===max){min=min-1; max=max+1;}
   var pad = (max-min)*0.1;
   min -= pad; max += pad;
-  ctx.fillStyle = '#6e7681';
+  ctx.fillStyle = labelColor;
   ctx.font = '10px monospace';
   ctx.textAlign = 'right';
   for(var i=0;i<=4;i++){
@@ -1431,7 +1562,7 @@ function drawLineChart(canvas, data, color){
     var y = (i/4)*(h-20)+14;
     ctx.fillText(formatLabel(v), 36, y);
   }
-  ctx.strokeStyle = color || '#58a6ff';
+  ctx.strokeStyle = lineColor;
   ctx.lineWidth = 2;
   ctx.beginPath();
   var x0 = 40, w0 = w - 50;
@@ -1444,8 +1575,13 @@ function drawLineChart(canvas, data, color){
   ctx.lineTo(x0 + w0, h-10);
   ctx.lineTo(x0, h-10);
   ctx.closePath();
-  ctx.fillStyle = (color||'#58a6ff') + '22';
+  // Vertical fade under the line reads as depth without hiding the grid.
+  var grad = ctx.createLinearGradient(0, 10, 0, h-10);
+  grad.addColorStop(0, lineColor + '3d');
+  grad.addColorStop(1, lineColor + '05');
+  ctx.fillStyle = grad;
   ctx.fill();
+
 }
 function formatLabel(v){
   if(Math.abs(v) >= 1000000) return (v/1000000).toFixed(1)+'M';
@@ -1460,7 +1596,9 @@ function init(){
   var path = location.pathname;
   var match = path.match(/^(\/[^\/]*dashboard)/);
   S.base = match ? match[1] : '/dashboard';
+  initTheme();
   connectWS();
+
 
   // Fix: if a page script already set __breezeDashPage before dashboard.js
   // loaded (happens on initial page load, not SPA navigation), init that

@@ -2,7 +2,7 @@
 <div class="login-wrap">
   <div class="login-card">
     <div class="login-header">
-      <div class="login-logo">B</div>
+      <div class=" "><img  style="width: 64px; height: 64px;" src="/dashboard/assets/logo.png"/></div>
       <h1>Breeze Dashboard</h1>
       <p>Sign in to continue</p>
     </div>
@@ -24,21 +24,40 @@
   </div>
 </div>
 <style>
-.login-wrap{display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 0px);background:var(--bg);position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999}
-.login-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:40px;width:380px;max-width:90vw;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+/* The wrapper is transparent so the gradient wash set on <body> in
+   login_layout.html shows through behind the card. */
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;padding:20px}
+/* Glass card, matching the surfaces in dashboard.css. */
+.login-card{
+  background:var(--glass);
+  backdrop-filter:saturate(175%) blur(18px);
+  -webkit-backdrop-filter:saturate(175%) blur(18px);
+  border:1px solid var(--glass-brd);
+  border-radius:26px;padding:40px;width:394px;max-width:100%;
+  box-shadow:var(--sh-card),var(--sh-inset);
+}
 .login-header{text-align:center;margin-bottom:28px}
-.login-logo{width:56px;height:56px;border-radius:12px;background:linear-gradient(135deg,var(--primary),var(--purple));display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:28px;margin:0 auto 16px}
-.login-header h1{font-size:20px;font-weight:600;margin-bottom:4px}
-.login-header p{color:var(--text-dim);font-size:13px}
+.login-logo{width:60px;height:60px;border-radius:19px;background:linear-gradient(140deg,var(--primary-lift),var(--primary-dim));display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:27px;margin:0 auto 16px;box-shadow:var(--sh-primary)}
+.login-header h1{font-size:21px;font-weight:800;margin-bottom:3px;letter-spacing:-.7px}
+.login-header p{color:var(--text-dim);font-size:13px;font-weight:450}
 .login-form .field{margin-bottom:18px}
-.login-form label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);font-weight:600;margin-bottom:6px}
-.login-form input{width:100%;padding:10px 12px;font-size:14px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);outline:none;transition:border-color .15s}
-.login-form input:focus{border-color:var(--primary)}
-.login-error{background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);color:var(--err);padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:14px}
-.login-btn{width:100%;padding:11px;background:var(--primary-dim);color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s}
-.login-btn:hover{background:var(--primary)}
-.login-btn:disabled{opacity:.6;cursor:wait}
+.login-form label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.9px;color:var(--text-muted);font-weight:800;margin-bottom:6px}
+.login-form input{width:100%;padding:11px 13px;font-size:13px;font-family:inherit;background:var(--surface2);border:1px solid var(--border);border-radius:14px;color:var(--text);outline:none;transition:border-color .18s,box-shadow .18s,background .18s}
+.login-form input:focus{border-color:var(--primary);background:var(--surface);box-shadow:var(--sh-focus)}
+.login-form input::placeholder{color:var(--text-muted)}
+.login-error{background:var(--t-red);border:1px solid var(--t-red-b);color:var(--err);padding:9px 13px;border-radius:14px;font-size:12px;font-weight:600;margin-bottom:14px}
+.login-btn{width:100%;padding:12px;background:linear-gradient(140deg,var(--primary-lift),var(--primary-dim));color:#fff;border:none;border-radius:999px;font-size:13px;font-weight:700;font-family:inherit;letter-spacing:-.1px;cursor:pointer;transition:filter .18s,transform .18s,box-shadow .18s;box-shadow:var(--sh-primary)}
+.login-btn:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.login-btn:active{transform:translateY(0)}
+.login-btn:focus-visible{outline:none;box-shadow:var(--sh-focus),var(--sh-primary)}
+.login-btn:disabled{opacity:.6;cursor:wait;filter:none;transform:none}
 .login-footer{text-align:center;margin-top:24px;font-size:11px;color:var(--text-muted)}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  .login-card{background:var(--surface);border-color:var(--border)}
+}
+
+@media (prefers-reduced-motion:reduce){.login-btn:hover{transform:none}}
+
 </style>
 <script>
 (function(){

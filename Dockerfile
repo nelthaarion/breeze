@@ -4,8 +4,14 @@
 # Breeze is a library; this image builds and runs the example server in ./cmd
 # as a proof of concept. Point BREEZE_TARGET at any other main package
 # (e.g. ./cmd/dashboard-example) to containerize a different app.
-ARG GO_VERSION=1.24
+# Keep this at or above the go directive in go.mod. A lower value does not
+# fail cleanly: the toolchain silently downloads the required version at
+# build time, so the image stops matching the base layer it claims to use.
+# It is also the version govulncheck reports against, so a stale pin here
+# reports stdlib vulnerabilities that the pinned toolchain has fixed.
+ARG GO_VERSION=1.25.13
 FROM golang:${GO_VERSION}-alpine AS build
+
 
 ARG BREEZE_TARGET=./cmd
 

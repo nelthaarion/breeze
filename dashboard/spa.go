@@ -30,7 +30,7 @@ func SPA() string {
 <div class="app">
   <aside class="sidebar">
     <div class="sidebar-header">
-      <div class="logo">B</div>
+      <div class="logo"><img src="/public/logo.png"/> </div>
       <div>
         <h1>Breeze</h1>
         <div class="sub">Developer Dashboard</div>

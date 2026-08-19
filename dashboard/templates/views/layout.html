@@ -3,15 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
+
   <title>Breeze Dashboard</title>
+  <script>
+    /* Applied before first paint so the saved theme never flashes the
+       wrong palette. Kept inline and tiny for that reason. */
+    (function(){try{var t=localStorage.getItem('breeze-theme');
+      if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+  </script>
   <link rel="stylesheet" href="{{.Data.AssetsPath}}/dashboard.css">
+
 </head>
 <body>
   <div class="app">
     <aside class="sidebar">
       <div class="sidebar-header">
-        <div class="logo">B</div>
+         <div class=" "><img  style="width: 64px; height: 64px;" src="/dashboard/assets/logo.png"/> </div>
         <div>
           <h1>Breeze</h1>
           <div class="sub">Developer Dashboard</div>
@@ -28,7 +36,12 @@
         <h2 id="page-title">{{.Data.PageTitle}}</h2>
         <div class="right">
           <span id="server-time"></span>
+          <button type="button" class="theme-toggle" id="theme-toggle"
+                  title="Toggle light / dark" aria-label="Toggle light / dark theme">
+            <span class="ico moon">&#x263D;</span><span class="ico sun">&#x2600;</span>
+          </button>
         </div>
+
       </header>
       <div class="content" id="breeze-app">
         {{template "content" .}}

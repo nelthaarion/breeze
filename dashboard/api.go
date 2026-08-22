@@ -45,6 +45,16 @@ func jsonUnmarshal(body []byte, v any) error {
 //
 // All routes are wrapped by AuthMiddleware.
 func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
+        // Every dashboard route is registered with HandleBlocking, never
+        // Handle. The view routes render templates (a cache miss parses from
+        // disk under a write lock), the DB routes issue SQL round trips, and
+        // the API-explorer route makes an outbound HTTP request. None of that
+        // may run on a gnet event-loop goroutine, where it would stall every
+        // connection pinned to that reactor.
+        //
+        // Nothing is lost by it: the dashboard is an operator tool measured in
+        // requests per minute, and the worker-pool hop it costs is invisible
+        // next to the work these handlers actually do.
         base := strings.TrimSuffix(c.cfg.BasePath, "/")
         if base == "" {
                 base = "/dashboard"
@@ -56,7 +66,7 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
         // ── Extract embedded templates to a temp directory ────────────────────
         dir, err := writeTemplates()
         if err != nil {
-                router.Handle(breeze.GET, base, func(ctx *breeze.Context) {
+                router.HandleBlocking(breeze.GET, base, func(ctx *breeze.Context) {
                         ctx.Status(500)
                         ctx.WriteString("dashboard: failed to extract templates: " + err.Error())
                 })
@@ -77,7 +87,7 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
                         LayoutFile:    loginLayout,
                         DevMode:       false,
                 })
-                router.Handle(breeze.GET, base+"/login", func(ctx *breeze.Context) {
+                router.HandleBlocking(breeze.GET, base+"/login", func(ctx *breeze.Context) {
                         // If already logged in, redirect to dashboard.
                         cookie := ctx.Req.Header["cookie"]
                         token := extractCookieValue(cookie, sessionCookieName)
@@ -100,7 +110,7 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
                 })
 
                 // ── Login POST — validates credentials, sets session cookie ────────
-                router.Handle(breeze.POST, base+"/login", func(ctx *breeze.Context) {
+                router.HandleBlocking(breeze.POST, base+"/login", func(ctx *breeze.Context) {
                         var req struct {
                                 Username string `json:"username"`
                                 Password string `json:"password"`
@@ -135,7 +145,7 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
                 })
 
                 // ── Logout — destroys session, redirects to login ─────────────────
-                router.Handle(breeze.GET, base+"/logout", func(ctx *breeze.Context) {
+                router.HandleBlocking(breeze.GET, base+"/logout", func(ctx *breeze.Context) {
                         cookie := ctx.Req.Header["cookie"]
                         token := extractCookieValue(cookie, sessionCookieName)
                         c.sessions.destroy(token)
@@ -160,7 +170,7 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
 
 
                 // Index route — auth + render overview
-                router.Handle(breeze.GET, base, func(ctx *breeze.Context) {
+                router.HandleBlocking(breeze.GET, base, func(ctx *breeze.Context) {
                         auth(ctx)
                         if ctx.Res != nil && (ctx.Res.Status == 302 || ctx.Res.Status == 401) {
                                 return
@@ -171,7 +181,7 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
 
                 for _, page := range pages {
                         pageName := page
-                        router.Handle(breeze.GET, base+"/"+pageName, func(ctx *breeze.Context) {
+                        router.HandleBlocking(breeze.GET, base+"/"+pageName, func(ctx *breeze.Context) {
                                 auth(ctx)
                                 if ctx.Res != nil && (ctx.Res.Status == 302 || ctx.Res.Status == 401) {
                                         return
@@ -185,28 +195,28 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
         // ── API endpoints ──────────────────────────────────────────────────────
         api := base + "/api"
 
-        router.Handle(breeze.GET, api+"/overview", c.wrap(auth, c.handleOverview))
-        router.Handle(breeze.GET, api+"/routes", c.wrap(auth, c.handleRoutes))
-        router.Handle(breeze.GET, api+"/api-explorer", c.wrap(auth, c.handleAPIExplorerList))
-        router.Handle(breeze.POST, api+"/api-explorer", c.wrap(auth, c.handleAPIExplorerExec))
-        router.Handle(breeze.GET, api+"/requests", c.wrap(auth, c.handleRequests))
-        router.Handle(breeze.GET, api+"/cache", c.wrap(auth, c.handleCache))
-        router.Handle(breeze.POST, api+"/cache/clear", c.wrap(auth, c.handleCacheClear))
-        router.Handle(breeze.GET, api+"/logs", c.wrap(auth, c.handleLogs))
-        router.Handle(breeze.GET, api+"/health", c.wrap(auth, c.handleHealth))
-        router.Handle(breeze.GET, api+"/performance", c.wrap(auth, c.handlePerformance))
-        router.Handle(breeze.GET, api+"/timeline", c.wrap(auth, c.handleTimelineList))
-        router.Handle(breeze.GET, api+"/timeline/:id", c.wrap(auth, c.handleTimelineGet))
-        router.Handle(breeze.GET, api+"/architecture", c.wrap(auth, c.handleArchitecture))
-        router.Handle(breeze.GET, api+"/events", c.wrap(auth, c.handleEvents))
-        router.Handle(breeze.GET, api+"/video", c.wrap(auth, c.handleVideo))
+        router.HandleBlocking(breeze.GET, api+"/overview", c.wrap(auth, c.handleOverview))
+        router.HandleBlocking(breeze.GET, api+"/routes", c.wrap(auth, c.handleRoutes))
+        router.HandleBlocking(breeze.GET, api+"/api-explorer", c.wrap(auth, c.handleAPIExplorerList))
+        router.HandleBlocking(breeze.POST, api+"/api-explorer", c.wrap(auth, c.handleAPIExplorerExec))
+        router.HandleBlocking(breeze.GET, api+"/requests", c.wrap(auth, c.handleRequests))
+        router.HandleBlocking(breeze.GET, api+"/cache", c.wrap(auth, c.handleCache))
+        router.HandleBlocking(breeze.POST, api+"/cache/clear", c.wrap(auth, c.handleCacheClear))
+        router.HandleBlocking(breeze.GET, api+"/logs", c.wrap(auth, c.handleLogs))
+        router.HandleBlocking(breeze.GET, api+"/health", c.wrap(auth, c.handleHealth))
+        router.HandleBlocking(breeze.GET, api+"/performance", c.wrap(auth, c.handlePerformance))
+        router.HandleBlocking(breeze.GET, api+"/timeline", c.wrap(auth, c.handleTimelineList))
+        router.HandleBlocking(breeze.GET, api+"/timeline/:id", c.wrap(auth, c.handleTimelineGet))
+        router.HandleBlocking(breeze.GET, api+"/architecture", c.wrap(auth, c.handleArchitecture))
+        router.HandleBlocking(breeze.GET, api+"/events", c.wrap(auth, c.handleEvents))
+        router.HandleBlocking(breeze.GET, api+"/video", c.wrap(auth, c.handleVideo))
 
 
-                router.Handle(breeze.GET, api+"/db/tables", c.wrap(auth, c.handleDBTables))
-                router.Handle(breeze.GET, api+"/db/tables/:name", c.wrap(auth, c.handleDBTableData))
-                router.Handle(breeze.POST, api+"/db/tables/:name/rows", c.wrap(auth, c.handleDBTableInsert))
-                router.Handle(breeze.PUT, api+"/db/tables/:name/rows/:pk", c.wrap(auth, c.handleDBTableUpdate))
-                router.Handle(breeze.DELETE, api+"/db/tables/:name/rows/:pk", c.wrap(auth, c.handleDBTableDelete))
+                router.HandleBlocking(breeze.GET, api+"/db/tables", c.wrap(auth, c.handleDBTables))
+                router.HandleBlocking(breeze.GET, api+"/db/tables/:name", c.wrap(auth, c.handleDBTableData))
+                router.HandleBlocking(breeze.POST, api+"/db/tables/:name/rows", c.wrap(auth, c.handleDBTableInsert))
+                router.HandleBlocking(breeze.PUT, api+"/db/tables/:name/rows/:pk", c.wrap(auth, c.handleDBTableUpdate))
+                router.HandleBlocking(breeze.DELETE, api+"/db/tables/:name/rows/:pk", c.wrap(auth, c.handleDBTableDelete))
 
 	// ── WebSocket endpoint for real-time updates ──────────────────────────
 	if app != nil {

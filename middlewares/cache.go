@@ -3,6 +3,7 @@ package middleware
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"strings"
 	"sync"
 
 	"github.com/nelthaarion/breeze"
@@ -109,13 +110,21 @@ func (c *ETagCache) ETagMiddleware() breeze.HandlerFunc {
 }
 
 // buildCacheKey constructs a cache key from the path and query string.
-// When there is no query string, the key is just the path — no allocation
-// beyond the path string itself (which is already a GC-managed view into
-// req.owned).
+//
+// The path is cloned rather than used directly. ctx.Req.Path is a view into the
+// bytes the request was parsed from, and with breeze's SetZeroCopyHeaders those
+// bytes are the connection's read buffer, which is reused for the next read.
+// The key here goes into c.store, which outlives the request — so a borrowed
+// string would not merely go stale, it would mutate into part of some later
+// request while sitting in the map as a key, putting it in the wrong bucket and
+// corrupting every lookup that follows.
+//
+// One small allocation per cached response, on a path that already hashes the
+// body with MD5 and hex-encodes the digest, is not worth optimising away.
 func buildCacheKey(ctx *breeze.Context) string {
-	if ctx.Req.Query == nil || len(ctx.Req.Query) == 0 {
-		return ctx.Req.Path
+	if len(ctx.Req.Query) == 0 {
+		return strings.Clone(ctx.Req.Path)
 	}
-	// Only allocate the concatenation when a query string exists.
+	// Concatenation already copies, so no Clone needed on this branch.
 	return ctx.Req.Path + "?" + ctx.Req.Query.Encode()
 }

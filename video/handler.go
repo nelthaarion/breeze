@@ -36,8 +36,13 @@ func Mount(r *breeze.Router, cfg Config) error {
 
 	pattern := m.prefix + "/*filepath"
 	h := m.handler()
-	r.Handle(breeze.GET, pattern, h)
-	r.Handle(breeze.Method("HEAD"), pattern, h)
+	// Registered as blocking. Serving a range stats the file, opens it, and
+	// copies chunks out of it — file I/O from start to finish. Running that on
+	// a gnet event-loop goroutine would stall every other connection pinned to
+	// the same reactor for the length of the read, which for video is exactly
+	// the workload that makes it unbearable.
+	r.HandleBlocking(breeze.GET, pattern, h)
+	r.HandleBlocking(breeze.Method("HEAD"), pattern, h)
 	return nil
 }
 

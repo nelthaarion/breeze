@@ -645,7 +645,10 @@ func (r *Router) View(
 	viewName string,
 	dataFn func(*Context) any,
 ) {
-	r.Handle(GET, pattern, func(ctx *Context) {
+	// Blocking: rendering parses the template from disk on a cache miss, and
+	// on every request in dev mode. It also takes the engine's write lock to
+	// populate the cache. None of that may run on a gnet event loop.
+	r.HandleBlocking(GET, pattern, func(ctx *Context) {
 		var data any
 		if dataFn != nil {
 			data = dataFn(ctx)
@@ -703,7 +706,8 @@ func (r *Router) Fragment(
 	componentName string,
 	dataFn func(*Context) any,
 ) {
-	r.Handle(GET, pattern, func(ctx *Context) {
+	// Blocking for the same reason as View: a cache miss parses from disk.
+	r.HandleBlocking(GET, pattern, func(ctx *Context) {
 		var data any
 		if dataFn != nil {
 			data = dataFn(ctx)
@@ -723,7 +727,9 @@ func (r *Router) Fragment(
 //	engine := breeze.NewTemplateEngine(breeze.TemplateConfig{...})
 //	router.EnableReRender(engine)
 func (r *Router) EnableReRender(engine *TemplateEngine) {
-	r.Handle(POST, "/breeze/render", func(ctx *Context) {
+	// Blocking: RenderJSON resolves an arbitrary view or component by name,
+	// which may parse it from disk.
+	r.HandleBlocking(POST, "/breeze/render", func(ctx *Context) {
 		engine.RenderJSON(ctx)
 	})
 }

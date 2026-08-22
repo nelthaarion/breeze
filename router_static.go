@@ -18,7 +18,10 @@ func (r *Router) ServeStatic(prefix, root string) {
 
         // handler for files: pattern: prefix + "/*filepath"
         pattern := cleanPrefix + "/*filepath"
-        r.Handle(GET, pattern, func(ctx *Context) {
+        // Registered as blocking: the handler opens and reads a file from disk,
+        // so it must run on a worker goroutine rather than inline on the gnet
+        // event loop.
+        r.HandleBlocking(GET, pattern, func(ctx *Context) {
                 fp := ctx.Param("filepath")
                 // if client requested exactly '/static' (no trailing slash) treat as root index
                 if fp == "" || fp == "/" {
@@ -59,10 +62,14 @@ func (r *Router) ServeStatic(prefix, root string) {
                         ctype = http.DetectContentType(data)
                 }
 
-                ctx.Res = &HTTPResponse{
-                        Status:  200,
-                        Headers: map[string]string{"Content-Type": ctype},
-                        Body:    data,
-                }
+                // Take the response from the pool rather than allocating a
+                // literal, so releaseContext recycles it like every other
+                // response instead of dropping it on the GC.
+                res := ctx.ensureResponse()
+                res.Status = 200
+                res.Headers = map[string]string{"Content-Type": ctype}
+                res.headersShared = false
+                res.rawHeaders = nil
+                res.Body = data
         })
 }

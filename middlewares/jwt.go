@@ -25,7 +25,7 @@ type JWTOptions struct {
 // DefaultTokenLookup extracts access token from Authorization header.
 //
 // FIX: Header keys are stored lowercased by breeze.ParseHTTPRequest
-// (request.go:117, toLowerASCII). The previous code looked up
+// (request.go, lowerHeaderKey). The previous code looked up
 // ctx.Req.Header["Authorization"] (mixed case) which always returned ""
 // in production, causing every authenticated request to be rejected as
 // "authorization header missing". The bench setup masked this because

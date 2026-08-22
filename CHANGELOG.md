@@ -4,6 +4,259 @@ All changes made to the Breeze framework.
 
 ---
 
+## [v1.8.0] — Throughput
+
+### Inline Handler Execution
+
+Non-blocking handlers now run **directly on the `gnet` event-loop goroutine**
+that read the request, instead of being dispatched through the worker pool.
+
+`gnet` already runs one event loop per core and pins each connection to one,
+so the parallelism was there before the pool got involved. Every request was
+being pushed through a single `chan poolTask` guarded by one mutex that every
+loop contended for — which re-serialised work that had already been spread
+across cores, and charged two goroutine handoffs plus an `AsyncWrite` poller
+wakeup for the privilege. For a handler that serialises a small JSON object,
+that scheduling *was* most of the work being done.
+
+**⚠️ Behaviour change.** A handler on the inline path must not block: the
+event-loop goroutine it occupies is also serving every other connection
+pinned to that reactor, so a SQL query or a file read stalls all of them.
+Routes that block must be registered with the new **`Router.HandleBlocking`**,
+which dispatches through the worker pool exactly as before.
+
+```go
+router.Handle(breeze.GET, "/users/:id", getUser)          // in-memory → inline
+router.HandleBlocking(breeze.POST, "/orders", createOrder) // I/O → worker pool
+```
+
+Every I/O-bound route the framework ships was converted: static files, video
+streaming, template `View`/`Fragment`/re-render, the whole dashboard, the
+OpenAPI/Scalar endpoints, the OAuth2 login/callback/logout flow, and the
+WebSocket upgrade. `Breeze.SetInlineExecution(false)` restores the previous
+behaviour globally for applications that would rather not audit route by
+route.
+
+### Request Path
+
+- **The per-event copy of the request bytes is gone.** `OnTraffic` used to
+  copy every buffer out of `gnet` before parsing. It now parses `gnet`'s own
+  read buffer in place and copies only when a partial request must be carried
+  across events. Verified against `gnet`'s `Conn.Next` and `Conn.write`: the
+  read buffer stays valid for the whole `OnTraffic` call because `write`
+  never touches it.
+- **`HTTPRequest` and its header map are pooled**, joining `Context`,
+  `HTTPResponse`, and the route-parameter maps.
+- **Response bytes are appended into a pooled wire buffer** on the inline
+  path. `Conn.Write` is synchronous and has finished with the caller's slice
+  by the time it returns — it either completes the syscall or copies the
+  remainder into the connection's outbound buffer — which is what makes
+  pooling those bytes safe. `AsyncWrite` does *not* copy, so the pooled
+  dispatch path still serialises into a fresh slice.
+- **`Bytes()` no longer walks a map** for the common case; a raw header blob
+  is appended directly.
+- **400/404/500 responses are precomputed** and written synchronously rather
+  than built and pushed through `AsyncWrite` from inside the event loop.
+- **Header keys are lowercased in place.** The old `toLowerASCII` scanned for
+  an uppercase byte and returned a zero-copy view when it found none,
+  allocating only otherwise — but that fast path never fired. Every header a
+  real client puts on the wire is capitalised (`Host`, `User-Agent`, `Accept`,
+  `Connection`, …), so the allocating branch was taken for essentially every
+  header of every request, and it allocated **twice**: a scratch buffer and
+  then the string conversion. A four-header `GET` paid eight heap allocations
+  before it reached the router; a browser's eleven headers paid twenty-two.
+  Keys are now lowercased in place inside the buffer the parser already owns,
+  which costs one pass over bytes already in L1 and allocates nothing.
+- **The WebSocket lookup is off the HTTP path.** `OnTraffic` opened with
+  `wsConns.Load(c.Fd())`. `sync.Map` keys are `interface{}`, and the runtime
+  only keeps preallocated boxes for integers 0–255 — so on any server busy
+  enough for the file descriptors to reach the thousands, that conversion
+  **heap-allocated once per request**, plus a hash probe, to answer a question
+  that is "no" for every request on an HTTP-only server. The map is now behind
+  an `atomic.Int64` count of upgraded connections, so the probe happens only
+  once at least one WebSocket connection exists. `cleanupWS` decrements via
+  `LoadAndDelete`, so the double-call path (a `Close` frame *and* `OnClose`)
+  cannot drift the count negative.
+
+### Zero-Copy Headers (opt-in)
+
+With the above in place, an inline request had exactly one allocation left: the
+copy of its header block into memory the request owns, which `Path` and every
+header key and value point into. **`Breeze.SetZeroCopyHeaders(true)`** removes
+that copy, so a request is parsed, routed, handled and answered with **zero
+heap allocations by the framework**.
+
+A few hundred bytes per request is not much on its own. At high request rates it
+is a continuous stream of short-lived garbage, and the mark work for it lands as
+GC assist on the very event-loop goroutines that are supposed to be serving
+connections.
+
+The flag is **off by default**, because it narrows the lifetime of every string
+on the request: they become views into the connection's read buffer, which is
+reused for the next read. Handlers are unaffected — a request bound for a worker
+goroutine is re-parsed into owned memory first (`promoteRequest`), so `ctx.Req`
+is always fully valid *inside* a handler. What changes is that keeping one of
+those strings *after* the handler returns is no longer allowed without
+`strings.Clone`. The failure mode is not a crash: the bytes stay readable, so a
+retained string silently becomes a fragment of a later request — and as a map
+key it stays in the bucket its original hash chose, so every subsequent lookup
+misses.
+
+Promotion is only paid by routes that need it. A blocking route is about to do
+disk or network I/O, so a second pass over a few hundred bytes still in L1 does
+not register; and when the buffer is one Breeze concatenated itself (a request
+split across events), those bytes are already Go-owned and nothing is promoted
+at all.
+
+Three retention sites in the framework's own code were fixed so the shipped
+middlewares hold to the new contract:
+
+- `middlewares/cache.go` — the ETag cache used `ctx.Req.Path` directly as a key
+  in a long-lived map. Now cloned.
+- `dashboard/middleware.go` — the collector captured `Path`, `User-Agent`,
+  the client IP and the selected header set into a `RequestRecord` that goes
+  into a ring buffer and is marshalled later, possibly on the hub's goroutine.
+  Now cloned. This is the collector's slow path by construction, so the copies
+  only land on requests that are already being watched or already slow.
+- `dashboard/collector.go` — `trackUniqueIP` inserted a string sliced out of
+  `X-Forwarded-For` as a key in the unique-IP set. Now cloned on insert only,
+  so an IP already seen stays allocation-free.
+
+### Routing
+
+- **O(1) exact-path lookup.** Routes are bucketed per HTTP method, and each
+  bucket carries a map of static paths, so a non-parameterised route resolves
+  in one hash probe instead of an ordered scan with a path split. Measured:
+  **15ns against 92ns**.
+
+- **Map eligibility is per-path, not per-bucket.** The map may only answer when
+  the ordered scan would have reached the same route, because matching is
+  first-registered-wins. The first version enforced that by closing the map as
+  soon as any `:param` or wildcard route joined the bucket. Safe, but far too
+  blunt: a single `ServeStatic` call registers a wildcard, and from that point
+  every static route in the bucket fell back to the scan for the life of the
+  process. In the sample app that was every hot `GET` — `/users`, `/ws/stats`,
+  `/` — all paying 92ns instead of 15ns because `/files/*` happened to be
+  registered before them.
+
+  A dynamic route can only shadow a static route registered *after* it, so the
+  precise test is whether any route already in the bucket also matches the
+  candidate's path. That costs O(routes²) once at startup and nothing at
+  request time. `/files/*` does not match `/users`, so `/users` keeps the map;
+  `/users/me` registered after `/users/:id` correctly does not.
+
+  `router_index_test.go` pins both directions, including a property test that
+  re-runs every lookup with the map removed and asserts the scan agrees.
+
+### Dashboard Fast Path
+
+The dashboard middleware runs ahead of its own "is anyone watching" check, so
+whatever it does there is paid by every request the server ever handles. Three
+things it did there did not belong on a request path:
+
+- **`trackDailyCount` formatted a date and took a global mutex per request.**
+  `time.Now().UTC().Format("2006-01-02")` allocates a string and walks the
+  layout every call, and the lock funnelled every event loop through one cache
+  line to perform a single increment — the worst shape a lock can have, and a
+  hard ceiling on how far throughput can scale with cores. Today's tally now
+  lives in a pair of atomics keyed by UTC day number; the formatting and the
+  map write happen once per day, at the rollover. Readers fold the live counter
+  back in, so `TodayCount`, `DailyCounts` and the persisted state are unchanged.
+
+- **`trackUniqueIP` took a write lock per request.** Behind any proxy —
+  i.e. anywhere `X-Forwarded-For` is set — every request took a global
+  exclusive mutex to re-learn an IP already in the set. The already-seen case
+  now resolves under a read lock, with the write lock reserved for a genuinely
+  new IP and re-checked once taken.
+
+- **`requestsToday` counted the wrong thing, twice.** It was incremented on
+  every request and never reset at a day boundary, so it held requests since
+  process start — exactly what `requestsTotal` already held — while costing a
+  second atomic read-modify-write in the same cache line as it. Removed; the
+  sampler reports `TodayCount()`, which answers the question the field was
+  named for.
+
+- **Cache-line padding on the hot counters.** `requestsTotal` and the new
+  `dayCount` are both bumped on every request from every event loop, so each
+  now occupies its own line. Same reasoning as the worker pool's counters
+  below; the cold ones (sampler-driven, per-session) still share.
+
+### Worker Pool
+
+- **Cache-line padding on the metrics counters.** Five adjacent
+  `atomic.Int64` fields shared a single 64-byte line, so incrementing any one
+  of them invalidated that line on every other core holding it. `submitted`
+  and `queued` are both bumped on every successful `Submit`, and `Submit` was
+  being called concurrently by every event loop at once — two guaranteed
+  line-stealing read-modify-writes per request. Each counter now occupies its
+  own line.
+
+### Benchmarks
+
+`zzperf_bench_test.go` pairs each changed stage against the approach it
+replaced, so a regression shows up as a number rather than an argument.
+Measured on a 12-core Windows box, `-benchtime=2s`:
+
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `ParsePublic` (exported, allocating) | 499.6 | 544 | 4 |
+| `ParsePooled` (default) | 330.9 | 112 | 1 |
+| `ParsePooledZeroCopy` | **275.6** | **0** | **0** |
+| `LookupStaticMap` | **15.3** | 0 | 0 |
+| `LookupOrderedScan` | 91.5 | 0 | 0 |
+| `SerializeAlloc` (AsyncWrite path) | 72.0 | 128 | 1 |
+| `SerializePooled` (inline path) | **31.9** | **0** | **0** |
+| `PipelineDispatch` (old whole path) | 1892 | 1252 | 10 |
+| `PipelineInline` | 1212 | 579 | 5 |
+| `PipelineInlineZeroCopy` | **1196** | 466 | 4 |
+
+Parse, route and serialize together are now **~325ns and zero allocations**.
+Every allocation `PipelineInlineZeroCopy` still reports belongs to the handler.
+
+#### Where the remaining time actually goes
+
+That last point is the one worth acting on, so it has its own benchmarks. The
+same two-field JSON payload, three ways:
+
+| Handler style | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `json.Marshal(map[string]string{…})` | 777.8 | 512 | 8 |
+| `json.Marshal(struct{…})` | 167.8 | 32 | 1 |
+| hand-appended into a pooled buffer | **15.6** | **0** | **0** |
+
+Marshalling a **map** costs more than twice the framework's entire request
+path. `encoding/json` caches an encoder per type, so a struct writes its fields
+directly, while a map is allocated, hashed, reflected over, and has its keys
+sorted before a byte is written — for identical output. Prefer a struct in any
+handler that is on a hot path; drop to hand-appending only where it measurably
+matters.
+
+#### A caution about end-to-end numbers
+
+Local `bombardier` runs cannot resolve changes of this size, and it is worth
+knowing that before drawing conclusions from one:
+
+- The load generator competes with the server for the same cores. Dropping the
+  server from `GOMAXPROCS=12` to `6` *raised* throughput (38.2k → 39.2k req/s),
+  and two concurrent clients summed to the same total as one (44.2k vs 46.6k).
+  The box saturates as a whole, well below what the framework can do.
+- Run-to-run variance swamps the signal. Five consecutive runs of one unchanged
+  binary measured 43.1k, 38.1k, 33.2k, 33.3k, 32.4k req/s — a **1.33x spread**,
+  declining as the machine heats up. The first run of a session is always the
+  fastest, so comparing a fresh baseline against a rebuilt candidate reliably
+  invents a regression that is not there.
+- For reference, `net/http` serving a precomputed body on the same box measured
+  32.4k req/s against Breeze's 37.1k — three very different servers landing
+  within 15% of each other is the harness reporting its own ceiling, not theirs.
+- gnet has no `epoll`/`kqueue` on Windows and falls back to
+  goroutine-per-connection, so these numbers say nothing about Linux behaviour
+  either way.
+
+Use the Go microbenchmarks above to evaluate request-path changes. For
+end-to-end figures, drive the load from a separate machine.
+
+---
+
 ## [v1.7.0] — Video Streaming
 
 ### New Features

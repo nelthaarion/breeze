@@ -90,8 +90,13 @@ func Middleware(c *Collector) breeze.HandlerFunc {
                 }
 
                 // Always count the request (atomic — zero contention).
+                //
+                // requestsToday used to be bumped here too. It was never reset
+                // at a day boundary, so it counted requests since process start
+                // — the same thing requestsTotal counts — while costing a second
+                // atomic RMW in the same cache line. TodayCount() answers the
+                // question it was named for, accurately. See collector.go.
                 c.requestsTotal.Add(1)
-                c.requestsToday.Add(1)
                 if status >= 500 {
                         c.errorsTotal.Add(1)
                 }
@@ -122,13 +127,24 @@ func Middleware(c *Collector) breeze.HandlerFunc {
                 // We're either being watched (WS clients connected) or the request
                 // is slow/errored. Now we do the full capture.
                 //
-                // NOTE: ctx.Conn may be closed by now. We capture ctx.Req fields
-                // (which are safe — owned by ctx) and ctx.Res (set by handler).
-                // We do NOT touch ctx.Conn.
+                // NOTE: ctx.Conn may be closed by now. We do NOT touch ctx.Conn.
+                //
+                // Strings taken off ctx.Req are cloned. They are views into the
+                // bytes the request was parsed from, and under breeze's
+                // SetZeroCopyHeaders those bytes are the connection's read buffer,
+                // which is reused for the next read — so a view is valid only
+                // until the handler returns. Everything captured here outlives it:
+                // the record goes into a ring buffer and is marshalled later,
+                // possibly on the hub's goroutine. Without the copies a stored
+                // record would silently rewrite itself into fragments of whatever
+                // request came next.
+                //
+                // This is the slow path by construction, so the copies land on
+                // requests that are already being watched or already slow.
                 reqID := newID()
                 method := string(ctx.Req.Method)
-                path := ctx.Req.Path
-                ua := ctx.Req.Header["user-agent"]
+                path := strings.Clone(ctx.Req.Path)
+                ua := strings.Clone(ctx.Req.Header["user-agent"])
                 ip := clientIP(ctx)
                 user := dashboardUser(ctx)
                 routePattern := matchRoute(c, ctx)
@@ -258,6 +274,10 @@ func (c *Collector) updateRouteStats(method, pattern string, durationUS int64, s
 }
 
 // selectHeaders returns a small subset of request headers for the inspector.
+//
+// Values are cloned. The keys are the constants below, but the values are views
+// into the request buffer, and the returned map is stored on a RequestRecord
+// that outlives the request. See the capture block in CollectorMiddleware.
 func selectHeaders(ctx *breeze.Context) map[string]string {
         if ctx.Req == nil || ctx.Req.Header == nil {
                 return nil
@@ -269,7 +289,7 @@ func selectHeaders(ctx *breeze.Context) map[string]string {
         out := make(map[string]string, len(want))
         for _, k := range want {
                 if v, ok := ctx.Req.Header[k]; ok && v != "" {
-                        out[k] = v
+                        out[k] = strings.Clone(v)
                 }
         }
         return out
@@ -330,13 +350,18 @@ func routeMatches(rt breeze.RouteInfo, req []string) bool {
 }
 
 // clientIP extracts the client IP. Safe with nil ctx.Conn.
+//
+// The X-Forwarded-For branch returns a clone: the result is a slice of a header
+// value, so it views the request buffer, and callers keep it (a RequestRecord in
+// the ring buffer, a key in the unique-IP set). See the capture block in
+// CollectorMiddleware.
 func clientIP(ctx *breeze.Context) string {
         if ctx.Req != nil {
                 if xff := ctx.Req.Header["x-forwarded-for"]; xff != "" {
                         if i := strings.IndexByte(xff, ','); i > 0 {
-                                return strings.TrimSpace(xff[:i])
+                                return strings.Clone(strings.TrimSpace(xff[:i]))
                         }
-                        return strings.TrimSpace(xff)
+                        return strings.Clone(strings.TrimSpace(xff))
                 }
         }
         if ctx.Conn != nil {

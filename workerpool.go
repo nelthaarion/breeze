@@ -103,6 +103,43 @@ type poolTask struct {
 	fn func()
 }
 
+// cacheLine is the coherency granule the CPU actually invalidates. 64 bytes on
+// amd64 and arm64, which is what this runs on.
+const cacheLine = 64
+
+// paddedCounter is an atomic.Int64 that occupies a full cache line on its own.
+//
+// # Why this exists
+//
+// The five pool counters used to be declared as five adjacent atomic.Int64
+// fields, which put all of them inside one 64-byte cache line. A cache line is
+// the unit of coherency traffic, so an atomic increment of ANY of them stole
+// the line from every core holding it — including cores about to bump a
+// completely different counter. That is false sharing: the counters are
+// logically independent but physically contend.
+//
+// It bites hardest exactly where it hurts most. submitted and queued are both
+// incremented on every successful Submit, and Submit is called concurrently by
+// every gnet event loop at once. So the common case was two guaranteed
+// line-invalidating RMWs per submit, each one racing N-1 other cores for
+// ownership of the same line. The atomic ops themselves are cheap; the
+// cross-core line ping-pong around them is not.
+//
+// Giving each counter its own line makes the increments independent again. The
+// cost is 5 × 64 B per pool, paid once at construction.
+//
+// atomic.Int64 is 8 bytes wide on every platform (its noCopy and align64
+// members are zero-sized; align64 only constrains alignment), so 56 bytes of
+// tail padding brings the struct to exactly one line.
+type paddedCounter struct {
+	v atomic.Int64
+	_ [cacheLine - 8]byte
+}
+
+func (c *paddedCounter) Add(n int64) { c.v.Add(n) }
+
+func (c *paddedCounter) Load() int64 { return c.v.Load() }
+
 // Errors returned by SubmitErr.
 var (
 	ErrPoolClosed = errors.New("breeze: worker pool is closed")
@@ -130,11 +167,15 @@ type WorkerPool struct {
 	tasksCloseOnce sync.Once
 
 	// Metrics for observability. All atomic for lock-free reads.
-	submitted atomic.Int64
-	queued    atomic.Int64
-	spawned   atomic.Int64
-	rejected  atomic.Int64
-	panicked  atomic.Int64
+	//
+	// Each counter sits on its own cache line — see paddedCounter for why.
+	// They are declared last so the padding does not push the hot fields
+	// (tasks, overflow) apart.
+	submitted paddedCounter
+	queued    paddedCounter
+	spawned   paddedCounter
+	rejected  paddedCounter
+	panicked  paddedCounter
 }
 
 // NewWorkerPoolWithConfig is the main constructor. It creates a pool with

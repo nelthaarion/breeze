@@ -13,22 +13,105 @@ var crlfcrlf = []byte("\r\n\r\n")
 
 // ParseHTTPRequest parses raw bytes into an HTTPRequest.
 //
-// # Correctness: owned header copy, zero-copy body
+// The returned request is freshly allocated and owns a private copy of the
+// header block, so every string on it stays valid for as long as the caller
+// keeps the request — no matter what happens to data afterwards. The server's
+// own hot path uses parsePooledRequest instead.
 //
-// String fields (Method, Path, header keys/values) are unsafe views into a
-// byte slice. With a worker pool the handler goroutine and the gnet event loop
-// run concurrently on the same connection buffer, so those views must NOT point
-// into the caller's buffer — a subsequent OnTraffic call can compact or
-// reallocate it while the handler is still reading.
+// A nil request with a nil error means the bytes are an incomplete request and
+// the caller should wait for more data.
+func ParseHTTPRequest(data []byte) (*HTTPRequest, int, error) {
+	req := &HTTPRequest{Header: make(map[string]string, 8)}
+	consumed, err := fillHTTPRequest(req, data, true)
+	if err != nil {
+		return nil, 0, err
+	}
+	if consumed == 0 {
+		return nil, 0, nil
+	}
+	return req, consumed, nil
+}
+
+// parsePooledRequest is ParseHTTPRequest backed by requestPool. The request is
+// returned to the pool when parsing does not yield one, so a stream of partial
+// reads cannot drain it.
 //
-// Solution: copy only the header block (data[:headerEnd]) into req.owned.
-// All string views are b2s slices of req.owned, which is kept alive by the
-// GC for exactly as long as *HTTPRequest is reachable.
+// ownHeaders selects whether the header block is copied into req.owned or
+// parsed in place. See fillHTTPRequest.
+func parsePooledRequest(data []byte, ownHeaders bool) (*HTTPRequest, int, error) {
+	req := acquireRequest()
+	consumed, err := fillHTTPRequest(req, data, ownHeaders)
+	if err != nil || consumed == 0 {
+		releaseRequest(req)
+		return nil, 0, err
+	}
+	return req, consumed, nil
+}
+
+// promoteRequest re-parses data into req with owned headers, so req can safely
+// outlive the buffer data points into — i.e. leave the event-loop goroutine.
 //
-// req.Body is kept as a zero-copy slice of the caller's buffer. This is safe
-// because the body occupies data[headerEnd+4 : consumed], and the leftover
-// bytes that OnTraffic retains start at data[consumed:]. They never overlap,
-// so OnTraffic never mutates or discards the body bytes while they are in use.
+// This is the counterpart to parsing with ownHeaders == false: parse cheaply,
+// and pay for isolation only for the requests that actually need it. Only
+// blocking routes are promoted, and a blocking route is about to do disk or
+// network I/O, so a second pass over a few hundred bytes still in L1 is noise
+// against what follows it.
+//
+// The re-parse cannot disagree with the first one. It reads the same bytes with
+// the same code, and the only mutation involved — lowercasing header keys — is
+// idempotent. So the caller keeps its own consumed count, and an error here
+// would mean the first parse was wrong too.
+//
+// # Why Header has to be cleared rather than overwritten
+//
+// req.Header's keys are themselves views into data. Assigning to a Go map does
+// not replace a key that compares equal to the one already stored, so simply
+// re-inserting every header would leave the original key strings — and their
+// pointers into the caller's buffer — in the map, which is precisely what this
+// function exists to get rid of. clear() drops them; the buckets survive, so
+// the re-parse still allocates nothing but the owned copy.
+func promoteRequest(req *HTTPRequest, data []byte) error {
+	clear(req.Header)
+	req.Query = nil
+	req.Body = nil
+	_, err := fillHTTPRequest(req, data, true)
+	return err
+}
+
+// fillHTTPRequest parses data into req, returning how many bytes the request
+// occupies. A zero length with a nil error means "incomplete, need more bytes".
+//
+// # ownHeaders: who owns the bytes the strings point into
+//
+// String fields (Method, Path, header keys and values) are unsafe views rather
+// than copies. ownHeaders decides what they view.
+//
+// ownHeaders == true copies data[:headerEnd] into req.owned and points every
+// string at that private copy. The GC keeps it alive for exactly as long as
+// *HTTPRequest is reachable, so the request can be handed to another goroutine
+// and held indefinitely. This is what the exported ParseHTTPRequest does, and
+// what the server does for any request it dispatches to the worker pool.
+//
+// ownHeaders == false parses data in place and copies nothing. The strings are
+// views into the caller's buffer and are valid only for as long as those bytes
+// are: on the server's inline path that is the duration of the OnTraffic call,
+// which is also the entire lifetime of the request. This removes the last
+// per-request allocation on the fast path.
+//
+// The caller is responsible for that distinction. OnTraffic re-parses with
+// ownHeaders == true before letting a request cross a goroutine boundary.
+//
+// # Header keys are lowercased in place
+//
+// Note that lowercasing mutates the bytes being parsed, including when they are
+// the caller's. That is safe here: the affected bytes are header keys inside a
+// request that has already been consumed from the connection, gnet never reads
+// them again, and lowercasing is idempotent, so even a re-parse of the same
+// bytes produces an identical result.
+//
+// req.Body is always a zero-copy slice of data. Ownership of those bytes is the
+// caller's problem: OnTraffic copies the body when it needs to outlive the
+// buffer (see breeze.go).
 //
 // # Single-pass header parsing
 //
@@ -40,23 +123,25 @@ var crlfcrlf = []byte("\r\n\r\n")
 // # Other performance decisions
 //   - Manual byte scanner replaces bytes.Split → no [][]byte alloc.
 //   - splitPathQuery uses bytes.IndexByte → no url.Parse overhead.
-//   - toLowerASCII avoids allocation when the key is already lowercase.
-//   - url.ParseQuery copies internally — b2s(query) is transient and safe.
+//   - lowerHeaderKey lowercases header keys in place, so building req.Header
+//     allocates nothing at all.
+//   - url.ParseQuery copies internally → b2s(query) is transient and safe.
 //   - internMethod returns a package-level constant for the seven known methods.
-func ParseHTTPRequest(data []byte) (*HTTPRequest, int, error) {
+func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool) (int, error) {
 	// ── Find header boundary ───────────────────────────────────────────────
 	headerEnd := bytes.Index(data, crlfcrlf)
 	if headerEnd < 0 {
-		return nil, 0, nil // incomplete — wait for more data
+		return 0, nil // incomplete — wait for more data
 	}
 
-	// ── Copy header block only ─────────────────────────────────────────────
-	// Body bytes are zero-copy (see doc above); only headers need isolation.
-	owned := make([]byte, headerEnd)
-	copy(owned, data[:headerEnd])
-
-	// All parsing below operates on owned.
-	header := owned
+	// ── Establish the bytes all strings will view ──────────────────────────
+	header := data[:headerEnd]
+	if ownHeaders {
+		owned := make([]byte, headerEnd)
+		copy(owned, header)
+		header = owned
+		req.owned = owned
+	}
 
 	// ── Parse request line ─────────────────────────────────────────────────
 	lineEnd := bytes.IndexByte(header, '\r')
@@ -67,7 +152,7 @@ func ParseHTTPRequest(data []byte) (*HTTPRequest, int, error) {
 
 	s1 := bytes.IndexByte(requestLine, ' ')
 	if s1 < 0 {
-		return nil, 0, fmt.Errorf("malformed request line")
+		return 0, fmt.Errorf("malformed request line")
 	}
 	s2 := bytes.IndexByte(requestLine[s1+1:], ' ')
 	if s2 < 0 {
@@ -78,12 +163,11 @@ func ParseHTTPRequest(data []byte) (*HTTPRequest, int, error) {
 	rawPath := requestLine[s1+1 : s1+1+s2]
 	path, query := splitPathQuery(rawPath)
 
-	req := &HTTPRequest{
-		Method: internMethod(methodBytes),
-		Path:   b2s(path),
-		Header: make(map[string]string, 8),
-		owned:  owned,
+	if req.Header == nil {
+		req.Header = make(map[string]string, 8)
 	}
+	req.Method = internMethod(methodBytes)
+	req.Path = b2s(path)
 
 	if len(query) > 0 {
 		// url.ParseQuery copies all keys/values — b2s(query) is transient.
@@ -114,7 +198,7 @@ func ParseHTTPRequest(data []byte) (*HTTPRequest, int, error) {
 			continue
 		}
 
-		key := toLowerASCII(line[:colon])
+		key := lowerHeaderKey(line[:colon])
 		val := b2s(bytes.TrimSpace(line[colon+1:]))
 		req.Header[key] = val
 
@@ -122,7 +206,7 @@ func ParseHTTPRequest(data []byte) (*HTTPRequest, int, error) {
 		if contentLength == -1 && key == "content-length" {
 			cl, err := strconv.Atoi(val)
 			if err != nil || cl < 0 {
-				return nil, 0, fmt.Errorf("invalid content-length")
+				return 0, fmt.Errorf("invalid content-length")
 			}
 			contentLength = cl
 		}
@@ -133,16 +217,13 @@ func ParseHTTPRequest(data []byte) (*HTTPRequest, int, error) {
 	if contentLength > 0 {
 		total := consumed + contentLength
 		if len(data) < total {
-			return nil, 0, nil // body not fully received yet
+			return 0, nil // body not fully received yet
 		}
-		// Body slices the caller's buffer directly. Safe because:
-		// - buf[consumed:] (the leftover) never overlaps buf[:consumed] (the body).
-		// - OnTraffic only mutates/discards bytes at consumed and beyond.
 		req.Body = data[consumed:total]
 		consumed = total
 	}
 
-	return req, consumed, nil
+	return consumed, nil
 }
 
 // splitPathQuery splits rawPath at the first '?' without allocating.
@@ -154,21 +235,51 @@ func splitPathQuery(raw []byte) (path, query []byte) {
 	return raw[:i], raw[i+1:]
 }
 
-// toLowerASCII converts b to a lowercase ASCII string.
-// When no uppercase bytes are present it uses b2s — a zero-alloc view into
-// the owned slice. When recasing is needed it allocates a fresh string.
-func toLowerASCII(b []byte) string {
-	for _, c := range b {
-		if c >= 'A' && c <= 'Z' {
-			buf := make([]byte, len(b))
-			for i, ch := range b {
-				if ch >= 'A' && ch <= 'Z' {
-					buf[i] = ch + 32
-				} else {
-					buf[i] = ch
-				}
-			}
-			return string(buf)
+// lowerHeaderKey lowercases b in place and returns a zero-copy string view of
+// it. It never allocates.
+//
+// # Why mutating the caller's bytes is safe
+//
+// b is a subslice of the header block, which is either req.owned — the parser's
+// private copy — or, with zero-copy headers, gnet's read buffer directly.
+//
+// Nothing reads those bytes in their original case either way. The request line
+// is parsed before the header scan starts, the value side of a line is taken
+// before the scan moves to the next line, and keys and values never overlap.
+//
+// Writing into gnet's buffer is likewise safe: OnTraffic gets those bytes from
+// Conn.Next(-1), which consumes them as it hands them over, so gnet will never
+// read them again — it only overwrites them on a later read.
+//
+// Two paths do scan the same bytes twice, and lowercasing is idempotent, so
+// both are unaffected: promoteRequest re-parses a request into owned memory,
+// and a request split across events is re-parsed after its leftover bytes are
+// concatenated with the next read.
+//
+// # Why this is not the obvious "only allocate when recasing is needed"
+//
+// The version this replaces scanned for an uppercase byte and returned a
+// zero-copy b2s view when it found none, allocating only otherwise:
+//
+//	buf := make([]byte, len(b))   // allocation 1
+//	...
+//	return string(buf)            // allocation 2
+//
+// The fast path never fired. Every header a real client puts on the wire is
+// capitalised — Host, User-Agent, Accept, Accept-Encoding, Connection,
+// Content-Type, Authorization — so the allocating branch was taken for
+// essentially every header of every request, and it allocated twice: once for
+// the scratch buffer and again for the string conversion. A plain four-header
+// GET therefore paid eight heap allocations before it reached the router, none
+// of which survived the request.
+//
+// Lowercasing in place costs one pass over bytes already in L1 and nothing
+// else, and the result points into the same block every other string on the
+// request points into, so it stays valid for exactly as long as they do.
+func lowerHeaderKey(b []byte) string {
+	for i := 0; i < len(b); i++ {
+		if c := b[i]; c >= 'A' && c <= 'Z' {
+			b[i] = c + 32
 		}
 	}
 	return b2s(b)

@@ -2,6 +2,7 @@ package breeze
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/panjf2000/gnet/v2"
 )
@@ -10,8 +11,8 @@ import (
 
 // wsConnState holds all WebSocket-specific state for a single connection.
 // It is stored in Breeze.wsConns (keyed by fd) and looked up on every
-// OnTraffic call — the lookup is a sync.Map Load, which is O(1) and
-// allocation-free on the read path.
+// OnTraffic call for a connection that has been promoted. HTTP traffic skips
+// the lookup entirely — see wsCount.
 type wsConnState struct {
 	wc      *WSConn
 	handler WSHandler
@@ -72,7 +73,14 @@ func (b *Breeze) WebSocket(path string, handler WSHandler) *WSHub {
 	// map above is sufficient for re-registrations on the same path.
 	// We always append to the router; Find() returns the first match, so only
 	// the first registration is actually reachable unless paths differ.
-	b.Router.Handle(GET, path, b.upgradeHandler(path, handler))
+	//
+	// Registered as BLOCKING so the handshake never runs on a gnet event-loop
+	// goroutine. The handler calls handler.OnConnect(wc) — arbitrary
+	// application code that may open a database connection, take a lock, or
+	// otherwise block. Running that inline would stall every connection pinned
+	// to that reactor for its duration. Upgrades happen once per connection, so
+	// the pool hop costs nothing measurable.
+	b.Router.HandleBlocking(GET, path, b.upgradeHandler(path, handler))
 	return b.wsHub
 }
 
@@ -129,6 +137,7 @@ func (b *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
 			maxPayload: wsMaxPayloadDefault,
 		}
 		b.wsConns.Store(ctx.Conn.Fd(), state)
+		b.wsCount.Add(1)
 		b.wsHub.register(wc)
 
 		// Send 101 Switching Protocols — suppress normal response path.
@@ -144,7 +153,10 @@ func (b *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
 // ─── Traffic routing ─────────────────────────────────────────────────────────
 
 // isWSConn checks whether the given fd is a promoted WebSocket connection.
-// The sync.Map Load is the fastest path: no allocation, no lock contention.
+//
+// Callers on the request path must gate this behind a wsCount check — the
+// sync.Map Load boxes fd into an interface and allocates for any descriptor
+// above 255.
 func (b *Breeze) isWSConn(fd int) (*wsConnState, bool) {
 	v, ok := b.wsConns.Load(fd)
 	if !ok {
@@ -293,7 +305,13 @@ func (b *Breeze) dispatchMessage(wc *WSConn, handler WSHandler, opcode byte, pay
 func (b *Breeze) cleanupWS(fd int, wc *WSConn, handler WSHandler, code uint16, reason string) {
 	wc.closed.Store(true)
 	b.wsHub.unregister(wc)
-	b.wsConns.Delete(fd)
+	// LoadAndDelete, not Delete: cleanupWS is reachable both from a Close frame
+	// and from OnClose, so the same fd can arrive twice. Decrementing only when
+	// an entry was actually removed keeps wsCount from drifting negative and
+	// silently re-enabling the map lookup on the HTTP fast path.
+	if _, loaded := b.wsConns.LoadAndDelete(fd); loaded {
+		b.wsCount.Add(-1)
+	}
 	b.wsRxBufs.Delete(fd)
 
 	task := func() { handler.OnClose(wc, code, reason) }
@@ -327,4 +345,17 @@ type wsHubFields struct {
 	wsHandlers map[string]WSHandler
 	wsConns    sync.Map // fd(int) → *wsConnState
 	wsRxBufs   sync.Map // fd(int) → []byte  reassembly buffer
+
+	// wsCount is the number of entries in wsConns, maintained alongside it so
+	// OnTraffic can skip the map on a server that has no WebSocket
+	// connections — which is every purely-HTTP server, and every other server
+	// for the whole request path.
+	//
+	// The map read is not free the way the old comment claimed. sync.Map keys
+	// are interface{}, so Load(fd) boxes an int, and the runtime only has
+	// preallocated boxes for values 0-255. On a server busy enough to matter
+	// the file descriptors are in the thousands, so that conversion heap
+	// allocates — one allocation per request, to look up a key that is almost
+	// never there. An atomic load costs nothing and removes it.
+	wsCount atomic.Int64
 }

@@ -23,6 +23,12 @@ type UserResponse struct {
 	Email string `json:"email"`
 }
 
+// wsStats is the /ws/stats payload. It exists so the handler can marshal a
+// struct instead of a map — see the comment at its use site.
+type wsStats struct {
+	Connections int64 `json:"connections"`
+}
+
 type UserListResponse struct {
 	Users []UserResponse `json:"users"`
 	Total int            `json:"total"`
@@ -69,6 +75,14 @@ func main() {
 	router := breeze.NewRouter()
 	pool := breeze.NewEventLoopWorkerPool(runtime.NumCPU())
 	app := breeze.New(router, pool)
+
+	// Nothing in this app keeps a string off ctx.Req past the handler that read
+	// it — the handlers marshal a response and return, ServeStatic and the
+	// Scalar routes are registered blocking (so their requests are promoted to
+	// owned memory before they reach a worker), and no middleware caches by
+	// path. That is the whole precondition, so take the last allocation out of
+	// the request path.
+	app.SetZeroCopyHeaders(true)
 
 	// WebSocket() returns the hub immediately — inject it into the handler.
 	chat := &ChatHandler{}
@@ -163,7 +177,13 @@ func main() {
 		if h := app.Hub(); h != nil {
 			count = h.Count()
 		}
-		ctx.JSON(map[string]int64{"connections": count})
+		// A struct, not map[string]int64. encoding/json caches an encoder per
+		// type, so a struct writes its fields directly; a map is allocated,
+		// hashed, reflected over, and has its keys sorted before anything is
+		// written. That is ~780ns against ~170ns for identical output — more
+		// than the framework's entire request path either way. See
+		// BenchmarkZZJSONMapHandler.
+		ctx.JSON(wsStats{Connections: count})
 	})
 
 	router.Handle(breeze.GET, "/", func(ctx *breeze.Context) {

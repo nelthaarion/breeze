@@ -17,7 +17,7 @@ import (
 // These tests exist because of a HIGH-severity bug discovered in Phase 1.2
 // profiling: middlewares read headers with mixed-case keys (e.g.
 // ctx.Req.Header["Authorization"]) but ParseHTTPRequest lowercases ALL
-// header keys (request.go:117, toLowerASCII). In production, every
+// header keys (request.go, lowerHeaderKey). In production, every
 // middleware header lookup missed — JWT always returned 401, compression
 // never compressed, ETag never hit, CORS never saw the Origin.
 //

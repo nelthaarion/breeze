@@ -16,6 +16,15 @@ var (
         hdrsHTML = map[string]string{"Content-Type": "text/html; charset=utf-8"}
 )
 
+// Pre-rendered wire form of each shared header map above, so serializing a
+// standard response never has to range over a map. Keep each entry in sync
+// with its map — they describe the same headers in two representations.
+var (
+        rawJSON = []byte("Content-Type: application/json\r\n")
+        rawText = []byte("Content-Type: text/plain\r\n")
+        rawHTML = []byte("Content-Type: text/html; charset=utf-8\r\n")
+)
+
 type Context struct {
         Conn        gnet.Conn
         Req         *HTTPRequest
@@ -23,6 +32,12 @@ type Context struct {
         params      map[string]string
         middlewares []HandlerFunc
         index       int
+
+        // reqPooled records whether Req came from requestPool, so releaseContext
+        // recycles only requests the pool actually issued. A Context built by
+        // hand (NewContext, tests, the middleware integration suite) owns a
+        // request that the caller may still hold, and must not be recycled.
+        reqPooled bool
 
         // store is a lazy-initialized typed key-value store for middleware that
         // need to attach structured data (e.g. JWT claims, user objects) to the
@@ -47,6 +62,7 @@ func (ctx *Context) WriteString(s string) {
         r.Headers = hdrsText
         r.Body = []byte(s)
         r.headersShared = true
+        r.rawHeaders = rawText
 }
 
 func (ctx *Context) JSON(data any) {
@@ -57,12 +73,14 @@ func (ctx *Context) JSON(data any) {
                 r.Headers = hdrsJSON
                 r.Body = []byte(`{"message":"error parsing json"}`)
                 r.headersShared = true
+                r.rawHeaders = rawJSON
                 return
         }
         r.Status = ctx.statusOrDefault(200)
         r.Headers = hdrsJSON
         r.Body = d
         r.headersShared = true
+        r.rawHeaders = rawJSON
 }
 
 func (ctx *Context) HTML(data []byte) {
@@ -71,6 +89,7 @@ func (ctx *Context) HTML(data []byte) {
         r.Headers = hdrsHTML
         r.Body = data
         r.headersShared = true
+        r.rawHeaders = rawHTML
 }
 
 // Status sets (or overrides) the response status code.
@@ -105,6 +124,10 @@ func (ctx *Context) Status(code int) {
 // if needed.
 func (ctx *Context) SetHeader(key, value string) {
         r := ctx.ensureResponse()
+        // Any mutation invalidates the pre-rendered header block: from here on
+        // the response must be serialized from the map, which is now the only
+        // representation that reflects this write.
+        r.rawHeaders = nil
         // Copy-on-write: upgrade shared map to a private one.
         if r.headersShared {
                 orig := r.Headers

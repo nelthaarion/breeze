@@ -36,6 +36,7 @@ func lookupDriver(p Provider) (ProviderDriver, bool) {
 // interface keeps Register testable and decoupled from the concrete type.
 type router interface {
 	Handle(method breeze.Method, pattern string, handler breeze.HandlerFunc, middlewares ...breeze.HandlerFunc)
+	HandleBlocking(method breeze.Method, pattern string, handler breeze.HandlerFunc, middlewares ...breeze.HandlerFunc)
 }
 
 // Register wires the full login/callback/logout flow for a provider onto the
@@ -55,9 +56,15 @@ func Register(r router, cfg Config) {
 	cfg.mustNormalize()
 	slug := cfg.Provider.String()
 
-	r.Handle(breeze.GET, "/login/"+slug, Login(cfg))
-	r.Handle(breeze.GET, callbackPath(&cfg), Callback(cfg))
-	r.Handle(breeze.GET, "/logout/"+slug, Logout(cfg))
+	// All three are registered as blocking. The callback exchanges the
+	// authorization code with the provider over the network and then fetches
+	// the userinfo endpoint — two outbound round trips to a third party. Login
+	// and Logout are cheap today, but they are part of the same flow and are hit
+	// once per session, so there is nothing to win by running them on an event
+	// loop and a stalled reactor to lose if a future revision adds a lookup.
+	r.HandleBlocking(breeze.GET, "/login/"+slug, Login(cfg))
+	r.HandleBlocking(breeze.GET, callbackPath(&cfg), Callback(cfg))
+	r.HandleBlocking(breeze.GET, "/logout/"+slug, Logout(cfg))
 }
 
 // callbackPath derives the router pattern for the callback from the configured

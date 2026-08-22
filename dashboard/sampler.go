@@ -127,7 +127,7 @@ func (s *metricsSampler) sample(now time.Time) {
 
 		// HTTP
 		RequestsTotal:  curReqs,
-		RequestsToday:  s.c.requestsToday.Load(),
+		RequestsToday:  s.c.TodayCount(),
 		RequestsPerSec: rps,
 		AvgRespTimeMS:  avgRespMS,
 		ErrorRate:      errRate,

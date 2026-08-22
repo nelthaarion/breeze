@@ -209,12 +209,11 @@ func (c *Collector) saveState() {
         }
         c.uniqueIPsMu.RUnlock()
 
-        // Copy daily counts.
-        c.dailyCountsMu.RLock()
-        for date, count := range c.dailyCounts {
-                state.DailyCounts[date] = count
-        }
-        c.dailyCountsMu.RUnlock()
+        // Copy daily counts. This has to go through DailyCounts() rather than
+        // ranging over c.dailyCounts: the request path now counts today into an
+        // atomic that is only folded into the map at the next UTC rollover, so a
+        // direct read would persist a zero for the day currently in progress.
+        state.DailyCounts = c.DailyCounts()
 
         // Copy route stats.
         c.routeStatsMu.RLock()

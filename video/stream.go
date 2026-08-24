@@ -246,7 +246,6 @@ func (m *mount) applyCORS(h *head, origin string) {
 // server fault.
 //
 // These are separated so a dashboard is not filled with red for what is
-
 // ordinary viewer behaviour: seeking, pausing, or closing a tab all abort
 // an in-flight response.
 func isPeerGone(err error) bool {

@@ -16,12 +16,24 @@ func main() {
         router.Use(middleware.LoggingMiddleware())
 
         router.Handle(breeze.GET, "/", func(ctx *breeze.Context) {
-                ctx.JSON(map[string]string{"status": "ok"})
+                // A named struct, not map[string]string: marshalling a one-key
+                // map costs several times what the equivalent struct does, and
+                // on this framework that is more than the entire request path.
+                ctx.JSON(statusResponse{Status: "ok"})
         })
 
         pool := breeze.NewEventLoopWorkerPool(runtime.NumCPU())
         app := breeze.New(router, pool)
 
+        // Wires everything added with `breeze add`. Router.Use rebuilds each
+        // route's chain on every call, so this after RegisterGeneratedRoutes is
+        // correct — the priority order inside decides nesting.
+        RegisterGeneratedFeatures(app, router)
+
         fmt.Println("Breeze listening on :3000")
         app.Run(3000, true)
+}
+
+type statusResponse struct {
+        Status string `json:"status"`
 }

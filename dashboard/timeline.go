@@ -36,8 +36,8 @@ func NewTimelineRecorder(cfg Config) *TimelineRecorder {
 // root if no step is open). The returned func must be called when the step
 // ends; it captures the duration and any metadata you pass.
 //
-//   end := rec.Step("ORM Query")
-//   defer end(map[string]any{"rows": 42})
+//	end := rec.Step("ORM Query")
+//	defer end(map[string]any{"rows": 42})
 func (r *TimelineRecorder) Step(name string) func(metadata map[string]any) {
 	if r == nil {
 		return func(map[string]any) {}

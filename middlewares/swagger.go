@@ -163,5 +163,3 @@ func Tag(tag string, doc scalar.RouteDoc) scalar.RouteDoc {
 	doc.Tags = append([]string{tag}, doc.Tags...)
 	return doc
 }
-
-

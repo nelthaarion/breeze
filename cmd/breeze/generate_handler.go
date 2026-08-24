@@ -25,6 +25,7 @@ func generateHandler(modulePath, name string, args []string) error {
 	methods := parseMethodsFlag(fs)
 	force := fs.Bool("force", false, "overwrite an existing handler file")
 	pluralOverride := fs.String("plural", "", "override the pluralized handler name (e.g. --plural=people)")
+	pathOverride := fs.String("path", "", "route prefix (default /<plural>, e.g. --path=/api/v1/users)")
 
 	flagArgs, _ := splitFlagsAndPositional(fs, args)
 	if err := parseFlags(fs, flagArgs); err != nil {
@@ -35,7 +36,10 @@ func generateHandler(modulePath, name string, args []string) error {
 	if plural == "" {
 		plural = pluralize(name)
 	}
-	pathBase := "/" + strings.ToLower(plural)
+	pathBase, err := resolveRoutePath(*pathOverride, plural)
+	if err != nil {
+		return err
+	}
 
 	actions, err := actionsFor(name, plural, splitMethods(*methods))
 	if err != nil {
@@ -47,6 +51,31 @@ func generateHandler(modulePath, name string, args []string) error {
 	}
 
 	return registerActionRoutes(modulePath, name, pathBase, actions, nil)
+}
+
+// resolveRoutePath validates an explicit --path, or derives the default from
+// the pluralized name. A prefix that does not begin with "/" would silently
+// produce routes nothing can reach, and a trailing "/" would produce "/users/"
+// plus "/users//:id", so both are corrected rather than passed through.
+func resolveRoutePath(explicit, plural string) (string, error) {
+	if explicit == "" {
+		return "/" + strings.ToLower(plural), nil
+	}
+
+	p := strings.TrimSpace(explicit)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	if len(p) > 1 {
+		p = strings.TrimRight(p, "/")
+	}
+	if p == "" {
+		return "", fmt.Errorf("invalid --path %q", explicit)
+	}
+	if strings.ContainsAny(p, " \t") {
+		return "", fmt.Errorf("invalid --path %q — route paths cannot contain whitespace", explicit)
+	}
+	return p, nil
 }
 
 type actionWithPath struct {

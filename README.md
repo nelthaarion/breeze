@@ -135,8 +135,9 @@ docker build --build-arg BREEZE_TARGET=./cmd/dashboard-example -t my-app .
 
 ## 🧰 CLI — Scaffolding & Code Generation
 
-Breeze ships a `rails`-style CLI for scaffolding projects and generating
-CRUD boilerplate.
+Breeze ships a `rails`-style CLI. It has two verbs: **`generate`** writes code
+you then edit, **`add`** wires a framework feature that already exists into your
+project.
 
 ```bash
 go install github.com/nelthaarion/breeze/cmd/breeze@latest
@@ -149,23 +150,78 @@ breeze new myapp                    # minimal REST API layout (default)
 breeze new myapp --template=views   # + views/components/template engine
 ```
 
-**Generate a full CRUD resource** — structs, handlers, an in-memory store,
-and OpenAPI docs, wired into the router automatically:
+**Generate a full CRUD resource** — request/response structs, handlers, an
+in-memory store, OpenAPI docs and request validation, wired into the router
+automatically:
 
 ```bash
 breeze generate resource User name:string email:string age:int
 ```
 
-**Generate a bare handler stub** (no structs, no docs):
+A third segment on a field becomes a `validate:"..."` tag, which the generated
+handler enforces through `binding.Bind` — a request that breaks a rule gets a
+`422` with an RFC 9457 body rather than being stored:
 
 ```bash
-breeze generate handler Session --methods=get,create
+breeze generate resource User \
+  name:string:required,min=2,max=40 \
+  role:string:required,oneof=admin editor viewer
 ```
 
-**Generate gRPC server/client scaffolding** from an interface declared in
-any `*_grpc.go` file — no naming convention on methods, just a
-`grpc_type` comment (`Unary`, `ServerSideStreaming`, `ClientSideStreaming`,
-or `Bidirectional`) above each method:
+String fields given no rules are inferred as `required` (and `required,email`
+when named like an email address); numbers and bools are left alone, since
+`required` means *non-zero* and would otherwise reject `age: 0`. Pass
+`--no-validate` to turn inference off. Rules: `required`, `email`, `min=N`,
+`max=N`, `oneof=a b c`.
+
+**The other generators:**
+
+| Command | Writes |
+|---|---|
+| `generate handler <Name>` | route group with CRUD stubs, no structs or docs |
+| `generate model <Name> field:type…` | `models/` struct plus a paired SQL migration |
+| `generate event <Name> [field:type…]` | event type with emit and subscribe helpers |
+| `generate listener <Event>` | subscriber for an existing event |
+| `generate workflow <Name> --steps=a,b,c` | workflow definition with retries and compensation |
+| `generate middleware <Name>` | `breeze.HandlerFunc` stub |
+| `generate ws <Name>` | WebSocket handler with connect/message/close hooks |
+| `generate view <Name>` | HTML view and the route that renders it |
+| `generate job <Name> [--every=1h]` | background job, registered with the dashboard |
+| `generate grpc <Name>` | gRPC server/client scaffolding (see below) |
+
+**Wire in a framework feature** — 21 of them, each idempotent, each written as a
+replaceable block in `features_generated.go`:
+
+```bash
+breeze add dashboard --allow-writes
+breeze add events --async
+breeze add video --root=./media
+breeze add --list                   # all 21, in the order they are wired
+```
+
+Middlewares are emitted in an order that matters: `recovery` outermost so it
+catches panics from everything below, `cors` before `ratelimit` so a preflight is
+never rate-limited, `etag` innermost so a cached body is never served to an
+unauthenticated caller.
+
+**And the rest:**
+
+```bash
+breeze routes                       # list generated routes without booting the app
+breeze migrate up|down [n]|status   # via the runner from `breeze add migrator`
+breeze makemigration <Name>
+breeze version
+breeze help <command>
+```
+
+`breeze migrate` shells out to `cmd/migrate` in your project, which
+`breeze add migrator --driver=postgres` writes with your SQL driver
+blank-imported. That keeps `lib/pq`, `mysql` and `sqlite3` out of breeze's own
+`go.mod` while still letting the CLI run your migrations.
+
+**gRPC** scaffolding is generated from an interface declared in any `*_grpc.go`
+file — no naming convention on methods, just a `grpc_type` comment (`Unary`,
+`ServerSideStreaming`, `ClientSideStreaming`, or `Bidirectional`) above each:
 
 ```bash
 breeze generate grpc UserService
@@ -179,7 +235,8 @@ replaces its block, so it's safe to regenerate after adding fields (pass
 its own server/client/adapter files alongside the `*_grpc.go` interface it
 was generated from, and also supports `--force` to overwrite them.
 
-Supported field types: `string`, `int`, `int64`, `float64`, `bool`, `time.Time`.
+Supported field types: `string`, `int`, `int64`, `uint`, `uint64`, `float32`,
+`float64`, `bool`, `[]string`, `time.Time`, `time.Duration`.
 
 ## Features
 
@@ -414,7 +471,10 @@ expensive to find — the scrubber is simply dead, because the browser cannot
 ask for the middle of a file it is being handed sequentially.
 
 - 🎯 `206 Partial Content` with correct `Content-Range`; `416` for
-  unsatisfiable ranges, `200` for malformed ones (as RFC 9110 requires)
+  well-formed but unsatisfiable ranges; a malformed one is ignored (as RFC 9110
+  requires) and answered like a request with no `Range` at all — the first
+  chunk, still `206`, so the player learns the full size and can seek. `200`
+  appears only for an empty file
 - 🧠 One pooled chunk in flight per response — 256 KiB by default, so ten
   thousand viewers cost ten thousand chunks, not ten thousand copies
 - 🚧 Open-ended `Range: bytes=0-` capped at `MaxChunkSize` (4 MiB), so a

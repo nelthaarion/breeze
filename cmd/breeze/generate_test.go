@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"reflect"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -59,5 +62,51 @@ func TestUnknownFlagReturnsError(t *testing.T) {
 	}
 	if err := generateHandler("example.com/x", "User", []string{"--bogus"}); err == nil {
 		t.Error("generateHandler with unknown flag: expected error, got nil")
+	}
+}
+
+// TestGenerateHelpDocumentsEveryRule keeps the help and the parser in step in
+// both directions.
+//
+// The direction that matters is a rule the parser accepts but the help omits:
+// validation is only reachable by typing a rule name, so an undocumented rule is
+// one nobody can use. The reverse — a documented rule the parser rejects — is
+// the mistake this whole area started as, help advertising behaviour the code
+// did not have.
+func TestGenerateHelpDocumentsEveryRule(t *testing.T) {
+	var buf bytes.Buffer
+	printGenerateHelp(&buf)
+	help := buf.String()
+
+	for _, set := range []map[string]bool{validateRulesBare, validateRulesNeedingArg} {
+		for name := range set {
+			if !regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`).MatchString(help) {
+				t.Errorf("rule %q is accepted but not documented in `breeze help generate`", name)
+			}
+		}
+	}
+
+	// The help spells the rules out on one line; every entry on it must be a
+	// rule the parser accepts, so a typo there cannot advertise behaviour the
+	// code does not have. Comma-separated because oneof's argument is itself
+	// space-separated.
+	m := regexp.MustCompile(`(?m)^  Rules:\s+(.*)$`).FindStringSubmatch(help)
+	if m == nil {
+		t.Fatal("help no longer carries a `Rules:` line; update this test or restore it")
+	}
+	for _, entry := range strings.Split(m[1], ",") {
+		name := strings.TrimSpace(entry)
+		if i := strings.IndexByte(name, '='); i >= 0 {
+			name = name[:i]
+		}
+		if !validateRulesBare[name] && !validateRulesNeedingArg[name] {
+			t.Errorf("help documents rule %q, which the parser does not accept", name)
+		}
+	}
+
+	// --no-validate exists only to turn inference off, so it is useless to
+	// anyone who cannot find it.
+	if !strings.Contains(help, "--no-validate") {
+		t.Error("help does not mention --no-validate")
 	}
 }

@@ -1,279 +1,269 @@
 package main
 
+// `breeze migrate` and `breeze makemigration`.
+//
+// migrate does not open the database itself. It cannot: database/sql resolves a
+// driver by name from the drivers registered in the running binary, and this
+// binary registers none — breeze depends on no SQL driver, so that every
+// project does not inherit Postgres, MySQL and SQLite whether it uses them or
+// not. The previous version of this file called sql.Open anyway and failed with
+// `sql: unknown driver "postgres"` on every invocation.
+//
+// So the driver is chosen in the project instead. `breeze add migrator
+// --driver=<name>` writes cmd/migrate/main.go there, blank-importing that
+// driver, and the subcommands here forward to it. Flags are passed through
+// untouched, so the runner's own --dsn/--driver/--dir/--timeout work without
+// this side needing to know about them.
+
 import (
-	"context"
-	"database/sql"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/nelthaarion/breeze/migrate"
 )
 
+// migratorPkg is the project-relative package the generated runner lives in.
+const migratorPkg = "cmd/migrate"
+
+var migrateSubcommands = map[string]bool{"up": true, "down": true, "status": true}
+
 func runMigrate(args []string) error {
+	// Bare `breeze migrate` means up, matching the old behaviour.
+	forward := args
+	sub := "up"
 	if len(args) == 0 {
-		return runMigrateUp(args)
+		forward = []string{"up"}
+	} else if !strings.HasPrefix(args[0], "-") {
+		sub = args[0]
 	}
 
-	// Check for subcommands
-	subcommand := args[0]
-	switch {
-	case subcommand == "up":
-		return runMigrateUp(args[1:])
-	case subcommand == "down":
-		return runMigrateDown(args[1:])
-	case subcommand == "status":
-		return runMigrateStatus(args[1:])
-	default:
-		return fmt.Errorf("unknown migrate subcommand %q — must be up, down, or status", subcommand)
+	if !migrateSubcommands[sub] {
+		return fmt.Errorf("unknown migrate subcommand %q — must be up, down, or status", sub)
 	}
+
+	// `down 2` is validated here as well as in the runner so a typo costs a
+	// message rather than a compile-and-run round trip.
+	if sub == "down" && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+		if n, err := strconv.Atoi(args[1]); err != nil || n < 1 {
+			return fmt.Errorf("invalid step count %q — expected a positive integer, as in `breeze migrate down 2`", args[1])
+		}
+	}
+
+	if err := requireMigrator(); err != nil {
+		return err
+	}
+	return execMigrator(forward)
+}
+
+// migratorPresent reports whether the project has a generated migration runner.
+//
+// The runner is a standalone main package, not a block in
+// features_generated.go — so this file is the only record that `add migrator`
+// has been run. Asking hasBlock about "migrator" is always false and always
+// will be, which is how `generate model` came to recommend `add migrator` to
+// people who already had one.
+func migratorPresent() bool {
+	info, err := os.Stat(filepath.Join(migratorPkg, "main.go"))
+	return err == nil && !info.IsDir()
+}
+
+// requireMigrator checks the generated runner is present, and explains how to
+// get it when it is not. Reporting the missing file is far more useful than
+// letting `go run` fail on a package that does not exist.
+func requireMigrator() error {
+	if _, err := os.Stat("go.mod"); err != nil {
+		if os.IsNotExist(err) {
+			return errors.New("no go.mod in the current directory — run this from the root of a Breeze project")
+		}
+		return err
+	}
+
+	if migratorPresent() {
+		return nil
+	}
+
+	return fmt.Errorf(`no migration runner in this project (%s/main.go is missing)
+
+The breeze binary has no SQL driver compiled into it, so it cannot connect to
+your database — database/sql only knows the drivers registered in the process
+that calls sql.Open. Generate a runner that does:
+
+  breeze add migrator --driver=postgres     # or pgx, mysql, sqlite, sqlite3
+  go mod tidy
+
+Then set the connection string and re-run:
+
+  export BREEZE_DATABASE_URL="postgres://user:pass@localhost:5432/db?sslmode=disable"
+  breeze migrate status`, migratorPkg)
+}
+
+// execMigrator runs the project's migration binary, passing stdio through so
+// its output appears as if it were this command's own.
+func execMigrator(args []string) error {
+	cmd := exec.Command("go", append([]string{"run", "./" + migratorPkg}, args...)...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	err := cmd.Run()
+	if err == nil {
+		return nil
+	}
+
+	// The runner prints its own diagnostics before exiting non-zero. Returning
+	// the error here would stack a "breeze: exit status 1" on top of a message
+	// that already said what went wrong, so adopt its exit code instead.
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		os.Exit(exitErr.ExitCode())
+	}
+	return fmt.Errorf("running ./%s: %w", migratorPkg, err)
 }
 
 func runMakeMigration(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: breeze makemigration <name>")
+	fs := flag.NewFlagSet("makemigration", flag.ContinueOnError)
+	dir := fs.String("dir", "migrations", "directory to write the migration pair into")
+
+	flagArgs, positional := splitFlagsAndPositional(fs, args)
+	if err := parseFlags(fs, flagArgs); err != nil {
+		return err
+	}
+	if len(positional) != 1 {
+		return errors.New("usage: breeze makemigration <Name> [--dir=<path>]")
 	}
 
-	name := args[0]
-	name = strings.TrimSpace(name)
+	name := strings.TrimSpace(positional[0])
 	if name == "" {
-		return fmt.Errorf("migration name cannot be empty")
+		return errors.New("migration name cannot be empty")
 	}
 
-	// Ensure migrations directory exists
-	migrationsDir := "migrations"
-	if _, err := os.Stat(migrationsDir); err != nil {
-		if os.IsNotExist(err) {
-			if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
-				return fmt.Errorf("failed to create migrations directory: %w", err)
-			}
-		} else {
-			return err
-		}
+	migrationsDir := *dir
+	if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", migrationsDir, err)
 	}
 
-	// List existing migrations to determine next version
-	entries, err := os.ReadDir(migrationsDir)
+	version, err := nextMigrationVersion(migrationsDir)
 	if err != nil {
-		return fmt.Errorf("failed to read migrations directory: %w", err)
+		return err
 	}
 
-	// Parse existing migrations to find the next version
-	var highestVersion int
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		filename := entry.Name()
-		if strings.HasSuffix(filename, ".up.sql") {
-			// Extract version number from filename like "0001_name.up.sql"
-			if underscore := strings.Index(filename, "_"); underscore > 0 {
-				versionStr := filename[:underscore]
-				if v, err := strconv.Atoi(versionStr); err == nil {
-					if v > highestVersion {
-						highestVersion = v
-					}
-				}
-			}
-		}
-	}
-
-	nextVersion := highestVersion + 1
-	versionStr := fmt.Sprintf("%04d", nextVersion)
-
-	// Convert name to slug (CamelCase -> snake_case)
+	versionStr := fmt.Sprintf("%04d", version)
 	slug := toSlug(name)
+	stamp := time.Now().Format(time.RFC3339)
 
 	upFile := filepath.Join(migrationsDir, fmt.Sprintf("%s_%s.up.sql", versionStr, slug))
 	downFile := filepath.Join(migrationsDir, fmt.Sprintf("%s_%s.down.sql", versionStr, slug))
 
-	// Create up migration file
-	upContent := fmt.Sprintf("-- Migration %s: %s\n-- Created at %s\n\n", versionStr, slug, time.Now().Format(time.RFC3339))
-	if err := os.WriteFile(upFile, []byte(upContent), 0o644); err != nil {
-		return fmt.Errorf("failed to create migration file: %w", err)
+	// Refuse rather than overwrite: a migration that has already been applied
+	// is recorded by checksum, so silently replacing its contents produces a
+	// mismatch that is confusing to diagnose later.
+	for _, path := range []string{upFile, downFile} {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("%s already exists", path)
+		}
 	}
 
-	// Create down migration file
-	downContent := fmt.Sprintf("-- Rollback for migration %s: %s\n-- Created at %s\n\n", versionStr, slug, time.Now().Format(time.RFC3339))
+	upContent := fmt.Sprintf("-- Migration %s: %s\n-- Created at %s\n\n", versionStr, slug, stamp)
+	if err := os.WriteFile(upFile, []byte(upContent), 0o644); err != nil {
+		return fmt.Errorf("creating %s: %w", upFile, err)
+	}
+
+	downContent := fmt.Sprintf("-- Rollback for migration %s: %s\n-- Created at %s\n\n", versionStr, slug, stamp)
 	if err := os.WriteFile(downFile, []byte(downContent), 0o644); err != nil {
-		// Clean up up file if down fails
 		os.Remove(upFile)
-		return fmt.Errorf("failed to create rollback file: %w", err)
+		return fmt.Errorf("creating %s: %w", downFile, err)
 	}
 
 	fmt.Printf("Created migration %s:\n  %s\n  %s\n", versionStr, upFile, downFile)
 	return nil
 }
 
-func runMigrateUp(args []string) error {
-	db, err := openDatabase()
+// nextMigrationVersion returns one past the highest NNNN_ prefix in dir.
+func nextMigrationVersion(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	migrationsDir := "migrations"
-	fsys := os.DirFS(migrationsDir)
-	runner := migrate.New(db, fsys)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := runner.Up(ctx); err != nil {
-		return err
+		return 0, fmt.Errorf("reading %s: %w", dir, err)
 	}
 
-	fmt.Println("All pending migrations applied successfully")
-	return nil
-}
-
-func runMigrateDown(args []string) error {
-	n := 1
-	if len(args) > 0 {
-		var err error
-		n, err = strconv.Atoi(args[0])
-		if err != nil || n <= 0 {
-			return fmt.Errorf("invalid argument: n must be a positive integer")
+	highest := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") {
+			continue
+		}
+		underscore := strings.Index(entry.Name(), "_")
+		if underscore <= 0 {
+			continue
+		}
+		if v, err := strconv.Atoi(entry.Name()[:underscore]); err == nil && v > highest {
+			highest = v
 		}
 	}
-
-	db, err := openDatabase()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	migrationsDir := "migrations"
-	fsys := os.DirFS(migrationsDir)
-	runner := migrate.New(db, fsys)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := runner.Down(ctx, n); err != nil {
-		return err
-	}
-
-	fmt.Printf("Rolled back %d migration(s)\n", n)
-	return nil
+	return highest + 1, nil
 }
 
-func runMigrateStatus(args []string) error {
-	db, err := openDatabase()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	migrationsDir := "migrations"
-	fsys := os.DirFS(migrationsDir)
-	runner := migrate.New(db, fsys)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	entries, err := runner.Status(ctx)
-	if err != nil {
-		return err
-	}
-
-	if len(entries) == 0 {
-		fmt.Println("No migrations found")
-		return nil
-	}
-
-	// Print table header
-	fmt.Printf("%-6s %-30s %-8s %-25s %s\n", "Version", "Name", "Applied", "Applied At", "Status")
-	fmt.Println(strings.Repeat("-", 80))
-
-	// Print each entry
-	for _, e := range entries {
-		applied := "no"
-		appliedAt := ""
-		status := ""
-
-		if e.Applied {
-			applied = "yes"
-			if e.AppliedAt != nil {
-				appliedAt = e.AppliedAt.Format("2006-01-02 15:04:05")
-			}
-			if e.ChecksumMismatch {
-				status = "CHECKSUM MISMATCH"
-			}
-		}
-
-		fmt.Printf("%-6d %-30s %-8s %-25s %s\n", e.Version, e.Name, applied, appliedAt, status)
-	}
-
-	return nil
-}
-
-// openDatabase opens a database connection using environment variables.
-// BREEZE_DATABASE_DRIVER specifies the SQL driver (default: "postgres")
-// BREEZE_DATABASE_URL specifies the connection string
-func openDatabase() (*sql.DB, error) {
-	driver := os.Getenv("BREEZE_DATABASE_DRIVER")
-	if driver == "" {
-		driver = "postgres"
-	}
-
-	dsn := os.Getenv("BREEZE_DATABASE_URL")
-	if dsn == "" {
-		return nil, fmt.Errorf(`missing BREEZE_DATABASE_URL environment variable
-
-The breeze CLI cannot provide a database connection directly because the framework
-is driver-agnostic. To use the migrate command from this CLI, set:
-
-  export BREEZE_DATABASE_DRIVER=postgres  # or your driver: mysql, sqlite3, etc.
-  export BREEZE_DATABASE_URL="..."        # your connection string
-
-Alternatively, use the migrate package as a library in your own binary:
-
-  import (
-    _ "github.com/lib/pq"  // or your driver
-    "github.com/nelthaarion/breeze/migrate"
-  )
-
-  func main() {
-    db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
-    // ... error handling ...
-    runner := migrate.New(db, os.DirFS("migrations"))
-    ctx := context.Background()
-    if err := runner.Up(ctx); err != nil {
-      log.Fatal(err)
-    }
-  }
-`)
-	}
-
-	db, err := sql.Open(driver, dsn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w (make sure the %q driver is registered, usually via blank import)", err, driver)
-	}
-
-	// Test the connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
-	}
-
-	return db, nil
-}
-
-// toSlug converts CamelCase to snake_case
+// toSlug converts CamelCase to snake_case.
+//
+// Runs of capitals are kept together, so "RequestID" becomes "request_id" and
+// "HTTPServer" becomes "http_server". Treating every capital as a word boundary
+// produced "request_i_d" — which reached further than it looks, because this
+// function names generated files, migration files, default table names, and the
+// db column for every field of a generated model.
 func toSlug(name string) string {
+	runes := []rune(name)
 	var buf strings.Builder
-	for i, r := range name {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			buf.WriteRune('_')
+	for i, r := range runes {
+		if isASCIIUpper(r) && i > 0 {
+			// A boundary before a capital that follows a non-capital
+			// ("userID" -> user_id), and before the last capital of a run when
+			// a lowercase follows it, since that capital starts a new word
+			// ("HTTPServer" -> http_server).
+			prevIsUpper := isASCIIUpper(runes[i-1])
+			nextIsLower := i+1 < len(runes) && runes[i+1] >= 'a' && runes[i+1] <= 'z'
+			if !prevIsUpper || nextIsLower {
+				buf.WriteRune('_')
+			}
 		}
-		lower := rune(strings.ToLower(string(r))[0])
-		buf.WriteRune(lower)
+		buf.WriteString(strings.ToLower(string(r)))
 	}
 	return buf.String()
+}
+
+func isASCIIUpper(r rune) bool { return r >= 'A' && r <= 'Z' }
+
+func printMigrateHelp(w io.Writer) {
+	fmt.Fprintf(w, `Usage: breeze migrate [up|down [n]|status] [flags]
+
+Subcommands:
+  up             apply every pending migration (the default)
+  down [n]       roll back the last n migrations (default 1)
+  status         show each migration and whether it is applied
+
+Flags are forwarded to the project's runner:
+  --dir=<path>   migrations directory (default "migrations")
+  --dsn=<url>    connection string (default $BREEZE_DATABASE_URL)
+  --driver=<n>   database/sql driver name (default $BREEZE_DATABASE_DRIVER)
+  --timeout=<d>  overall deadline (default 5m)
+
+This command runs ./%s, which `+"`breeze add migrator`"+` generates. The
+breeze binary has no SQL driver compiled in, so it cannot open your database
+itself — the generated runner is where the driver gets chosen, and it lands in
+your go.mod rather than the framework's.
+
+Setup:
+  breeze add migrator --driver=postgres
+  go mod tidy
+  export BREEZE_DATABASE_URL="postgres://user:pass@localhost:5432/db?sslmode=disable"
+
+Examples:
+  breeze migrate status
+  breeze migrate up
+  breeze migrate down 2
+  breeze migrate up --dir=db/migrations
+`, migratorPkg)
 }

@@ -6,12 +6,12 @@ import "net/url"
 type Method string
 
 const (
-        GET     Method = "GET"
-        PUT     Method = "PUT"
-        PATCH   Method = "PATCH"
-        POST    Method = "POST"
-        DELETE  Method = "DELETE"
-        OPTIONS Method = "OPTIONS" // FIX: was "OPTION" — RFC 9110 defines "OPTIONS"
+	GET     Method = "GET"
+	PUT     Method = "PUT"
+	PATCH   Method = "PATCH"
+	POST    Method = "POST"
+	DELETE  Method = "DELETE"
+	OPTIONS Method = "OPTIONS" // FIX: was "OPTION" — RFC 9110 defines "OPTIONS"
 )
 
 // HTTPRequest holds a fully parsed HTTP request.
@@ -49,39 +49,39 @@ const (
 // freshly copied string for unknown methods — it never points into the header
 // block.
 type HTTPRequest struct {
-        Method Method
-        Path   string
-        Query  url.Values
-        Header map[string]string
-        Body   []byte
-        // owned holds the header bytes that req.Path and req.Header strings
-        // point into, when the parser was asked to make its own copy of them.
-        // It is nil for a zero-copy parse, where those strings view the caller's
-        // buffer instead.
-        //
-        // Unexported so callers cannot mutate it; its presence here ensures the
-        // GC can trace the pointer chain from any escaped header string back to
-        // this backing array.
-        owned []byte
+	Method Method
+	Path   string
+	Query  url.Values
+	Header map[string]string
+	Body   []byte
+	// owned holds the header bytes that req.Path and req.Header strings
+	// point into, when the parser was asked to make its own copy of them.
+	// It is nil for a zero-copy parse, where those strings view the caller's
+	// buffer instead.
+	//
+	// Unexported so callers cannot mutate it; its presence here ensures the
+	// GC can trace the pointer chain from any escaped header string back to
+	// this backing array.
+	owned []byte
 }
 
 // HTTPResponse represents an HTTP response.
 type HTTPResponse struct {
-        Status  int
-        Headers map[string]string
-        Body    []byte
-        // headersShared is true when Headers points to one of the package-level
-        // shared maps (hdrsJSON / hdrsText / hdrsHTML). SetHeader must copy-on-write
-        // before mutating. Go does not allow map == map comparisons, so we use this
-        // flag as the sentinel instead.
-        headersShared bool
-        // rawHeaders is the pre-rendered "Key: Value\r\n" block corresponding to
-        // Headers, set only when Headers is one of the shared maps above. When it
-        // is non-nil, Bytes copies it verbatim instead of iterating the map —
-        // which is the whole point, since a map range costs more than the copy.
-        //
-        // SetHeader clears it as part of its copy-on-write, so a mutated response
-        // always falls back to serializing from the map and the two can never
-        // disagree about what the response actually contains.
-        rawHeaders []byte
+	Status  int
+	Headers map[string]string
+	Body    []byte
+	// headersShared is true when Headers points to one of the package-level
+	// shared maps (hdrsJSON / hdrsText / hdrsHTML). SetHeader must copy-on-write
+	// before mutating. Go does not allow map == map comparisons, so we use this
+	// flag as the sentinel instead.
+	headersShared bool
+	// rawHeaders is the pre-rendered "Key: Value\r\n" block corresponding to
+	// Headers, set only when Headers is one of the shared maps above. When it
+	// is non-nil, Bytes copies it verbatim instead of iterating the map —
+	// which is the whole point, since a map range costs more than the copy.
+	//
+	// SetHeader clears it as part of its copy-on-write, so a mutated response
+	// always falls back to serializing from the map and the two can never
+	// disagree about what the response actually contains.
+	rawHeaders []byte
 }

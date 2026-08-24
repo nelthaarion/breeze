@@ -176,7 +176,6 @@ func TestAttachVideoEndToEnd(t *testing.T) {
 	bus := events.New()
 	detach := c.AttachVideo(bus)
 
-
 	if !c.VideoAttached() {
 		t.Fatal("VideoAttached false after AttachVideo")
 	}

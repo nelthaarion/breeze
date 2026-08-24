@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -16,6 +17,15 @@ type appliedRecord struct {
 	Checksum  string
 	AppliedAt time.Time
 }
+
+// lockVersion is the version number of the sentinel row that serves as the
+// migration lock. It shares the ledger table with real migrations because the
+// primary key is what makes the lock mutually exclusive, and it is negative so
+// it can never collide with a discovered migration — those are parsed from
+// filenames as unsigned digits.
+//
+// Every read of the ledger has to exclude it. See appliedVersions.
+const lockVersion = -1
 
 // ensureVersionTable creates the breeze_migrations table if it does not exist.
 // Uses ANSI SQL that works on both Postgres and SQLite.
@@ -33,9 +43,15 @@ func ensureVersionTable(ctx context.Context, db *sql.DB) error {
 
 // appliedVersions reads all applied migrations from the database and returns
 // them as a map keyed by version.
+//
+// The lock sentinel is excluded. It lives in the same table, and Down acquires
+// the lock before reading the ledger — so without this filter Down saw a
+// migration numbered -1, found no file for it, and failed with "applied
+// migration -1 not found in migration files" every single time it ran.
 func appliedVersions(ctx context.Context, db *sql.DB) (map[int]appliedRecord, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT version, name, checksum, applied_at FROM breeze_migrations ORDER BY version
+		SELECT version, name, checksum, applied_at FROM breeze_migrations
+		WHERE version >= 0 ORDER BY version
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query migrations: %w", err)
@@ -54,6 +70,25 @@ func appliedVersions(ctx context.Context, db *sql.DB) (map[int]appliedRecord, er
 		return nil, fmt.Errorf("error iterating migration records: %w", err)
 	}
 	return result, nil
+}
+
+// descendingByVersion flattens the applied-migrations map into newest-first
+// order, which is the order Down must roll back in: `down 1` undoes the most
+// recent migration.
+//
+// A named function rather than a loop inside Down because the ordering is the
+// entire correctness claim, and it is worth being able to assert directly. The
+// version this replaced was a hand-rolled bubble sort whose comparison was
+// inverted, so it sorted *ascending* under a comment saying descending — making
+// `down 1` roll back the oldest migration in the project. Nothing failed: rolling
+// back 0001 commits just as quietly as rolling back 0003.
+func descendingByVersion(applied map[int]appliedRecord) []appliedRecord {
+	out := make([]appliedRecord, 0, len(applied))
+	for _, rec := range applied {
+		out = append(out, rec)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Version > out[j].Version })
+	return out
 }
 
 // recordApplied inserts a migration record into the database within the given transaction.

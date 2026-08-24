@@ -190,9 +190,29 @@ tab is a live view, not the historical record.
 
 | Code | When |
 |---|---|
-| 200 | Whole file, or a malformed `Range` (which must be ignored per RFC 9110). |
-| 206 | Valid range. |
+| 200 | Only an empty file, with `Content-Length: 0`. |
+| 206 | Every other success. A valid `Range`, and also a request with **no** `Range` or a malformed one — both answered with the first `ChunkSize` bytes and a `Content-Range` giving the full size. See below. |
 | 304 | `If-None-Match` / `If-Modified-Since` hit. |
 | 403 | Signature missing, invalid or expired; `Authorize` refused. |
 | 404 | Missing, traversal, hidden, wrong type, directory, symlink. |
 | 416 | Well-formed but unsatisfiable range; carries `Content-Range: bytes */size`. |
+
+### A request with no Range still gets 206
+
+RFC 9110 permits serving the whole representation when the client sends no
+`Range`, and that is what a static file server does. This mount answers with the
+first `ChunkSize` bytes instead, because for video the alternative is streaming
+an entire movie through one pooled buffer while the viewer waits and cannot
+seek. A malformed `Range` — which RFC 9110 requires be ignored — takes the same
+path, so it behaves as if no `Range` had been sent.
+
+`Content-Range` reports the full size in both cases, so a player learns the
+duration and continues with explicit ranges.
+
+The consequence is worth knowing: **a client that does not understand
+`Content-Range` receives a truncated file and no error.** `curl -O` on a
+100 MB video saves 256 KB and exits 0. Anything that fetches these URLs as
+plain downloads — a backup script, a CDN origin pull that ignores partial
+responses, a scraper — needs to send an explicit `Range: bytes=0-` and follow
+the `Content-Range`, or fetch the file from disk rather than through the mount.
+Players and browsers are unaffected; they range-request by nature.

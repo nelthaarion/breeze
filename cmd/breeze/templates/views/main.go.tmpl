@@ -32,6 +32,10 @@ func main() {
 
 	router.ServeStatic("/public", "./public")
 
+	// Wires everything added with `breeze add`. Called after the routes above
+	// because Router.Use rebuilds each route's middleware chain on every call.
+	RegisterGeneratedFeatures(app, router)
+
 	fmt.Println("Breeze listening on :3000")
 	app.Run(3000, true)
 }

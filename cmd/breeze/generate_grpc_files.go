@@ -1,12 +1,12 @@
 package main
 
 import (
-        "fmt"
-        "go/format"
-        "os"
-        "path/filepath"
-        "sort"
-        "strings"
+	"fmt"
+	"go/format"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 )
 
 // generate_grpc_files.go — Phase 4: file generation.
@@ -32,108 +32,108 @@ import (
 //
 // Output directory: generated/<ServiceName>/
 func generateGRPCFiles(modulePath string, iface *grpcInterface, force bool) error {
-        dir := filepath.Join("generated", iface.Name)
-        if err := os.MkdirAll(dir, 0o755); err != nil {
-                return fmt.Errorf("creating %s: %w", dir, err)
-        }
+	dir := filepath.Join("generated", iface.Name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", dir, err)
+	}
 
-        nameLower := lowerSnake(iface.Name)
+	nameLower := lowerSnake(iface.Name)
 
-        // Collect all structs referenced by the service (request/response types
-        // + nested structs they reference). Phase 3 only collected direct
-        // request/response types; we need to also scan for nested struct
-        // references and include them in the .proto file.
-        allStructs := collectAllStructs(iface)
+	// Collect all structs referenced by the service (request/response types
+	// + nested structs they reference). Phase 3 only collected direct
+	// request/response types; we need to also scan for nested struct
+	// references and include them in the .proto file.
+	allStructs := collectAllStructs(iface)
 
-        // 1. Generate .proto file.
-        protoContent := generateProto(modulePath, iface, allStructs)
-        protoPath := filepath.Join(dir, nameLower+".proto")
-        if err := writeGeneratedFile(protoPath, protoContent, force, false); err != nil {
-                return err
-        }
-        fmt.Printf("  wrote %s\n", protoPath)
+	// 1. Generate .proto file.
+	protoContent := generateProto(modulePath, iface, allStructs)
+	protoPath := filepath.Join(dir, nameLower+".proto")
+	if err := writeGeneratedFile(protoPath, protoContent, force, false); err != nil {
+		return err
+	}
+	fmt.Printf("  wrote %s\n", protoPath)
 
-        // 2. Generate _pb.go (message types).
-        pbContent, err := generatePbGo(modulePath, iface, allStructs)
-        if err != nil {
-                return err
-        }
-        pbPath := filepath.Join(dir, nameLower+".pb.go")
-        if err := writeGeneratedFile(pbPath, pbContent, force, true); err != nil {
-                return err
-        }
-        fmt.Printf("  wrote %s\n", pbPath)
+	// 2. Generate _pb.go (message types).
+	pbContent, err := generatePbGo(modulePath, iface, allStructs)
+	if err != nil {
+		return err
+	}
+	pbPath := filepath.Join(dir, nameLower+".pb.go")
+	if err := writeGeneratedFile(pbPath, pbContent, force, true); err != nil {
+		return err
+	}
+	fmt.Printf("  wrote %s\n", pbPath)
 
-        // 3. Generate _grpc.pb.go (server + client stubs).
-        grpcContent, err := generateGrpcPbGo(modulePath, iface)
-        if err != nil {
-                return err
-        }
-        grpcPath := filepath.Join(dir, nameLower+"_grpc.pb.go")
-        if err := writeGeneratedFile(grpcPath, grpcContent, force, true); err != nil {
-                return err
-        }
-        fmt.Printf("  wrote %s\n", grpcPath)
+	// 3. Generate _grpc.pb.go (server + client stubs).
+	grpcContent, err := generateGrpcPbGo(modulePath, iface)
+	if err != nil {
+		return err
+	}
+	grpcPath := filepath.Join(dir, nameLower+"_grpc.pb.go")
+	if err := writeGeneratedFile(grpcPath, grpcContent, force, true); err != nil {
+		return err
+	}
+	fmt.Printf("  wrote %s\n", grpcPath)
 
-        // 4. Generate _server.go (Breeze server adapter — Phase 5).
-        // Set tempStructs so the adapter generators can access struct field info.
-        tempStructs = make(map[string]*grpcStruct, len(allStructs))
-        for _, s := range allStructs {
-                tempStructs[s.Name] = s
-        }
-        serverContent, err := generateServerAdapter(modulePath, iface)
-        if err != nil {
-                return err
-        }
-        serverPath := filepath.Join(dir, nameLower+"_server.go")
-        if err := writeGeneratedFile(serverPath, serverContent, force, true); err != nil {
-                return err
-        }
-        fmt.Printf("  wrote %s\n", serverPath)
+	// 4. Generate _server.go (Breeze server adapter — Phase 5).
+	// Set tempStructs so the adapter generators can access struct field info.
+	tempStructs = make(map[string]*grpcStruct, len(allStructs))
+	for _, s := range allStructs {
+		tempStructs[s.Name] = s
+	}
+	serverContent, err := generateServerAdapter(modulePath, iface)
+	if err != nil {
+		return err
+	}
+	serverPath := filepath.Join(dir, nameLower+"_server.go")
+	if err := writeGeneratedFile(serverPath, serverContent, force, true); err != nil {
+		return err
+	}
+	fmt.Printf("  wrote %s\n", serverPath)
 
-        // 5. Generate _client.go (typed client wrapper — Phase 6).
-        clientContent, err := generateClientWrapper(modulePath, iface)
-        if err != nil {
-                return err
-        }
-        clientPath := filepath.Join(dir, nameLower+"_client.go")
-        if err := writeGeneratedFile(clientPath, clientContent, force, true); err != nil {
-                return err
-        }
-        fmt.Printf("  wrote %s\n", clientPath)
+	// 5. Generate _client.go (typed client wrapper — Phase 6).
+	clientContent, err := generateClientWrapper(modulePath, iface)
+	if err != nil {
+		return err
+	}
+	clientPath := filepath.Join(dir, nameLower+"_client.go")
+	if err := writeGeneratedFile(clientPath, clientContent, force, true); err != nil {
+		return err
+	}
+	fmt.Printf("  wrote %s\n", clientPath)
 
-        return nil
+	return nil
 }
 
 // writeGeneratedFile writes content to path. If force is false and the file
 // exists, returns an error. If gofmt is true, the content is run through
 // go/format.Source (non-Go files like .proto skip this).
 func writeGeneratedFile(path, content string, force, gofmt bool) error {
-        if !force {
-                if _, err := os.Stat(path); err == nil {
-                        return fmt.Errorf("%s already exists — pass --force to overwrite", path)
-                }
-        }
+	if !force {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("%s already exists — pass --force to overwrite", path)
+		}
+	}
 
-        if gofmt {
-                formatted, err := format.Source([]byte(content))
-                if err != nil {
-                        // Write the unformatted content so the user can inspect the
-                        // syntax error, then return the format error.
-                        _ = os.WriteFile(path, []byte(content), 0o644)
-                        return fmt.Errorf("formatting %s: %w", path, err)
-                }
-                content = string(formatted)
-        }
+	if gofmt {
+		formatted, err := format.Source([]byte(content))
+		if err != nil {
+			// Write the unformatted content so the user can inspect the
+			// syntax error, then return the format error.
+			_ = os.WriteFile(path, []byte(content), 0o644)
+			return fmt.Errorf("formatting %s: %w", path, err)
+		}
+		content = string(formatted)
+	}
 
-        return os.WriteFile(path, []byte(content), 0o644)
+	return os.WriteFile(path, []byte(content), 0o644)
 }
 
 // generateProto produces the .proto file content.
 func generateProto(modulePath string, iface *grpcInterface, structs []*grpcStruct) string {
-        var b strings.Builder
+	var b strings.Builder
 
-        b.WriteString(`// Code generated by breeze generate grpc. DO NOT EDIT.
+	b.WriteString(`// Code generated by breeze generate grpc. DO NOT EDIT.
 // source: ` + iface.File + `
 //
 // This .proto file was generated from the Go interface ` + iface.Name + `.
@@ -142,69 +142,69 @@ func generateProto(modulePath string, iface *grpcInterface, structs []*grpcStruc
 
 `)
 
-        b.WriteString(`syntax = "proto3";
+	b.WriteString(`syntax = "proto3";
 
 `)
 
-        // Package name derived from module path's last element + .grpc.<lower(service)>.
-        pkgName := protoPackageName(modulePath, iface.Name)
-        b.WriteString(fmt.Sprintf("package %s;\n\n", pkgName))
+	// Package name derived from module path's last element + .grpc.<lower(service)>.
+	pkgName := protoPackageName(modulePath, iface.Name)
+	b.WriteString(fmt.Sprintf("package %s;\n\n", pkgName))
 
-        // go_package option — required for protoc-gen-go.
-        goPkg := fmt.Sprintf(`option go_package = "%s/generated/%s;%s";`,
-                modulePath, iface.Name, iface.Name)
-        b.WriteString(goPkg + "\n\n")
+	// go_package option — required for protoc-gen-go.
+	goPkg := fmt.Sprintf(`option go_package = "%s/generated/%s;%s";`,
+		modulePath, iface.Name, iface.Name)
+	b.WriteString(goPkg + "\n\n")
 
-        // Imports.
-        usesTime := false
-        for _, s := range structs {
-                if s.UsesTime {
-                        usesTime = true
-                        break
-                }
-        }
-        if usesTime {
-                b.WriteString(`import "google/protobuf/timestamp.proto";
+	// Imports.
+	usesTime := false
+	for _, s := range structs {
+		if s.UsesTime {
+			usesTime = true
+			break
+		}
+	}
+	if usesTime {
+		b.WriteString(`import "google/protobuf/timestamp.proto";
 
 `)
-        }
+	}
 
-        // Service definition.
-        b.WriteString(fmt.Sprintf("service %s {\n", iface.Name))
-        for _, m := range iface.Methods {
-                rpcName := m.Name
-                switch m.Kind {
-                case grpcUnary:
-                        b.WriteString(fmt.Sprintf("\trpc %s(%s) returns (%s);\n",
-                                rpcName, m.ReqType, m.RespType))
-                case grpcServerStream:
-                        b.WriteString(fmt.Sprintf("\trpc %s(%s) returns (stream %s);\n",
-                                rpcName, m.ReqType, stripStreamSuffix(m.StreamType)))
-                case grpcClientStream:
-                        b.WriteString(fmt.Sprintf("\trpc %s(stream %s) returns (%s);\n",
-                                rpcName, stripStreamSuffix(m.StreamType), m.RespType))
-                case grpcBidiStream:
-                        b.WriteString(fmt.Sprintf("\trpc %s(stream %s) returns (stream %s);\n",
-                                rpcName, stripStreamSuffix(m.StreamType), stripStreamSuffix(m.StreamType)))
-                }
-        }
-        b.WriteString("}\n\n")
+	// Service definition.
+	b.WriteString(fmt.Sprintf("service %s {\n", iface.Name))
+	for _, m := range iface.Methods {
+		rpcName := m.Name
+		switch m.Kind {
+		case grpcUnary:
+			b.WriteString(fmt.Sprintf("\trpc %s(%s) returns (%s);\n",
+				rpcName, m.ReqType, m.RespType))
+		case grpcServerStream:
+			b.WriteString(fmt.Sprintf("\trpc %s(%s) returns (stream %s);\n",
+				rpcName, m.ReqType, stripStreamSuffix(m.StreamType)))
+		case grpcClientStream:
+			b.WriteString(fmt.Sprintf("\trpc %s(stream %s) returns (%s);\n",
+				rpcName, stripStreamSuffix(m.StreamType), m.RespType))
+		case grpcBidiStream:
+			b.WriteString(fmt.Sprintf("\trpc %s(stream %s) returns (stream %s);\n",
+				rpcName, stripStreamSuffix(m.StreamType), stripStreamSuffix(m.StreamType)))
+		}
+	}
+	b.WriteString("}\n\n")
 
-        // Message definitions.
-        for _, s := range structs {
-                b.WriteString(fmt.Sprintf("message %s {\n", s.Name))
-                for _, f := range s.Fields {
-                        prefix := ""
-                        if f.Repeated {
-                                prefix = "repeated "
-                        }
-                        b.WriteString(fmt.Sprintf("\t%s%s %s = %d;\n",
-                                prefix, f.ProtoType, f.ProtoName, f.FieldNumber))
-                }
-                b.WriteString("}\n\n")
-        }
+	// Message definitions.
+	for _, s := range structs {
+		b.WriteString(fmt.Sprintf("message %s {\n", s.Name))
+		for _, f := range s.Fields {
+			prefix := ""
+			if f.Repeated {
+				prefix = "repeated "
+			}
+			b.WriteString(fmt.Sprintf("\t%s%s %s = %d;\n",
+				prefix, f.ProtoType, f.ProtoName, f.FieldNumber))
+		}
+		b.WriteString("}\n\n")
+	}
 
-        return b.String()
+	return b.String()
 }
 
 // generatePbGo produces the _pb.go file content (message types).
@@ -214,10 +214,10 @@ func generateProto(modulePath string, iface *grpcInterface, structs []*grpcStruc
 // interface methods (Reset, String, ProtoMessage). Full protoc
 // compatibility (protoimpl.Message, descriptor registration) is deferred.
 func generatePbGo(modulePath string, iface *grpcInterface, structs []*grpcStruct) (string, error) {
-        var b strings.Builder
+	var b strings.Builder
 
-        pkgName := iface.Name
-        b.WriteString(fmt.Sprintf(`// Code generated by breeze generate grpc. DO NOT EDIT.
+	pkgName := iface.Name
+	b.WriteString(fmt.Sprintf(`// Code generated by breeze generate grpc. DO NOT EDIT.
 // source: %s
 
 // Package %s contains message types for the %s gRPC service.
@@ -260,81 +260,81 @@ func (jsonCodec) Unmarshal(data []byte, v any) error {
 
 `, iface.File, pkgName, iface.Name, pkgName))
 
-        // Generate one Go struct per message.
-        for _, s := range structs {
-                b.WriteString(fmt.Sprintf("// %s is the message type for the %s struct.\n", s.Name, s.Name))
-                b.WriteString(fmt.Sprintf("type %s struct {\n", s.Name))
-                for _, f := range structsFields(s) {
-                        // Use the original Go type directly — avoids int/int64
-                        // conversion mismatches between user structs and generated structs.
-                        goType := f.GoType
-                        b.WriteString(fmt.Sprintf("\t%s %s `protobuf:\"%s,%d,opt,name=%s,json=%s,proto3\" json:\"%s\"`\n",
-                                f.GoName, goType, f.ProtoType, f.FieldNumber, f.ProtoName, f.ProtoName, f.ProtoName))
-                }
-                b.WriteString("}\n\n")
+	// Generate one Go struct per message.
+	for _, s := range structs {
+		b.WriteString(fmt.Sprintf("// %s is the message type for the %s struct.\n", s.Name, s.Name))
+		b.WriteString(fmt.Sprintf("type %s struct {\n", s.Name))
+		for _, f := range structsFields(s) {
+			// Use the original Go type directly — avoids int/int64
+			// conversion mismatches between user structs and generated structs.
+			goType := f.GoType
+			b.WriteString(fmt.Sprintf("\t%s %s `protobuf:\"%s,%d,opt,name=%s,json=%s,proto3\" json:\"%s\"`\n",
+				f.GoName, goType, f.ProtoType, f.FieldNumber, f.ProtoName, f.ProtoName, f.ProtoName))
+		}
+		b.WriteString("}\n\n")
 
-                // Reset method.
-                b.WriteString(fmt.Sprintf("func (x *%s) Reset() { *x = %s{} }\n\n", s.Name, s.Name))
+		// Reset method.
+		b.WriteString(fmt.Sprintf("func (x *%s) Reset() { *x = %s{} }\n\n", s.Name, s.Name))
 
-                // String method.
-                b.WriteString(fmt.Sprintf("func (x *%s) String() string {\n", s.Name))
-                b.WriteString("\tif x == nil {\n\t\treturn \"<nil>\"\n\t}\n")
-                b.WriteString(fmt.Sprintf("\treturn fmt.Sprintf(\"%%+v\", *x)\n"))
-                b.WriteString("}\n\n")
+		// String method.
+		b.WriteString(fmt.Sprintf("func (x *%s) String() string {\n", s.Name))
+		b.WriteString("\tif x == nil {\n\t\treturn \"<nil>\"\n\t}\n")
+		b.WriteString(fmt.Sprintf("\treturn fmt.Sprintf(\"%%+v\", *x)\n"))
+		b.WriteString("}\n\n")
 
-                // ProtoMessage method (marker, no-op).
-                b.WriteString(fmt.Sprintf("func (*%s) ProtoMessage() {}\n\n", s.Name))
+		// ProtoMessage method (marker, no-op).
+		b.WriteString(fmt.Sprintf("func (*%s) ProtoMessage() {}\n\n", s.Name))
 
-                // Getter methods.
-                for _, f := range structsFields(s) {
-                        emitGetter(&b, s.Name, f)
-                }
-        }
+		// Getter methods.
+		for _, f := range structsFields(s) {
+			emitGetter(&b, s.Name, f)
+		}
+	}
 
-        return b.String(), nil
+	return b.String(), nil
 }
 
 // structsFields returns the fields of a struct. Helper to avoid nil checks.
 func structsFields(s *grpcStruct) []grpcField {
-        if s == nil {
-                return nil
-        }
-        return s.Fields
+	if s == nil {
+		return nil
+	}
+	return s.Fields
 }
 
 // emitGetter writes a getter method for a field.
 func emitGetter(b *strings.Builder, structName string, f grpcField) {
-        goType := f.GoType
-        b.WriteString(fmt.Sprintf("// Get%s returns the %s field.\n", f.GoName, f.GoName))
-        b.WriteString(fmt.Sprintf("func (x *%s) Get%s() %s {\n", structName, f.GoName, goType))
-        b.WriteString(fmt.Sprintf("\tif x != nil {\n"))
-        b.WriteString(fmt.Sprintf("\t\treturn x.%s\n", f.GoName))
-        b.WriteString("\t}\n")
-        b.WriteString(fmt.Sprintf("\treturn %s\n", goZeroValue(goType)))
-        b.WriteString("}\n\n")
+	goType := f.GoType
+	b.WriteString(fmt.Sprintf("// Get%s returns the %s field.\n", f.GoName, f.GoName))
+	b.WriteString(fmt.Sprintf("func (x *%s) Get%s() %s {\n", structName, f.GoName, goType))
+	b.WriteString(fmt.Sprintf("\tif x != nil {\n"))
+	b.WriteString(fmt.Sprintf("\t\treturn x.%s\n", f.GoName))
+	b.WriteString("\t}\n")
+	b.WriteString(fmt.Sprintf("\treturn %s\n", goZeroValue(goType)))
+	b.WriteString("}\n\n")
 }
 
 // goZeroValue returns the zero value literal for a Go type.
 func goZeroValue(goType string) string {
-        switch {
-        case strings.HasPrefix(goType, "*"):
-                return "nil"
-        case strings.HasPrefix(goType, "[]"):
-                return "nil"
-        case strings.HasPrefix(goType, "map["):
-                return "nil"
-        case goType == "string":
-                return `""`
-        case goType == "bool":
-                return "false"
-        case goType == "int" || goType == "int32" || goType == "int64" || goType == "uint32" || goType == "uint64":
-                return "0"
-        case goType == "float32" || goType == "float64":
-                return "0"
-        default:
-                // For named struct types, return the zero value of the struct.
-                return goType + "{}"
-        }
+	switch {
+	case strings.HasPrefix(goType, "*"):
+		return "nil"
+	case strings.HasPrefix(goType, "[]"):
+		return "nil"
+	case strings.HasPrefix(goType, "map["):
+		return "nil"
+	case goType == "string":
+		return `""`
+	case goType == "bool":
+		return "false"
+	case goType == "int" || goType == "int32" || goType == "int64" || goType == "uint32" || goType == "uint64":
+		return "0"
+	case goType == "float32" || goType == "float64":
+		return "0"
+	default:
+		// For named struct types, return the zero value of the struct.
+		return goType + "{}"
+	}
 }
 
 // generateGrpcPbGo produces the _grpc.pb.go file content (server + client).
@@ -345,10 +345,10 @@ func goZeroValue(goType string) string {
 //   - <ServiceName>Client interface + New<ServiceName>Client constructor
 //   - _<ServiceName>_serviceDesc for grpc.ServiceDesc
 func generateGrpcPbGo(modulePath string, iface *grpcInterface) (string, error) {
-        var b strings.Builder
+	var b strings.Builder
 
-        pkgName := iface.Name
-        b.WriteString(fmt.Sprintf(`// Code generated by breeze generate grpc. DO NOT EDIT.
+	pkgName := iface.Name
+	b.WriteString(fmt.Sprintf(`// Code generated by breeze generate grpc. DO NOT EDIT.
 // source: %s
 
 // Package %s contains gRPC server and client stubs for the %s service.
@@ -364,101 +364,101 @@ import (
 
 `, iface.File, pkgName, iface.Name, pkgName))
 
-        // Server interface.
-        b.WriteString(fmt.Sprintf("// %sServer is the server API for the %s service.\n", iface.Name, iface.Name))
-        b.WriteString(fmt.Sprintf("type %sServer interface {\n", iface.Name))
-        for _, m := range iface.Methods {
-                rpcName := m.Name
-                b.WriteString(fmt.Sprintf("\t%s\n", grpcServerMethodSignature(rpcName, m)))
-        }
-        b.WriteString("}\n\n")
+	// Server interface.
+	b.WriteString(fmt.Sprintf("// %sServer is the server API for the %s service.\n", iface.Name, iface.Name))
+	b.WriteString(fmt.Sprintf("type %sServer interface {\n", iface.Name))
+	for _, m := range iface.Methods {
+		rpcName := m.Name
+		b.WriteString(fmt.Sprintf("\t%s\n", grpcServerMethodSignature(rpcName, m)))
+	}
+	b.WriteString("}\n\n")
 
-        // Unimplemented server (for forward compat).
-        b.WriteString(fmt.Sprintf("// Unimplemented%sServer can be embedded to have forward compatible implementations.\n", iface.Name))
-        b.WriteString(fmt.Sprintf("type Unimplemented%sServer struct {\n", iface.Name))
-        b.WriteString("}\n\n")
-        for _, m := range iface.Methods {
-                rpcName := m.Name
-                b.WriteString(fmt.Sprintf("func (*Unimplemented%sServer) %s {\n", iface.Name, grpcServerMethodSignature(rpcName, m)))
-                b.WriteString(fmt.Sprintf("\treturn %s\n", grpcUnimplementedReturn(m)))
-                b.WriteString("}\n\n")
-        }
+	// Unimplemented server (for forward compat).
+	b.WriteString(fmt.Sprintf("// Unimplemented%sServer can be embedded to have forward compatible implementations.\n", iface.Name))
+	b.WriteString(fmt.Sprintf("type Unimplemented%sServer struct {\n", iface.Name))
+	b.WriteString("}\n\n")
+	for _, m := range iface.Methods {
+		rpcName := m.Name
+		b.WriteString(fmt.Sprintf("func (*Unimplemented%sServer) %s {\n", iface.Name, grpcServerMethodSignature(rpcName, m)))
+		b.WriteString(fmt.Sprintf("\treturn %s\n", grpcUnimplementedReturn(m)))
+		b.WriteString("}\n\n")
+	}
 
-        // Register function.
-        b.WriteString(fmt.Sprintf("// Register%sServer registers the %s service on a gRPC server.\n", iface.Name, iface.Name))
-        b.WriteString(fmt.Sprintf("func Register%sServer(s grpc.ServiceRegistrar, srv %sServer) {\n", iface.Name, iface.Name))
-        b.WriteString(fmt.Sprintf("\ts.RegisterService(&%s_serviceDesc, srv)\n", iface.Name))
-        b.WriteString("}\n\n")
+	// Register function.
+	b.WriteString(fmt.Sprintf("// Register%sServer registers the %s service on a gRPC server.\n", iface.Name, iface.Name))
+	b.WriteString(fmt.Sprintf("func Register%sServer(s grpc.ServiceRegistrar, srv %sServer) {\n", iface.Name, iface.Name))
+	b.WriteString(fmt.Sprintf("\ts.RegisterService(&%s_serviceDesc, srv)\n", iface.Name))
+	b.WriteString("}\n\n")
 
-        // Service descriptor.
-        b.WriteString(fmt.Sprintf("var %s_serviceDesc = grpc.ServiceDesc{\n", iface.Name))
-        b.WriteString(fmt.Sprintf("\tServiceName: \"%s\",\n", fullServiceName(modulePath, iface.Name)))
-        b.WriteString(fmt.Sprintf("\tHandlerType: (*%sServer)(nil),\n", iface.Name))
-        b.WriteString("\tMethods: []grpc.MethodDesc{\n")
-        for _, m := range iface.Methods {
-                if m.Kind != grpcUnary {
-                        continue
-                }
-                rpcName := m.Name
-                b.WriteString(fmt.Sprintf("\t\t{\n"))
-                b.WriteString(fmt.Sprintf("\t\t\tMethodName: %q,\n", rpcName))
-                b.WriteString(fmt.Sprintf("\t\t\tHandler:    _%s_%s_Handler,\n", iface.Name, rpcName))
-                b.WriteString(fmt.Sprintf("\t\t},\n"))
-        }
-        b.WriteString("\t},\n")
-        b.WriteString("\tStreams:  []grpc.StreamDesc{\n")
-        for _, m := range iface.Methods {
-                if m.Kind == grpcUnary {
-                        continue
-                }
-                rpcName := m.Name
-                serverStream := m.Kind == grpcServerStream || m.Kind == grpcBidiStream
-                clientStream := m.Kind == grpcClientStream || m.Kind == grpcBidiStream
-                b.WriteString(fmt.Sprintf("\t\t{\n"))
-                b.WriteString(fmt.Sprintf("\t\t\tStreamName:    %q,\n", rpcName))
-                b.WriteString(fmt.Sprintf("\t\t\tHandler:       _%s_%s_Handler,\n", iface.Name, rpcName))
-                b.WriteString(fmt.Sprintf("\t\t\tServerStreams: %v,\n", serverStream))
-                b.WriteString(fmt.Sprintf("\t\t\tClientStreams: %v,\n", clientStream))
-                b.WriteString(fmt.Sprintf("\t\t},\n"))
-        }
-        b.WriteString("\t},\n")
-        b.WriteString(fmt.Sprintf("\tMetadata: \"%s.proto\",\n", lowerSnake(iface.Name)))
-        b.WriteString("}\n\n")
+	// Service descriptor.
+	b.WriteString(fmt.Sprintf("var %s_serviceDesc = grpc.ServiceDesc{\n", iface.Name))
+	b.WriteString(fmt.Sprintf("\tServiceName: \"%s\",\n", fullServiceName(modulePath, iface.Name)))
+	b.WriteString(fmt.Sprintf("\tHandlerType: (*%sServer)(nil),\n", iface.Name))
+	b.WriteString("\tMethods: []grpc.MethodDesc{\n")
+	for _, m := range iface.Methods {
+		if m.Kind != grpcUnary {
+			continue
+		}
+		rpcName := m.Name
+		b.WriteString(fmt.Sprintf("\t\t{\n"))
+		b.WriteString(fmt.Sprintf("\t\t\tMethodName: %q,\n", rpcName))
+		b.WriteString(fmt.Sprintf("\t\t\tHandler:    _%s_%s_Handler,\n", iface.Name, rpcName))
+		b.WriteString(fmt.Sprintf("\t\t},\n"))
+	}
+	b.WriteString("\t},\n")
+	b.WriteString("\tStreams:  []grpc.StreamDesc{\n")
+	for _, m := range iface.Methods {
+		if m.Kind == grpcUnary {
+			continue
+		}
+		rpcName := m.Name
+		serverStream := m.Kind == grpcServerStream || m.Kind == grpcBidiStream
+		clientStream := m.Kind == grpcClientStream || m.Kind == grpcBidiStream
+		b.WriteString(fmt.Sprintf("\t\t{\n"))
+		b.WriteString(fmt.Sprintf("\t\t\tStreamName:    %q,\n", rpcName))
+		b.WriteString(fmt.Sprintf("\t\t\tHandler:       _%s_%s_Handler,\n", iface.Name, rpcName))
+		b.WriteString(fmt.Sprintf("\t\t\tServerStreams: %v,\n", serverStream))
+		b.WriteString(fmt.Sprintf("\t\t\tClientStreams: %v,\n", clientStream))
+		b.WriteString(fmt.Sprintf("\t\t},\n"))
+	}
+	b.WriteString("\t},\n")
+	b.WriteString(fmt.Sprintf("\tMetadata: \"%s.proto\",\n", lowerSnake(iface.Name)))
+	b.WriteString("}\n\n")
 
-        // Handler functions for each method.
-        fullSvc := fullServiceName(modulePath, iface.Name)
-        for _, m := range iface.Methods {
-                rpcName := m.Name
-                b.WriteString(grpcHandlerFunc(fullSvc, iface.Name, rpcName, m))
-        }
+	// Handler functions for each method.
+	fullSvc := fullServiceName(modulePath, iface.Name)
+	for _, m := range iface.Methods {
+		rpcName := m.Name
+		b.WriteString(grpcHandlerFunc(fullSvc, iface.Name, rpcName, m))
+	}
 
-        // Client interface.
-        b.WriteString(fmt.Sprintf("// %sClient is the client API for the %s service.\n", iface.Name, iface.Name))
-        b.WriteString(fmt.Sprintf("type %sClient interface {\n", iface.Name))
-        for _, m := range iface.Methods {
-                rpcName := m.Name
-                b.WriteString(fmt.Sprintf("\t%s\n", grpcClientMethodSignature(rpcName, m)))
-        }
-        b.WriteString("}\n\n")
+	// Client interface.
+	b.WriteString(fmt.Sprintf("// %sClient is the client API for the %s service.\n", iface.Name, iface.Name))
+	b.WriteString(fmt.Sprintf("type %sClient interface {\n", iface.Name))
+	for _, m := range iface.Methods {
+		rpcName := m.Name
+		b.WriteString(fmt.Sprintf("\t%s\n", grpcClientMethodSignature(rpcName, m)))
+	}
+	b.WriteString("}\n\n")
 
-        // Client implementation struct.
-        b.WriteString(fmt.Sprintf("type %sClientImpl struct {\n", iface.Name))
-        b.WriteString("\tcc grpc.ClientConnInterface\n")
-        b.WriteString("}\n\n")
+	// Client implementation struct.
+	b.WriteString(fmt.Sprintf("type %sClientImpl struct {\n", iface.Name))
+	b.WriteString("\tcc grpc.ClientConnInterface\n")
+	b.WriteString("}\n\n")
 
-        // NewClient constructor.
-        b.WriteString(fmt.Sprintf("// New%sClient creates a new %s client.\n", iface.Name, iface.Name))
-        b.WriteString(fmt.Sprintf("func New%sClient(cc grpc.ClientConnInterface) %sClient {\n", iface.Name, iface.Name))
-        b.WriteString(fmt.Sprintf("\treturn &%sClientImpl{cc}\n", iface.Name))
-        b.WriteString("}\n\n")
+	// NewClient constructor.
+	b.WriteString(fmt.Sprintf("// New%sClient creates a new %s client.\n", iface.Name, iface.Name))
+	b.WriteString(fmt.Sprintf("func New%sClient(cc grpc.ClientConnInterface) %sClient {\n", iface.Name, iface.Name))
+	b.WriteString(fmt.Sprintf("\treturn &%sClientImpl{cc}\n", iface.Name))
+	b.WriteString("}\n\n")
 
-        // Client methods.
-        for _, m := range iface.Methods {
-                rpcName := m.Name
-                b.WriteString(grpcClientMethod(fullSvc, iface.Name, rpcName, m))
-        }
+	// Client methods.
+	for _, m := range iface.Methods {
+		rpcName := m.Name
+		b.WriteString(grpcClientMethod(fullSvc, iface.Name, rpcName, m))
+	}
 
-        return b.String(), nil
+	return b.String(), nil
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -471,103 +471,103 @@ import (
 // pass: collect all IsMessage field types, scan for those, repeat until
 // no new types are found.
 func collectAllStructs(iface *grpcInterface) []*grpcStruct {
-        // Start with the structs Phase 3 already scanned.
-        byName := make(map[string]*grpcStruct)
-        for _, s := range iface.Structs {
-                byName[s.Name] = s
-        }
+	// Start with the structs Phase 3 already scanned.
+	byName := make(map[string]*grpcStruct)
+	for _, s := range iface.Structs {
+		byName[s.Name] = s
+	}
 
-        // Iterate until no new types are found.
-        for {
-                var toScan []string
-                for _, s := range byName {
-                        for _, f := range s.Fields {
-                                if f.IsMessage && f.ProtoType != "" {
-                                        if _, ok := byName[f.ProtoType]; !ok {
-                                                toScan = append(toScan, f.ProtoType)
-                                        }
-                                }
-                        }
-                }
-                if len(toScan) == 0 {
-                        break
-                }
-                more, err := scanStructs(toScan)
-                if err != nil {
-                        break // missing nested struct — Phase 4 will report
-                }
-                for _, s := range more {
-                        byName[s.Name] = s
-                }
-        }
+	// Iterate until no new types are found.
+	for {
+		var toScan []string
+		for _, s := range byName {
+			for _, f := range s.Fields {
+				if f.IsMessage && f.ProtoType != "" {
+					if _, ok := byName[f.ProtoType]; !ok {
+						toScan = append(toScan, f.ProtoType)
+					}
+				}
+			}
+		}
+		if len(toScan) == 0 {
+			break
+		}
+		more, err := scanStructs(toScan)
+		if err != nil {
+			break // missing nested struct — Phase 4 will report
+		}
+		for _, s := range more {
+			byName[s.Name] = s
+		}
+	}
 
-        // Sort by name for stable output.
-        out := make([]*grpcStruct, 0, len(byName))
-        for _, s := range byName {
-                out = append(out, s)
-        }
-        sort.Slice(out, func(i, j int) bool {
-                return out[i].Name < out[j].Name
-        })
-        return out
+	// Sort by name for stable output.
+	out := make([]*grpcStruct, 0, len(byName))
+	for _, s := range byName {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 // protoPackageName derives the .proto package name from the module path
 // and service name. e.g. "example.com/myapp" + "UserService" → "myapp.grpc.user_service".
 func protoPackageName(modulePath, serviceName string) string {
-        // Take the last path element of the module.
-        pkg := modulePath
-        if idx := strings.LastIndex(pkg, "/"); idx >= 0 {
-                pkg = pkg[idx+1:]
-        }
-        // Sanitize: replace non-alphanumeric with underscore.
-        pkg = sanitizeProtoIdent(pkg)
-        return pkg + ".grpc." + lowerSnake(serviceName)
+	// Take the last path element of the module.
+	pkg := modulePath
+	if idx := strings.LastIndex(pkg, "/"); idx >= 0 {
+		pkg = pkg[idx+1:]
+	}
+	// Sanitize: replace non-alphanumeric with underscore.
+	pkg = sanitizeProtoIdent(pkg)
+	return pkg + ".grpc." + lowerSnake(serviceName)
 }
 
 // fullServiceName returns the fully-qualified gRPC service name.
 // e.g. "example.com/myapp" + "UserService" → "myapp.grpc.user_service.UserService".
 func fullServiceName(modulePath, serviceName string) string {
-        return protoPackageName(modulePath, serviceName) + "." + serviceName
+	return protoPackageName(modulePath, serviceName) + "." + serviceName
 }
 
 // fullMethodName returns the gRPC method path: /<FullServiceName>/<Method>.
 // e.g. "grpcdemo.grpc.echo_service.EchoService" + "Echo" → "/grpcdemo.grpc.echo_service.EchoService/Echo".
 func fullMethodName(serviceName, rpcName string) string {
-        return "/" + serviceName + "/" + rpcName
+	return "/" + serviceName + "/" + rpcName
 }
 
 // sanitizeProtoIdent replaces non-alphanumeric characters with underscores.
 func sanitizeProtoIdent(s string) string {
-        var b strings.Builder
-        for _, r := range s {
-                if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '.' {
-                        b.WriteRune(r)
-                } else {
-                        b.WriteByte('_')
-                }
-        }
-        return b.String()
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '.' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // lowerSnake converts PascalCase to snake_case.
 // e.g. "UserService" → "user_service", "GetUserRequest" → "get_user_request".
 func lowerSnake(s string) string {
-        if s == "" {
-                return s
-        }
-        var b strings.Builder
-        for i, r := range s {
-                if i > 0 && r >= 'A' && r <= 'Z' {
-                        b.WriteByte('_')
-                }
-                if r >= 'A' && r <= 'Z' {
-                        b.WriteRune(r + 32)
-                } else {
-                        b.WriteRune(r)
-                }
-        }
-        return b.String()
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			b.WriteByte('_')
+		}
+		if r >= 'A' && r <= 'Z' {
+			b.WriteRune(r + 32)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // stripStreamSuffix removes the "Server"/"Client" suffix from a stream
@@ -575,195 +575,195 @@ func lowerSnake(s string) string {
 // e.g. "UserService_GetUserServer" → "UserService_GetUser" (then the
 // generator uses the method's ReqType/RespType for the actual message).
 func stripStreamSuffix(streamType string) string {
-        // For .proto generation, we use the ReqType/RespType, not the stream
-        // type. This helper exists to avoid confusion in the caller.
-        return streamType
+	// For .proto generation, we use the ReqType/RespType, not the stream
+	// type. This helper exists to avoid confusion in the caller.
+	return streamType
 }
 
 // protoFieldGoType returns the Go type for a protobuf field in the .pb.go
 // message struct. Slices use Go slice syntax; messages use pointer-to-struct.
 func protoFieldGoType(f grpcField) string {
-        // Handle map types: protobuf "map<K, V>" → Go "map[K]V"
-        if strings.HasPrefix(f.ProtoType, "map<") {
-                return protoMapToGoMap(f.ProtoType)
-        }
-        if f.Repeated {
-                return "[]" + protoFieldElemGoType(f)
-        }
-        if f.IsMessage {
-                return "*" + f.ProtoType
-        }
-        return protoGoPrimitive(f.ProtoType)
+	// Handle map types: protobuf "map<K, V>" → Go "map[K]V"
+	if strings.HasPrefix(f.ProtoType, "map<") {
+		return protoMapToGoMap(f.ProtoType)
+	}
+	if f.Repeated {
+		return "[]" + protoFieldElemGoType(f)
+	}
+	if f.IsMessage {
+		return "*" + f.ProtoType
+	}
+	return protoGoPrimitive(f.ProtoType)
 }
 
 // protoMapToGoMap converts a protobuf map type string to a Go map type.
 // e.g. "map<string, string>" → "map[string]string"
 func protoMapToGoMap(protoMap string) string {
-        // Strip "map<" prefix and ">" suffix.
-        inner := strings.TrimPrefix(protoMap, "map<")
-        inner = strings.TrimSuffix(inner, ">")
-        inner = strings.TrimSpace(inner)
+	// Strip "map<" prefix and ">" suffix.
+	inner := strings.TrimPrefix(protoMap, "map<")
+	inner = strings.TrimSuffix(inner, ">")
+	inner = strings.TrimSpace(inner)
 
-        // Split on ", " to get key and value.
-        parts := strings.SplitN(inner, ",", 2)
-        if len(parts) != 2 {
-                return "map[string]string" // fallback
-        }
-        keyType := strings.TrimSpace(parts[0])
-        valType := strings.TrimSpace(parts[1])
+	// Split on ", " to get key and value.
+	parts := strings.SplitN(inner, ",", 2)
+	if len(parts) != 2 {
+		return "map[string]string" // fallback
+	}
+	keyType := strings.TrimSpace(parts[0])
+	valType := strings.TrimSpace(parts[1])
 
-        goKey := protoGoPrimitive(keyType)
-        goVal := protoGoPrimitive(valType)
-        if goVal == "" {
-                goVal = valType // message reference
-        }
-        return fmt.Sprintf("map[%s]%s", goKey, goVal)
+	goKey := protoGoPrimitive(keyType)
+	goVal := protoGoPrimitive(valType)
+	if goVal == "" {
+		goVal = valType // message reference
+	}
+	return fmt.Sprintf("map[%s]%s", goKey, goVal)
 }
 
 // protoFieldElemGoType returns the Go type for a single element (not repeated).
 func protoFieldElemGoType(f grpcField) string {
-        if f.IsMessage {
-                return "*" + f.ProtoType
-        }
-        return protoGoPrimitive(f.ProtoType)
+	if f.IsMessage {
+		return "*" + f.ProtoType
+	}
+	return protoGoPrimitive(f.ProtoType)
 }
 
 // protoGoPrimitive maps a protobuf primitive type to its Go equivalent.
 func protoGoPrimitive(protoType string) string {
-        switch protoType {
-        case "string":
-                return "string"
-        case "bool":
-                return "bool"
-        case "int32":
-                return "int32"
-        case "int64":
-                return "int64"
-        case "uint32":
-                return "uint32"
-        case "uint64":
-                return "uint64"
-        case "float":
-                return "float32"
-        case "double":
-                return "float64"
-        case "bytes":
-                return "[]byte"
-        case "google.protobuf.Timestamp":
-                return "*timestamppb.Timestamp"
-        default:
-                // Message reference — use pointer.
-                return "*" + protoType
-        }
+	switch protoType {
+	case "string":
+		return "string"
+	case "bool":
+		return "bool"
+	case "int32":
+		return "int32"
+	case "int64":
+		return "int64"
+	case "uint32":
+		return "uint32"
+	case "uint64":
+		return "uint64"
+	case "float":
+		return "float32"
+	case "double":
+		return "float64"
+	case "bytes":
+		return "[]byte"
+	case "google.protobuf.Timestamp":
+		return "*timestamppb.Timestamp"
+	default:
+		// Message reference — use pointer.
+		return "*" + protoType
+	}
 }
 
 // grpcServerMethodSignature returns the Go method signature for a server
 // method, following the protoc-gen-go-grpc convention.
 func grpcServerMethodSignature(rpcName string, m grpcMethod) string {
-        switch m.Kind {
-        case grpcUnary:
-                return fmt.Sprintf("%s(ctx context.Context, req *%s) (*%s, error)", rpcName, m.ReqType, m.RespType)
-        case grpcServerStream:
-                return fmt.Sprintf("%s(req *%s, stream %s) error", rpcName, m.ReqType, m.StreamType)
-        case grpcClientStream:
-                return fmt.Sprintf("%s(stream %s) (*%s, error)", rpcName, m.StreamType, m.RespType)
-        case grpcBidiStream:
-                return fmt.Sprintf("%s(stream %s) error", rpcName, m.StreamType)
-        default:
-                return fmt.Sprintf("%s() error", rpcName)
-        }
+	switch m.Kind {
+	case grpcUnary:
+		return fmt.Sprintf("%s(ctx context.Context, req *%s) (*%s, error)", rpcName, m.ReqType, m.RespType)
+	case grpcServerStream:
+		return fmt.Sprintf("%s(req *%s, stream %s) error", rpcName, m.ReqType, m.StreamType)
+	case grpcClientStream:
+		return fmt.Sprintf("%s(stream %s) (*%s, error)", rpcName, m.StreamType, m.RespType)
+	case grpcBidiStream:
+		return fmt.Sprintf("%s(stream %s) error", rpcName, m.StreamType)
+	default:
+		return fmt.Sprintf("%s() error", rpcName)
+	}
 }
 
 // grpcClientMethodSignature returns the Go method signature for a client
 // method.
 func grpcClientMethodSignature(rpcName string, m grpcMethod) string {
-        switch m.Kind {
-        case grpcUnary:
-                return fmt.Sprintf("%s(ctx context.Context, req *%s, opts ...grpc.CallOption) (*%s, error)", rpcName, m.ReqType, m.RespType)
-        case grpcServerStream:
-                return fmt.Sprintf("%s(ctx context.Context, req *%s, opts ...grpc.CallOption) (%s, error)", rpcName, m.ReqType, m.StreamType)
-        case grpcClientStream:
-                return fmt.Sprintf("%s(ctx context.Context, opts ...grpc.CallOption) (%s, error)", rpcName, m.StreamType)
-        case grpcBidiStream:
-                return fmt.Sprintf("%s(ctx context.Context, opts ...grpc.CallOption) (%s, error)", rpcName, m.StreamType)
-        default:
-                return fmt.Sprintf("%s(ctx context.Context, opts ...grpc.CallOption) error", rpcName)
-        }
+	switch m.Kind {
+	case grpcUnary:
+		return fmt.Sprintf("%s(ctx context.Context, req *%s, opts ...grpc.CallOption) (*%s, error)", rpcName, m.ReqType, m.RespType)
+	case grpcServerStream:
+		return fmt.Sprintf("%s(ctx context.Context, req *%s, opts ...grpc.CallOption) (%s, error)", rpcName, m.ReqType, m.StreamType)
+	case grpcClientStream:
+		return fmt.Sprintf("%s(ctx context.Context, opts ...grpc.CallOption) (%s, error)", rpcName, m.StreamType)
+	case grpcBidiStream:
+		return fmt.Sprintf("%s(ctx context.Context, opts ...grpc.CallOption) (%s, error)", rpcName, m.StreamType)
+	default:
+		return fmt.Sprintf("%s(ctx context.Context, opts ...grpc.CallOption) error", rpcName)
+	}
 }
 
 // grpcUnimplementedReturn returns the body for an unimplemented server method.
 func grpcUnimplementedReturn(m grpcMethod) string {
-        switch m.Kind {
-        case grpcUnary, grpcClientStream:
-                return `nil, status.Errorf(codes.Unimplemented, "method not implemented")`
-        case grpcServerStream, grpcBidiStream:
-                // These return only error — no nil needed.
-                return `status.Errorf(codes.Unimplemented, "method not implemented")`
-        default:
-                return `nil, status.Errorf(codes.Unimplemented, "method not implemented")`
-        }
+	switch m.Kind {
+	case grpcUnary, grpcClientStream:
+		return `nil, status.Errorf(codes.Unimplemented, "method not implemented")`
+	case grpcServerStream, grpcBidiStream:
+		// These return only error — no nil needed.
+		return `status.Errorf(codes.Unimplemented, "method not implemented")`
+	default:
+		return `nil, status.Errorf(codes.Unimplemented, "method not implemented")`
+	}
 }
 
 // grpcHandlerFunc generates the gRPC handler function for a method.
 func grpcHandlerFunc(fullSvcName, ifaceName, rpcName string, m grpcMethod) string {
-        var b strings.Builder
+	var b strings.Builder
 
-        if m.Kind == grpcUnary {
-                b.WriteString(fmt.Sprintf("func _%s_%s_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {\n",
-                        ifaceName, rpcName))
-                b.WriteString(fmt.Sprintf("\tin := new(%s)\n", m.ReqType))
-                b.WriteString("\tif err := dec(in); err != nil {\n\t\treturn nil, err\n\t}\n")
-                b.WriteString("\tif interceptor == nil {\n")
-                b.WriteString(fmt.Sprintf("\t\treturn srv.(%sServer).%s(ctx, in)\n", ifaceName, rpcName))
-                b.WriteString("\t}\n")
-                b.WriteString("\tinfo := &grpc.UnaryServerInfo{\n")
-                b.WriteString("\t\tServer:     srv,\n")
-                b.WriteString(fmt.Sprintf("\t\tFullMethod: %q,\n", fullMethodName(fullSvcName, rpcName)))
-                b.WriteString("\t}\n")
-                b.WriteString("\thandler := func(ctx context.Context, req interface{}) (interface{}, error) {\n")
-                b.WriteString(fmt.Sprintf("\t\treturn srv.(%sServer).%s(ctx, req.(*%s))\n", ifaceName, rpcName, m.ReqType))
-                b.WriteString("\t}\n")
-                b.WriteString("\treturn interceptor(ctx, in, info, handler)\n")
-        } else {
-                // Streaming handler stub.
-                b.WriteString(fmt.Sprintf("func _%s_%s_Handler(srv interface{}, stream grpc.ServerStream) error {\n",
-                        ifaceName, rpcName))
-                b.WriteString(fmt.Sprintf("\treturn status.Errorf(codes.Unimplemented, \"%s streaming not yet supported\")\n", rpcName))
-        }
-        b.WriteString("}\n\n")
-        return b.String()
+	if m.Kind == grpcUnary {
+		b.WriteString(fmt.Sprintf("func _%s_%s_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {\n",
+			ifaceName, rpcName))
+		b.WriteString(fmt.Sprintf("\tin := new(%s)\n", m.ReqType))
+		b.WriteString("\tif err := dec(in); err != nil {\n\t\treturn nil, err\n\t}\n")
+		b.WriteString("\tif interceptor == nil {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn srv.(%sServer).%s(ctx, in)\n", ifaceName, rpcName))
+		b.WriteString("\t}\n")
+		b.WriteString("\tinfo := &grpc.UnaryServerInfo{\n")
+		b.WriteString("\t\tServer:     srv,\n")
+		b.WriteString(fmt.Sprintf("\t\tFullMethod: %q,\n", fullMethodName(fullSvcName, rpcName)))
+		b.WriteString("\t}\n")
+		b.WriteString("\thandler := func(ctx context.Context, req interface{}) (interface{}, error) {\n")
+		b.WriteString(fmt.Sprintf("\t\treturn srv.(%sServer).%s(ctx, req.(*%s))\n", ifaceName, rpcName, m.ReqType))
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn interceptor(ctx, in, info, handler)\n")
+	} else {
+		// Streaming handler stub.
+		b.WriteString(fmt.Sprintf("func _%s_%s_Handler(srv interface{}, stream grpc.ServerStream) error {\n",
+			ifaceName, rpcName))
+		b.WriteString(fmt.Sprintf("\treturn status.Errorf(codes.Unimplemented, \"%s streaming not yet supported\")\n", rpcName))
+	}
+	b.WriteString("}\n\n")
+	return b.String()
 }
 
 // grpcClientMethod generates the client method implementation.
 // fullSvcName is used for the gRPC method path; ifaceName is used for
 // the Go struct/type names.
 func grpcClientMethod(fullSvcName, ifaceName, rpcName string, m grpcMethod) string {
-        var b strings.Builder
+	var b strings.Builder
 
-        switch m.Kind {
-        case grpcUnary:
-                b.WriteString(fmt.Sprintf("func (c *%sClientImpl) %s(ctx context.Context, req *%s, opts ...grpc.CallOption) (*%s, error) {\n",
-                        ifaceName, rpcName, m.ReqType, m.RespType))
-                b.WriteString(fmt.Sprintf("\tout := new(%s)\n", m.RespType))
-                b.WriteString(fmt.Sprintf("\terr := c.cc.Invoke(ctx, %q, req, out, opts...)\n",
-                        fullMethodName(fullSvcName, rpcName)))
-                b.WriteString("\tif err != nil {\n")
-                b.WriteString("\t\treturn nil, err\n")
-                b.WriteString("\t}\n")
-                b.WriteString("\treturn out, nil\n")
-                b.WriteString("}\n\n")
-        case grpcServerStream:
-                b.WriteString(fmt.Sprintf("func (c *%sClientImpl) %s(ctx context.Context, req *%s, opts ...grpc.CallOption) (%s, error) {\n",
-                        ifaceName, rpcName, m.ReqType, m.StreamType))
-                b.WriteString("\t// ServerSideStreaming client method\n")
-                b.WriteString(fmt.Sprintf("\treturn %s{}, status.Errorf(codes.Unimplemented, \"%s streaming not yet supported\")\n", m.StreamType, rpcName))
-                b.WriteString("}\n\n")
-        case grpcClientStream, grpcBidiStream:
-                b.WriteString(fmt.Sprintf("func (c *%sClientImpl) %s(ctx context.Context, opts ...grpc.CallOption) (%s, error) {\n",
-                        ifaceName, rpcName, m.StreamType))
-                b.WriteString(fmt.Sprintf("\treturn %s{}, status.Errorf(codes.Unimplemented, \"%s streaming not yet supported\")\n", m.StreamType, rpcName))
-                b.WriteString("}\n\n")
-        }
+	switch m.Kind {
+	case grpcUnary:
+		b.WriteString(fmt.Sprintf("func (c *%sClientImpl) %s(ctx context.Context, req *%s, opts ...grpc.CallOption) (*%s, error) {\n",
+			ifaceName, rpcName, m.ReqType, m.RespType))
+		b.WriteString(fmt.Sprintf("\tout := new(%s)\n", m.RespType))
+		b.WriteString(fmt.Sprintf("\terr := c.cc.Invoke(ctx, %q, req, out, opts...)\n",
+			fullMethodName(fullSvcName, rpcName)))
+		b.WriteString("\tif err != nil {\n")
+		b.WriteString("\t\treturn nil, err\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn out, nil\n")
+		b.WriteString("}\n\n")
+	case grpcServerStream:
+		b.WriteString(fmt.Sprintf("func (c *%sClientImpl) %s(ctx context.Context, req *%s, opts ...grpc.CallOption) (%s, error) {\n",
+			ifaceName, rpcName, m.ReqType, m.StreamType))
+		b.WriteString("\t// ServerSideStreaming client method\n")
+		b.WriteString(fmt.Sprintf("\treturn %s{}, status.Errorf(codes.Unimplemented, \"%s streaming not yet supported\")\n", m.StreamType, rpcName))
+		b.WriteString("}\n\n")
+	case grpcClientStream, grpcBidiStream:
+		b.WriteString(fmt.Sprintf("func (c *%sClientImpl) %s(ctx context.Context, opts ...grpc.CallOption) (%s, error) {\n",
+			ifaceName, rpcName, m.StreamType))
+		b.WriteString(fmt.Sprintf("\treturn %s{}, status.Errorf(codes.Unimplemented, \"%s streaming not yet supported\")\n", m.StreamType, rpcName))
+		b.WriteString("}\n\n")
+	}
 
-        return b.String()
+	return b.String()
 }

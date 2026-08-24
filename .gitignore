@@ -10,7 +10,7 @@
 *.test
 *.bak
 *.exe
-
+*.mp4
 # Coverage artifacts
 *.out
 coverage.html

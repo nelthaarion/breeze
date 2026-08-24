@@ -47,7 +47,7 @@ type StatusEntry struct {
 // Up discovers and applies all pending migrations in ascending version order.
 // Each migration is applied within its own transaction; if any migration fails,
 // Up stops and returns the error (subsequent migrations are not attempted).
-// Up uses a simple row-level lock (version -1) to prevent concurrent runs.
+// Up uses a simple row-level lock (see lockVersion) to prevent concurrent runs.
 func (r *Runner) Up(ctx context.Context) error {
 	// Acquire advisory lock using a sentinel row
 	if err := r.acquireLock(ctx); err != nil {
@@ -144,19 +144,8 @@ func (r *Runner) Down(ctx context.Context, n int) error {
 		migrationMap[m.Version] = m
 	}
 
-	// Collect applied migrations in descending order
-	appliedList := make([]appliedRecord, 0, len(applied))
-	for _, rec := range applied {
-		appliedList = append(appliedList, rec)
-	}
-	// Sort descending by version
-	for i := len(appliedList) - 1; i >= 0; i-- {
-		for j := i - 1; j >= 0; j-- {
-			if appliedList[j].Version > appliedList[i].Version {
-				appliedList[i], appliedList[j] = appliedList[j], appliedList[i]
-			}
-		}
-	}
+	// Roll back newest first, so `down 1` undoes the most recent migration.
+	appliedList := descendingByVersion(applied)
 
 	// Roll back up to n migrations
 	count := 0
@@ -260,8 +249,8 @@ func (r *Runner) acquireLock(ctx context.Context) error {
 	// Try to insert the lock sentinel row
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO breeze_migrations (version, name, checksum, applied_at)
-		VALUES (-1, 'lock', 'lock', ?)
-	`, time.Now().UTC())
+		VALUES (?, 'lock', 'lock', ?)
+	`, lockVersion, time.Now().UTC())
 
 	if err != nil {
 		tx.Rollback()
@@ -278,7 +267,7 @@ func (r *Runner) acquireLock(ctx context.Context) error {
 
 // releaseLock releases the migration lock by deleting the sentinel row.
 func (r *Runner) releaseLock(ctx context.Context) error {
-	_, err := r.DB.ExecContext(ctx, `DELETE FROM breeze_migrations WHERE version = -1`)
+	_, err := r.DB.ExecContext(ctx, `DELETE FROM breeze_migrations WHERE version = ?`, lockVersion)
 	if err != nil {
 		// Log but don't fail; we're already done with the migration and a
 		// stuck sentinel row only blocks the *next* run, not this one.

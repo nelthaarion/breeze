@@ -14,11 +14,11 @@ import (
 
 // APIExplorerRoute describes one registered route for the API Explorer UI.
 type APIExplorerRoute struct {
-	Method  string            `json:"method"`
-	Path    string            `json:"path"`    // OpenAPI-style: /users/{id}
-	Pattern string            `json:"pattern"` // Breeze-style: /users/:id
-	Tags    []string          `json:"tags,omitempty"`
-	Summary string            `json:"summary,omitempty"`
+	Method  string             `json:"method"`
+	Path    string             `json:"path"`    // OpenAPI-style: /users/{id}
+	Pattern string             `json:"pattern"` // Breeze-style: /users/:id
+	Tags    []string           `json:"tags,omitempty"`
+	Summary string             `json:"summary,omitempty"`
 	Inputs  []APIExplorerInput `json:"inputs,omitempty"`
 }
 
@@ -88,7 +88,7 @@ func breezeToOpenAPIPath(pattern string) string {
 // APIExplorerExecRequest is the body of POST /api/api-explorer.
 type APIExplorerExecRequest struct {
 	Method  string            `json:"method"`
-	URL     string            `json:"url"`     // full URL or path
+	URL     string            `json:"url"` // full URL or path
 	Headers map[string]string `json:"headers"`
 	Body    string            `json:"body"`
 }
@@ -200,12 +200,12 @@ func generateSnippets(req APIExplorerExecRequest) map[string]string {
 		method = "GET"
 	}
 	return map[string]string{
-		"curl":    snippetCurl(req, method),
-		"go":      snippetGo(req, method),
+		"curl":       snippetCurl(req, method),
+		"go":         snippetGo(req, method),
 		"javascript": snippetJS(req, method),
-		"python":  snippetPython(req, method),
-		"csharp":  snippetCSharp(req, method),
-		"php":     snippetPHP(req, method),
+		"python":     snippetPython(req, method),
+		"csharp":     snippetCSharp(req, method),
+		"php":        snippetPHP(req, method),
 	}
 }
 

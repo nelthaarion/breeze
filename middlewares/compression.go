@@ -109,7 +109,7 @@ var flatePool = sync.Pool{
 		if err != nil {
 			// flate.NewWriter only errors on invalid level; DefaultCompression
 			// is always valid. This should never happen.
-		panic("middleware: flate.NewWriter(DefaultCompression) failed: " + err.Error())
+			panic("middleware: flate.NewWriter(DefaultCompression) failed: " + err.Error())
 		}
 		return w
 	},

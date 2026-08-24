@@ -30,6 +30,24 @@
 // That registers GET and HEAD on "/videos/*filepath". A player pointed at
 // /videos/movie.mp4 will then seek correctly.
 //
+// # Requests without a Range
+//
+// A request carrying no Range header is answered with 206 and the first
+// [DefaultChunkSize] bytes, not 200 and the whole file. RFC 9110 permits
+// serving the whole representation, and a static file server does — but for
+// video that means streaming an entire movie through one pooled buffer while
+// the viewer waits and cannot seek. A malformed Range, which RFC 9110 requires
+// be ignored, takes the same path. Content-Range reports the full size either
+// way, so a player learns the duration and continues with explicit ranges.
+//
+// This trades one surprise for another, and the trade is worth stating plainly:
+// a client that does not read Content-Range receives a truncated file and no
+// error. "curl -O" against a 100 MB video writes 256 KB and exits zero.
+// Anything consuming these URLs as plain downloads — a backup job, a CDN origin
+// pull that discards partial responses — must send an explicit "bytes=0-" and
+// follow Content-Range, or read the file from disk instead. Browsers and
+// players are unaffected, since they range-request by nature.
+//
 // # Memory
 //
 // A response never holds more than one chunk of the file, [DefaultChunkSize]

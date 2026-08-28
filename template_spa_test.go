@@ -58,6 +58,36 @@ func TestSPARuntimeBehaviour(t *testing.T) {
 	}
 }
 
+// TestSPARuntimePatching drives the DOM patcher and the component lifecycle
+// against a real (if minimal) DOM implemented in testdata/spa_patch_harness.js.
+// These properties are about node identity across a render — a surviving
+// input keeping focus and cursor, a scroll offset surviving, onMount firing
+// once on insert and not on update — and none of them are observable through
+// the stub DOM the behaviour harness uses, nor assertable as source text.
+// Skipped when Node is unavailable.
+func TestSPARuntimePatching(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed; skipping SPA patching tests")
+	}
+
+	harness := filepath.Join("testdata", "spa_patch_harness.js")
+	if _, err := os.Stat(harness); err != nil {
+		t.Fatalf("harness missing: %v", err)
+	}
+
+	dir := t.TempDir()
+	runtimePath := filepath.Join(dir, "breeze-runtime.js")
+	if err := os.WriteFile(runtimePath, []byte(extractRuntimeJS(t)), 0o644); err != nil {
+		t.Fatalf("write runtime: %v", err)
+	}
+
+	out, err := exec.Command(node, harness, runtimePath).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "PASS") {
+		t.Fatalf("SPA patching harness failed:\n%s", out)
+	}
+}
+
 // TestSPARuntimeSyntax catches a malformed runtime early: a syntax error in
 // the embedded script would otherwise only surface as a blank page in a
 // browser, since Go never parses this string.
@@ -108,6 +138,12 @@ func TestSPARuntimeInvariants(t *testing.T) {
 		{"binding passes share one server render", "var _renderBatch = null;"},
 		{"click delegation checks the target is an element", "if (!e.target || e.target.nodeType !== 1) return;"},
 		{"breeze.on tolerates a non-element target", "if (node && node.nodeType !== 1) node = node.parentElement;"},
+		{"swap patches the DOM instead of rebuilding it", "_patch(el, html);"},
+		{"the patcher can be turned off if it ever regresses", "if (window.__BREEZE_NO_PATCH__ === true) {"},
+		{"attribute removal is limited to what a render declared", "var _ownedAttrs = new WeakMap();"},
+		{"static subtrees are treated as incompatible, not just skipped", "return _isStatic(a) === _isStatic(b);"},
+		{"mounts run where nodes are really inserted", "_runMounts(newNode);"},
+		{"destroys run where nodes are really removed", "_runDestroys(leftover[i]);"},
 	}
 
 	for _, c := range mustContain {

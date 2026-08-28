@@ -89,6 +89,7 @@ func TestDependsOnMatchesWhatGeneratorsRead(t *testing.T) {
 	}{
 		{"events", func(c *featureCtx) { c.HasEvents = true }},
 		{"observability", func(c *featureCtx) { c.HasObservability = true }},
+		{"dashboard", func(c *featureCtx) { c.HasDashboard = true }},
 	}
 
 	for _, name := range featureNames() {

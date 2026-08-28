@@ -137,7 +137,309 @@
       return target;
    }
 
-   // Swap innerHTML of el, then run scripts with smart de-duplication.
+   // ── DOM patching ───────────────────────────────────────────────────────
+   //
+   // swap() used to assign el.innerHTML directly, which destroys and rebuilds
+   // every node in the region on every render. That silently wiped anything
+   // the DOM itself owned rather than the server: a focused input and its
+   // cursor, an open <details>, a canvas someone had drawn into, a
+   // third-party widget instance, scroll position inside the region. It also
+   // made "this node is new" indistinguishable from "this node's text
+   // changed", so there was nowhere honest to hang a component lifecycle.
+   //
+   // _patch walks the old and new trees together and mutates in place.
+   // Matching is by an explicit data-key when present, else tag name plus
+   // position. Matched nodes are never replaced — only their changed
+   // attributes and text are touched, then we recurse into their children.
+   //
+   // Escape hatch: a subtree marked data-spa-static is left completely
+   // alone, for DOM owned by something other than Breeze (a chart library's
+   // own nodes, for example).
+   //
+   // Fallback: set window.__BREEZE_NO_PATCH__ = true to restore the old
+   // innerHTML behaviour if patching ever regresses. The fallback cannot
+   // fire onDestroy hooks, because innerHTML discards the old nodes without
+   // telling anyone they went away.
+   function _parseHTML(html) {
+      var tpl = document.createElement('template');
+      if (tpl && 'content' in tpl) {
+         tpl.innerHTML = html;
+         return tpl.content;
+      }
+      // Engines with no <template>: a detached div parses ordinary fragments
+      // well enough (table-row fragments are the known exception).
+      var div = document.createElement('div');
+      div.innerHTML = html;
+      return div;
+   }
+
+   function _childArray(node) {
+      var out = [], kids = (node && node.childNodes) || [], i;
+      for (i = 0; i < kids.length; i++) out.push(kids[i]);
+      return out;
+   }
+
+   function _attrArray(el) {
+      var out = [], attrs = (el && el.attributes) || [], i;
+      for (i = 0; i < attrs.length; i++) out.push({ name: attrs[i].name, value: attrs[i].value });
+      return out;
+   }
+
+   function _isStatic(node) {
+      return !!(node && node.nodeType === 1 && node.hasAttribute && node.hasAttribute('data-spa-static'));
+   }
+
+   function _nodeKey(node) {
+      if (!node || node.nodeType !== 1 || !node.getAttribute) return null;
+      return node.getAttribute('data-key');
+   }
+
+   function _sameType(a, b) {
+      if (!a || !b || a.nodeType !== b.nodeType) return false;
+      if (a.nodeType !== 1) return true;
+      if ((a.tagName || '') !== (b.tagName || '')) return false;
+      // Static-ness is part of compatibility, not just a skip-flag. If the old
+      // node is static and the new one is not, reusing it would strand a node
+      // this runtime is forbidden to patch at a position the server now wants
+      // to manage — it would keep its stale attributes and children forever.
+      // Treating the pair as incompatible replaces it instead.
+      return _isStatic(a) === _isStatic(b);
+   }
+
+   // Attribute names the last render declared on an element, so a patch can
+   // tell "the server removed this attribute" from "your own JS added this
+   // attribute". Without the distinction, syncing attributes deletes a class
+   // toggled by a click handler, an aria-expanded set by a menu, or a data-*
+   // written by a widget — which is exactly the kind of quiet state loss the
+   // patcher exists to stop.
+   var _ownedAttrs = new WeakMap();
+
+   function _recordOwned(node) {
+      if (!node || node.nodeType !== 1) return;
+      var names = [], attrs = _attrArray(node), i;
+      for (i = 0; i < attrs.length; i++) names.push(attrs[i].name);
+      _ownedAttrs.set(node, names);
+      var kids = node.childNodes || [];
+      for (i = 0; i < kids.length; i++) _recordOwned(kids[i]);
+   }
+
+   // Copy only the attributes that actually differ. Rewriting an attribute
+   // that already holds the right value is not free: it can restart a CSS
+   // transition or invalidate layout for no reason.
+   //
+   // Removal is limited to attributes a previous render declared. An element
+   // this runtime has never rendered (the server's initial page load, before
+   // any swap) starts with nothing recorded, so its attributes are added to
+   // and updated but never removed on the first patch; from then on the
+   // recorded set is accurate.
+   function _patchAttrs(oldEl, newEl) {
+      var newAttrs = _attrArray(newEl), declared = [], i, a;
+      for (i = 0; i < newAttrs.length; i++) {
+         a = newAttrs[i];
+         declared.push(a.name);
+         if (oldEl.getAttribute(a.name) !== a.value) oldEl.setAttribute(a.name, a.value);
+      }
+      var owned = _ownedAttrs.get(oldEl) || [];
+      for (i = 0; i < owned.length; i++) {
+         if (declared.indexOf(owned[i]) === -1) oldEl.removeAttribute(owned[i]);
+      }
+      _ownedAttrs.set(oldEl, declared);
+   }
+
+   function _patchNode(oldNode, newNode) {
+      if (oldNode.nodeType === 3 || oldNode.nodeType === 8) {
+         if (oldNode.textContent !== newNode.textContent) oldNode.textContent = newNode.textContent;
+         return;
+      }
+      if (oldNode.nodeType !== 1) return;
+      if (_isStatic(oldNode) || _isStatic(newNode)) return;
+      _patchAttrs(oldNode, newNode);
+      _patchChildren(oldNode, newNode);
+   }
+
+   function _patchChildren(oldParent, newParent) {
+      var newKids = _childArray(newParent);
+      var oldKids = _childArray(oldParent);
+      var keyed = {}, i, k;
+
+      for (i = 0; i < oldKids.length; i++) {
+         k = _nodeKey(oldKids[i]);
+         if (k) keyed[k] = oldKids[i];
+      }
+
+      var cursor = 0;
+      for (i = 0; i < newKids.length; i++) {
+         var newNode = newKids[i];
+         var key = _nodeKey(newNode);
+         var live = _childArray(oldParent);
+         var atCursor = live[cursor] || null;
+         var match = null;
+
+         if (key) {
+            if (keyed[key] && _sameType(keyed[key], newNode)) {
+               match = keyed[key];
+               keyed[key] = null;
+            }
+         } else if (atCursor && !_nodeKey(atCursor) && _sameType(atCursor, newNode)) {
+            // Unkeyed nodes match strictly by position, so a reorder without
+            // data-key reads as a content update rather than a move. That is
+            // the documented trade-off: add data-key for real move semantics.
+            match = atCursor;
+         }
+
+         if (match) {
+            if (match !== atCursor) oldParent.insertBefore(match, atCursor);
+            _patchNode(match, newNode);
+            // A reused node can start matching a mount selector it did not
+            // match before, because patching just changed its attributes
+            // (a class or data-* the new render added). Checking only this
+            // node is enough: its descendants get their own visit through
+            // the recursion, so a subtree scan here would be quadratic.
+            // _mountEl is keyed per element+rule, so nodes that already
+            // mounted are not re-entered.
+            _mountSelf(match);
+         } else {
+            // insertBefore moves newNode out of the parsed tree into the live
+            // document; only now is it genuinely inserted, which is why mount
+            // hooks belong here and not in swap().
+            oldParent.insertBefore(newNode, atCursor);
+            _recordOwned(newNode);
+            _runMounts(newNode);
+         }
+         cursor++;
+      }
+
+      var leftover = _childArray(oldParent).slice(cursor);
+      for (i = 0; i < leftover.length; i++) {
+         _runDestroys(leftover[i]);
+         oldParent.removeChild(leftover[i]);
+      }
+   }
+
+   function _patch(oldEl, html) {
+      _patchChildren(oldEl, _parseHTML(html));
+   }
+
+   // ── Component lifecycle: onMount / onDestroy ───────────────────────────
+   //
+   // Breeze.onMount(selector, fn) runs fn(el) exactly once, when el is really
+   // inserted into the DOM. fn may return a cleanup function, which runs
+   // exactly once when el is really removed. Both are driven from _patch's
+   // insert/remove paths, so they do NOT re-fire when a surviving element's
+   // content merely updates — that is the whole point of the hook, and the
+   // reason it could not exist before patching landed.
+   //
+   // Declarative equivalent, usable from any template:
+   //   <canvas data-spa-mount="initFleetChart"></canvas>
+   // calls window.initFleetChart(el) under the same once-per-insert contract.
+   //
+   // Not to be confused with data-spa-run="once"/"always" (see _runScripts):
+   // that governs when an inline <script> in a fragment is re-executed, which
+   // is about arbitrary script timing, not an element's lifetime. A
+   // data-spa-run="always" script re-runs on every swap; an onMount callback
+   // deliberately does not.
+   var _mountRules = [];
+   var _mountState = new WeakMap(); // el -> { ruleKey: true }
+   var _destroyFns = new WeakMap(); // el -> [cleanup, ...]
+   var _mountSeq   = 0;
+
+   function _forEachMatch(root, selector, cb) {
+      if (!root || root.nodeType !== 1) return;
+      if (root.matches && root.matches(selector)) cb(root);
+      var found = root.querySelectorAll ? root.querySelectorAll(selector) : [];
+      for (var i = 0; i < found.length; i++) cb(found[i]);
+   }
+
+   function _mountEl(el, ruleKey, fn) {
+      var state = _mountState.get(el);
+      if (!state) { state = {}; _mountState.set(el, state); }
+      if (state[ruleKey]) return;
+      state[ruleKey] = true;
+
+      var cleanup = null;
+      try { cleanup = fn(el); } catch (e) { console.error('Breeze.onMount error:', e); }
+      if (typeof cleanup === 'function') {
+         var list = _destroyFns.get(el) || [];
+         list.push(cleanup);
+         _destroyFns.set(el, list);
+      }
+   }
+
+   function _mountRuleOver(root, rule) {
+      _forEachMatch(root, rule.selector, function (el) { _mountEl(el, rule.key, rule.fn); });
+   }
+
+   // Mount rules against one element only, ignoring its subtree.
+   //
+   // Note the asymmetry with onDestroy, which fires only on real removal: an
+   // element that stops matching a selector (say the render dropped the class)
+   // is NOT destroyed, because it is still on the page and its widget may
+   // still be driving it. Mount tracks "is this element one of these now",
+   // destroy tracks "is this element gone" — conflating them would tear down
+   // live widgets on an unrelated class change.
+   function _mountSelf(el) {
+      if (!el || el.nodeType !== 1) return;
+      var i;
+      for (i = 0; i < _mountRules.length; i++) {
+         if (el.matches && el.matches(_mountRules[i].selector)) {
+            _mountEl(el, _mountRules[i].key, _mountRules[i].fn);
+         }
+      }
+      if (el.hasAttribute && el.hasAttribute('data-spa-mount')) {
+         var name = el.getAttribute('data-spa-mount');
+         if (name && typeof window[name] === 'function') _mountEl(el, 'attr:' + name, window[name]);
+      }
+   }
+
+   function _runMounts(root) {
+      if (!root || root.nodeType !== 1) return;
+      for (var i = 0; i < _mountRules.length; i++) _mountRuleOver(root, _mountRules[i]);
+      _forEachMatch(root, '[data-spa-mount]', function (el) {
+         var name = el.getAttribute('data-spa-mount');
+         if (!name) return;
+         var fn = window[name];
+         if (typeof fn === 'function') _mountEl(el, 'attr:' + name, fn);
+         else console.warn('data-spa-mount: window.' + name + ' is not a function');
+      });
+   }
+
+   function _destroyOne(el) {
+      var list = _destroyFns.get(el);
+      _mountState.delete(el);
+      if (!list) return;
+      _destroyFns.delete(el);
+      for (var i = 0; i < list.length; i++) {
+         try { list[i](); } catch (e) { console.error('Breeze onDestroy error:', e); }
+      }
+   }
+
+   function _runDestroys(root) {
+      if (!root || root.nodeType !== 1) return;
+      var all = root.querySelectorAll ? root.querySelectorAll('*') : [];
+      for (var i = 0; i < all.length; i++) _destroyOne(all[i]);
+      _destroyOne(root);
+   }
+
+   function _registerMount(selector, fn) {
+      if (typeof selector !== 'string' || typeof fn !== 'function') {
+         console.warn('Breeze.onMount(selector, fn) requires a selector string and a function');
+         return function () {};
+      }
+      var rule = { selector: selector, fn: fn, key: 'rule:' + (_mountSeq++) };
+      _mountRules.push(rule);
+
+      // Mount anything already on screen, so registering after the first
+      // render is not a silent no-op.
+      var root = document.getElementById('breeze-app') || document.body;
+      if (root) _mountRuleOver(root, rule);
+
+      return function unregister() {
+         var i = _mountRules.indexOf(rule);
+         if (i !== -1) _mountRules.splice(i, 1);
+      };
+   }
+
+   // Patch el's children from html, then run scripts with smart de-duplication.
    //
    // _refreshStateTags runs FIRST, before _runScripts, for two reasons:
    //   1. It relocates any __breeze_data__/__breeze_tmpl__/__breeze_i18n__
@@ -149,7 +451,13 @@
    //      top level (e.g. breeze.bind(...)) must see this route's data, not
    //      whatever the previously displayed route left behind.
    function swap(el, html) {
-      el.innerHTML = html;
+      if (window.__BREEZE_NO_PATCH__ === true) {
+         _runDestroys(el);
+         el.innerHTML = html;
+         _runMounts(el);
+      } else {
+         _patch(el, html);
+      }
       _refreshStateTags(el);
       _runScripts(el);
    }
@@ -200,8 +508,26 @@
       var el = resolveEl(target);
       if (!el) { console.warn('breeze.poll: target not found', target); return; }
       breezeStop(el);
+
+      // Resolve the region again on every tick rather than capturing the node
+      // once. _patch is allowed to replace a node outright (see _sameType) or
+      // drop it as leftover, and a poll holding the original then fetches
+      // forever and patches a node no longer in the document — updates that
+      // are real, correct, and invisible. _bindLocator/_bindTarget give the
+      // poll the same keyed re-resolution bindings use.
+      // A string/null target is re-resolved by resolveEl on every tick; an
+      // element target is tracked by identity with a locator to recover from
+      // replacement.
+      var site = _makeSite((target && typeof target !== 'string') ? el : target);
+
       breezeGet(url, el, options);
-      var id = setInterval(function () { breezeGet(url, el, options); }, intervalMs || 5000);
+      var id = setInterval(function () {
+         var live = _bindTarget(site);
+         // The region is gone for good: stop, instead of polling the network
+         // on behalf of a node nobody can see.
+         if (live === null) { clearInterval(id); return; }
+         breezeGet(url, live, options);
+      }, intervalMs || 5000);
       _polls.set(el, id);
    }
 
@@ -621,8 +947,98 @@
 
    var _store       = null;
    var _watchers    = [];
-   var _bindings    = []; // { target, name, key } registered via breeze.bind()
+   var _bindings    = []; // { name, key, el, locator } registered via breeze.bind()
    var _renderTimer = null;
+
+   // ── Where a re-render renders TO ────────────────────────────────────────
+   //
+   // A binding records how to FIND its region, not which node object it found
+   // last time. That distinction is the whole reactivity bug.
+   //
+   // bind() used to store the resolved element. The patcher is free to replace
+   // a node whose type no longer matches, or to remove it as leftover, and
+   // when it did, the binding kept pointing at the detached original. Every
+   // later store mutation still ran the full path — proxy trap, watchers,
+   // template render, swap, _patch — and patched that orphan correctly. The
+   // document never changed. The update only appeared once a navigation
+   // re-ran the view's inline script and re-registered the binding against
+   // the new node, which is precisely why the symptom read as "data only
+   // updates on tab change, not reactively".
+   //
+   // Navigation and poll/fetch never hit this because they resolve their
+   // target through resolveEl at render time (usually #breeze-app, which is
+   // never replaced). Store-driven renders were the one path rendering into a
+   // remembered node, so they were the one path that could go stale.
+   //
+   // The locator uses the same identity discipline as _patch's own node
+   // matching: an explicit key if the element has one (id, then data-key),
+   // otherwise a generated data-spa-bind stamp so the replacement node can
+   // still be found. String and null targets were always re-resolved by
+   // resolveEl and are left exactly as they were.
+   var _bindSeq = 0;
+
+   function _isLive(node) {
+      // Walked rather than asking isConnected: that property is missing in
+      // older engines and in minimal DOM implementations, where reading it
+      // yields undefined and would condemn every node as detached.
+      for (var n = node; n; n = n.parentNode) {
+         if (n === document.body || n === document.documentElement || n.nodeType === 9) return true;
+      }
+      return false;
+   }
+
+   // A site is only ever declared dead on positive evidence: the node was
+   // reachable from the document when it was registered, and is not now.
+   //
+   // Without that "was", anything legitimately outside the document tree —
+   // an element bound before it is inserted, a container the developer
+   // attaches later, a host environment whose nodes never report a path to
+   // document.body — would read as removed on its very first update and stop
+   // rendering. That is a worse failure than the stale-node bug this is
+   // fixing, so absence of evidence is treated as "still fine, render into
+   // it", exactly as the runtime behaved before.
+   function _makeSite(target) {
+      var isEl = !!(target && typeof target !== 'string' && target.nodeType === 1);
+      if (!isEl) return { el: target, locator: null, wasLive: false };
+      return { el: target, locator: _bindLocator(target), wasLive: _isLive(target) };
+   }
+
+   function _bindLocator(el) {
+      if (!el || el.nodeType !== 1) return null;
+      var id = el.getAttribute && el.getAttribute('id');
+      if (id) return '#' + id;
+      var key = _nodeKey(el);
+      if (key) return '[data-key="' + key + '"]';
+      if (!el.setAttribute) return null;
+      var stamp = el.getAttribute('data-spa-bind');
+      if (!stamp) {
+         stamp = 'b' + (++_bindSeq);
+         el.setAttribute('data-spa-bind', stamp);
+      }
+      return '[data-spa-bind="' + stamp + '"]';
+   }
+
+   // The element this site should render into right now, or null if its region
+   // has genuinely left the document.
+   function _bindTarget(site) {
+      if (!site.el || typeof site.el === 'string') return resolveEl(site.el);
+      if (_isLive(site.el)) return site.el;
+
+      // Detached. If a replacement is findable, adopt it: from here on this
+      // site tracks the live node.
+      if (site.locator) {
+         var fresh = document.querySelector(site.locator);
+         if (fresh && fresh !== site.el) {
+            site.el = fresh;
+            site.wasLive = true;
+            return fresh;
+         }
+      }
+      // Genuinely removed, and it was on the page before — stop.
+      if (site.wasLive) return null;
+      // Never was reachable; not this code's business to declare it gone.
+      return site.el;
+   }
 
    var _mutatingArrayMethods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'copyWithin', 'fill'];
 
@@ -704,14 +1120,27 @@
    function _renderBindings() {
       var outer = _renderBatch;
       _renderBatch = new Map();
+      // Iterate a snapshot: a rendered fragment's inline script may call
+      // bind() or unbind() while this pass is still running, and mutating the
+      // list underneath the loop would skip or repeat entries.
+      var snapshot = _bindings.slice();
+      var dead = null;
       try {
-         for (var i = 0; i < _bindings.length; i++) {
-            var b = _bindings[i];
+         for (var i = 0; i < snapshot.length; i++) {
+            var b  = snapshot[i];
+            var el = _bindTarget(b);
+            if (el === null) { (dead || (dead = [])).push(b); continue; }
             var data = b.key ? (_store ? _store[b.key] : undefined) : _store;
-            _rerender(b.name, data, b.target);
+            _rerender(b.name, data, el);
          }
       } finally {
          _renderBatch = outer;
+         // Drop bindings whose region left the document, rather than retrying
+         // them on every mutation forever. Filtering the CURRENT list (not the
+         // snapshot) keeps anything registered mid-pass.
+         if (dead) {
+            _bindings = _bindings.filter(function (x) { return dead.indexOf(x) === -1; });
+         }
       }
    }
 
@@ -752,7 +1181,16 @@
       _i18nCache = null;
       _tmplCache = null;
 
-      if (sawData) {
+      // Rehydrating from the tag is right for a fragment that arrived from the
+      // server on its own (navigation, fetch, poll, submit): the tag is then
+      // the newest copy of the data. It is wrong for a swap this store just
+      // caused. Server-rendered views embed __breeze_data__ carrying the
+      // SERVER's copy, so a setData() that renders a view would read that
+      // stale copy straight back over the value just set — silently undoing
+      // the update, and leaving the next mutation to render old data. The tag
+      // is still relocated above (it has to become the canonical one); only
+      // reading it back over a newer in-memory store is suppressed.
+      if (sawData && _storeRenderDepth === 0) {
          _store = _makeReactive(_readDataTag(), _onStoreChange);
          _notifyWatchers(_store);
          _renderBindings();
@@ -983,13 +1421,25 @@
       return { body: body, end: i };
    }
 
+   // Depth of swaps caused by the store rather than by the server. Read by
+   // _refreshStateTags to decide whether a fragment's data tag is newer than
+   // the store or older than it. Incremented around each swap rather than
+   // around the whole render so it is still accurate for the server path,
+   // whose swap happens later, inside a promise callback.
+   var _storeRenderDepth = 0;
+
+   function _swapFromStore(el, html) {
+      _storeRenderDepth++;
+      try { swap(el, html); } finally { _storeRenderDepth--; }
+   }
+
    function _rerender(name, data, target) {
       var el      = resolveEl(target);
       var sources = _tmplSources();
 
       if (sources[name] !== undefined) {
          var html = _evalTmpl(sources[name], data, sources, 0);
-         if (el) { swap(el, html); }
+         if (el) { _swapFromStore(el, html); }
          window.dispatchEvent(new CustomEvent('breeze:render', {
          detail: { name: name, target: target, html: html, local: true }
          }));
@@ -1031,7 +1481,7 @@
 
       return pending.then(function(out) {
          if (!out.ok) { console.error('breeze.render error:', out.html); return out.html; }
-         if (el) { swap(el, out.html); }
+         if (el) { _swapFromStore(el, out.html); }
          window.dispatchEvent(new CustomEvent('breeze:render', {
             detail: { name: name, target: target, html: out.html, local: false }
          }));
@@ -1057,6 +1507,33 @@
       onAfterNavigate:  function(fn) { _hooks.afterNavigate.push(fn);  },
       onBeforeSubmit:   function(fn) { _hooks.beforeSubmit.push(fn);   },
       onAfterSubmit:    function(fn) { _hooks.afterSubmit.push(fn);    },
+
+      // Component lifecycle. fn(el) runs once when a matching element is
+      // really inserted into the DOM; the function it optionally returns runs
+      // once when that element is really removed. Content updates to an
+      // element that stays put do not re-fire either one.
+      //
+      //   Breeze.onMount('.chart', function (el) {
+      //     var chart = initChart(el);
+      //     return function () { chart.dispose(); };
+      //   });
+      //
+      // Returns an unregister function. See also data-spa-mount="fnName" for
+      // the declarative form.
+      onMount: _registerMount,
+
+      // Registers a cleanup for one specific element that has already been
+      // mounted, for cases where the element is obtained directly rather than
+      // by selector. Runs once, when that element is removed by a patch.
+      onDestroy: function(el, fn) {
+         if (!el || el.nodeType !== 1 || typeof fn !== 'function') {
+            console.warn('Breeze.onDestroy(el, fn) requires an element and a function');
+            return;
+         }
+         var list = _destroyFns.get(el) || [];
+         list.push(fn);
+         _destroyFns.set(el, list);
+      },
    };
 
    window.breeze = {
@@ -1126,10 +1603,25 @@
       // client-side template 'name'. Renders once immediately with current
       // data. Returns an unbind function.
       bind: function(target, name, key) {
-         var b = { target: target, name: name, key: key };
+         var el = resolveEl(target);
+         // An element target is tracked by identity plus a locator to recover
+         // from replacement; a string or null target IS a locator already, and
+         // resolveEl re-runs it on every render.
+         var b  = _makeSite((target && typeof target !== 'string') ? el : target);
+         b.name = name;
+         b.key  = key;
+         // Re-binding the same region to the same template replaces the
+         // previous entry instead of adding a second one. A view's inline
+         // script runs again on every swap of that view, so without this the
+         // same region accumulated one duplicate binding per render and every
+         // mutation re-rendered it N times.
+         _bindings = _bindings.filter(function (x) {
+            if (x.name !== name || x.key !== key) return true;
+            return b.locator !== null ? x.locator !== b.locator : x.el !== b.el;
+         });
          _bindings.push(b);
          var data = key ? window.breeze.data(key) : window.breeze.data();
-         _rerender(name, data, target);
+         _rerender(name, data, el);
          return function unbind() { _bindings = _bindings.filter(function(x) { return x !== b; }); };
       },
 

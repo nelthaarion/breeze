@@ -1,0 +1,10 @@
+﻿
+ok  	github.com/nelthaarion/breeze/fleet	2.261s
+ok  	github.com/nelthaarion/breeze/fleet/aggregator	1.088s
+ok  	github.com/nelthaarion/breeze/fleet/contracts	0.981s [no tests to run]
+ok  	github.com/nelthaarion/breeze/fleet/transport/eventtransport	0.961s [no tests to run]
+ok  	github.com/nelthaarion/breeze/fleet/transport/gnettransport	0.950s [no tests to run]
+ok  	github.com/nelthaarion/breeze/fleet/transport/httptransport	1.055s [no tests to run]
+ok  	github.com/nelthaarion/breeze/fleet/transport/wstransport	0.950s [no tests to run]
+
+

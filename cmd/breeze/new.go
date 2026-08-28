@@ -36,11 +36,24 @@ type newProjectData struct {
 }
 
 func runNew(args []string) error {
+	// The configuration is resolved first, so --config and any --section.field
+	// overrides are gone from args by the time this command's own FlagSet sees
+	// them. cfg carries the whole file; only the parts a scaffold can express
+	// are used below.
+	cfg, args, err := loadProjectConfig(args)
+	if err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
 	flags := flag.NewFlagSet("new", flag.ContinueOnError)
 	tmplName := flags.String("template", "api", "project template: api or views")
 	module := flags.String("module", "", "Go module path (defaults to the project name)")
 
 	flagArgs, positional := splitFlagsAndPositional(flags, args)
+
 	if err := parseFlags(flags, flagArgs); err != nil {
 		return err
 	}
@@ -69,10 +82,17 @@ func runNew(args []string) error {
 		return fmt.Errorf("%s already exists", name)
 	}
 
+	// --module wins over the config file's module:, which in turn wins over the
+	// project name. The flag is checked first because it is the most specific
+	// statement of intent: it was typed for this invocation.
 	modulePath := *module
+	if modulePath == "" {
+		modulePath = cfg.Module
+	}
 	if modulePath == "" {
 		modulePath = name
 	}
+
 	if err := validateModulePath(modulePath); err != nil {
 		return err
 	}
@@ -91,12 +111,52 @@ func runNew(args []string) error {
 		return err
 	}
 
+	// Features come from the configuration, if it asked for any. This runs
+	// inside the new project because the feature generators write relative to
+	// the working directory, the same as they do under `breeze add`.
+	if applied, err := applyConfigInProject(name, cfg, modulePath); err != nil {
+		// The project is left in place rather than removed: the scaffold itself
+		// is sound, and deleting it would discard a correct tree because of a
+		// bad key in a config file the user can simply fix.
+		return fmt.Errorf("the project was created, but applying %s failed: %w", defaultConfigFile, err)
+	} else if applied > 0 {
+		fmt.Printf("Applied %d feature(s) from configuration\n", applied)
+	}
+
 	if err := runGoModTidy(name); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: go mod tidy failed: %v\n", err)
 	}
 
 	fmt.Printf("Created %s (template: %s)\n\nNext steps:\n  cd %s\n  go run .\n\nAdd framework features with:\n  breeze add dashboard\n  breeze add --list\n", name, *tmplName, name)
+	reportUnsupportedConfigKeys(cfg)
 	return nil
+}
+
+// applyConfigInProject applies the configuration's features from inside the
+// freshly created project, returning how many were applied.
+//
+// The chdir is what makes the feature generators reusable here: they resolve
+// features_generated.go relative to the working directory, so running them from
+// the parent would write the blocks beside the new project rather than into it.
+func applyConfigInProject(dir string, cfg ProjectConfig, modulePath string) (int, error) {
+	wanted := configFeatureNames(cfg)
+	if len(wanted) == 0 {
+		return 0, nil
+	}
+
+	prev, err := os.Getwd()
+	if err != nil {
+		return 0, err
+	}
+	if err := os.Chdir(dir); err != nil {
+		return 0, err
+	}
+	defer os.Chdir(prev)
+
+	if err := applyConfigFeatures(cfg, modulePath); err != nil {
+		return 0, err
+	}
+	return len(wanted), nil
 }
 
 // illegalNameChars are rejected in a project name: the Windows-reserved set

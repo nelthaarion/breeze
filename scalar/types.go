@@ -70,6 +70,11 @@ type Schema struct {
 	Required    []string           `json:"required,omitempty"`
 	Enum        []any              `json:"enum,omitempty"`
 	Example     any                `json:"example,omitempty"`
+	// AdditionalProperties preserves the OpenAPI 3.1 / JSON Schema keyword
+	// when a fetched document declares it. A pointer distinguishes an omitted
+	// keyword (Breeze reports unknown fields as a warning) from explicit false
+	// (unknown fields are an error).
+	AdditionalProperties *bool `json:"additionalProperties,omitempty"`
 }
 
 // ─── Route-level doc descriptor ────────────────────────────────────────────

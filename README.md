@@ -45,6 +45,7 @@ efficiently while keeping your code clean and maintainable.
   - [Durable Workflows](#-durable-workflows)
 
   - [Built-in Developer Dashboard](#-built-in-developer-dashboard)
+  - [Fleet Tracing](#-fleet-tracing)
 
   - [Developer Experience](#-developer-experience)
   - [Performance Optimizations](#-performance-optimizations)
@@ -574,6 +575,29 @@ See [`workflow/README.md`](./workflow/README.md) for full documentation.
 - 🌑 Modern dark mode, responsive, single-file SPA (no external deps)
 
 See [`dashboard/README.md`](./dashboard/README.md) for full documentation.
+
+### 🕸 Fleet Tracing
+
+Native distributed tracing across Breeze services with no external tracing
+backend required. Fleet propagates W3C `traceparent`, exports spans off the
+request path into bounded buffers, and adds a capability-gated 15th dashboard
+page with service topology, merged waterfalls, contract violations,
+deterministic root cause, and blast radius.
+
+```go
+tracer := fleet.New(fleet.TracerConfig{
+    ServiceName:   "orders-service",
+    AggregatorURL: "http://fleet-aggregator:9000/fleet",
+})
+router.Use(fleet.Middleware(tracer)) // before dashboard middleware
+```
+
+The aggregator is intentionally live and in-memory: it is not durable storage,
+and one process is the v1 scaling boundary. Importing base `fleet` adds no gRPC,
+broker, or third-party WebSocket dependency.
+
+See [`docs/fleet-tracing.md`](./docs/fleet-tracing.md) for setup, transport
+status, security, architecture, and migration guidance.
 
 ### ⚙️ Developer Experience
 

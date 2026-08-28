@@ -51,6 +51,18 @@ type Config struct {
 	Username string `yaml:"username" json:"username"`
 	Password string `yaml:"password" json:"password"`
 
+	// FleetAggregatorURL activates Fleet View and is the read-side base URL
+	// of a fleet.Aggregator (for example http://fleet:9000/fleet). Empty keeps
+	// the page and all proxy routes disabled, so existing dashboards allocate
+	// and dial nothing.
+	FleetAggregatorURL      string `yaml:"fleet_aggregator_url" json:"fleet_aggregator_url"`
+	FleetAggregatorUsername string `yaml:"fleet_aggregator_username" json:"-"`
+	FleetAggregatorPassword string `yaml:"fleet_aggregator_password" json:"-"`
+
+	// ServiceToken guards trace-correlated log fan-out. The token is compared
+	// against X-Fleet-Token by the logs endpoint and never sent to browsers.
+	ServiceToken string `yaml:"service_token" json:"-"`
+
 	// DisableAuth turns off authentication entirely, even if Username and
 	// Password are set. Useful for local development or when auth is
 	// handled by a reverse proxy. Defaults to false.

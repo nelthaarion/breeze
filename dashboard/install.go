@@ -142,6 +142,44 @@ func (c *Collector) PushLog(level, message, source string) {
 	})
 }
 
+// traceIDResolver reads the active trace id off a request context.
+//
+// This is a hook rather than a direct call because fleet imports dashboard (it
+// reuses TimelineStep and this Collector), so dashboard cannot import fleet
+// back. The fleet package installs this on init; in a build that never imports
+// fleet it stays nil and PushLogCtx degrades to PushLog, which is the correct
+// behaviour for a single-service app that has no traces to correlate against.
+var traceIDResolver func(*breeze.Context) string
+
+// SetTraceIDResolver is called by the fleet package. Not intended for
+// application use.
+func SetTraceIDResolver(fn func(*breeze.Context) string) { traceIDResolver = fn }
+
+// PushLogCtx is PushLog for a log line emitted while handling a request.
+//
+// It stamps the entry with the request's trace id, which is what lets §9C.2
+// stitch this line into a cross-service trace view later. Without the trace id
+// a line is still visible on the Logs page, but it is invisible to the merged
+// trace panel — the one place someone debugging a distributed failure is
+// actually looking.
+//
+// Kept separate from PushLog rather than changing that signature: PushLog is
+// existing public API, and a log line emitted from a background job or at
+// startup has no request to belong to.
+func (c *Collector) PushLogCtx(ctx *breeze.Context, level, message, source string) {
+	var traceID string
+	if ctx != nil && traceIDResolver != nil {
+		traceID = traceIDResolver(ctx)
+	}
+	c.RecordLog(level, LogEntry{
+		Time:    now(),
+		Message: maskLine(c.cfg, message),
+		Source:  source,
+		TraceID: traceID,
+	})
+}
+
+
 // PushQueueJob records a queued job.
 func (c *Collector) PushQueueJob(j QueueJob) { c.RegisterJob(j) }
 

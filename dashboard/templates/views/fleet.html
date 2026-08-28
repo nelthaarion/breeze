@@ -1,0 +1,19 @@
+{{define "content"}}
+<div id="fleet-unreachable" class="empty" style="display:none"></div>
+<div class="cards" id="fleet-cards"></div>
+<div class="chart-card" style="margin-bottom:20px">
+  <div class="head"><h3>Service topology</h3><span id="fleet-topology-meta"></span></div>
+  <canvas id="fleet-topology" style="width:100%;height:320px;display:block"></canvas>
+</div>
+<div class="table-wrap">
+  <div class="table-head"><h3>Recent chained traces</h3><input id="fleet-tag" placeholder="tag: order_id:123"></div>
+  <div id="fleet-traces" class="fleet-trace-list"></div>
+  <div class="fleet-page-controls"><button id="fleet-next-page" type="button">Load more traces</button><span id="fleet-page-status"></span></div>
+</div>
+<div class="table-wrap" id="fleet-detail-wrap" style="display:none;margin-top:20px">
+  <div class="table-head"><h3>Merged cross-service timeline</h3><span id="fleet-summary"></span></div>
+  <div id="fleet-detail" style="padding:18px"></div>
+</div>
+<script>window.__breezeDashPage='fleet';</script>
+<script data-spa-run="always">if(window.BreezeDash) BreezeDash.initPage('fleet');</script>
+{{end}}

@@ -95,6 +95,10 @@ type featureCtx struct {
 	// of standing up a second one.
 	HasEvents        bool
 	HasObservability bool
+	// HasDashboard reports whether a dashboard block is present, so a feature
+	// can route its logs through that collector — which is what stamps a log
+	// line with the current trace id — instead of dropping them.
+	HasDashboard bool
 }
 
 // featureOutput is one feature's generated code.
@@ -224,4 +228,5 @@ func init() {
 	registerCoreFeatures()
 	registerMiddlewareFeatures()
 	registerRouteFeatures()
+	registerFleetFeature()
 }

@@ -65,7 +65,9 @@ func runAdd(args []string) error {
 		// of what has been added, which is what lets add stay stateless.
 		HasEvents:        hasBlock(featuresFileName, featureMarkerPrefix, "events"),
 		HasObservability: hasBlock(featuresFileName, featureMarkerPrefix, "observability"),
+		HasDashboard:     hasBlock(featuresFileName, featureMarkerPrefix, "dashboard"),
 	})
+
 	if err != nil {
 		return err
 	}
@@ -338,6 +340,32 @@ var featureAliases = map[string]string{
 	"streaming":    "video",
 	"cache":        "etag",
 	"panics":       "recovery",
+
+	// Hyphenated spellings. The registry uses single words, but a hyphen is
+	// the natural way to write a two-word name in a YAML file, and the
+	// configuration schema takes these names as data rather than as something
+	// the user was prompted for. Accepting both spellings costs one line each
+	// and removes a class of "not a known feature" errors that teach nothing.
+	"rate-limit":  "ratelimit",
+	"rate_limit":  "ratelimit",
+	"worker-pool": "tuning",
+	"event-bus":   "events",
+	"web-socket":  "websocket",
+	"open-api":    "docs",
+}
+
+// canonicalFeatureName maps an alias to its canonical feature without saying
+// so, for callers that are inspecting rather than acting.
+//
+// Validation is the caller that needs this: it resolves every configured
+// middleware name to check it exists, before anything is generated. Announcing
+// each alias there would print notes for a pass that may end in an error and
+// generate nothing at all.
+func canonicalFeatureName(name string) string {
+	if canonical, ok := featureAliases[name]; ok {
+		return canonical
+	}
+	return name
 }
 
 // resolveFeatureName maps an alias to its canonical feature, leaving anything
@@ -348,11 +376,10 @@ var featureAliases = map[string]string{
 // with a name that does not appear in `add --list`, in the block markers, or in
 // the file they are about to read.
 func resolveFeatureName(name string) string {
-	canonical, ok := featureAliases[name]
-	if !ok {
-		return name
+	canonical := canonicalFeatureName(name)
+	if canonical != name {
+		fmt.Fprintf(os.Stderr, "note: %q is an alias for the %q feature\n", name, canonical)
 	}
-	fmt.Fprintf(os.Stderr, "note: %q is an alias for the %q feature\n", name, canonical)
 	return canonical
 }
 

@@ -50,7 +50,7 @@ func main() {
 
 // runHelp serves both `breeze help` and `breeze help <command>`. Per-command
 // help exists because the flat usage block below cannot carry the detail each
-// command needs — `add` alone has 21 features with their own flags — without
+// command needs — `add` alone has 22 features with their own flags — without
 // becoming a wall nobody reads.
 func runHelp(args []string) error {
 	if len(args) == 0 {
@@ -139,10 +139,11 @@ Generators:
   job <Name>           background job, registered with the dashboard
   grpc <Name>          gRPC service skeleton
 
-Features (breeze add --list for all 21):
+Features (breeze add --list for all 23):
   events observability recovery logging security cors compression ratelimit
-  dashboard i18n jwt oauth2 etag docs static video websocket templates
-  workflow tuning migrator
+  dashboard i18n jwt oauth2 etag docs static video websocket jsonrpc
+  templates workflow tuning migrator fleet
+
 
 Aliases:
   g    generate

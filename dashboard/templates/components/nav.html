@@ -13,6 +13,12 @@
     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 4 L 4 20 M 8 6 L 16 6 M 8 10 L 14 10 M 8 14 L 18 14 M 8 18 L 12 18"/></svg>
     <span>Timeline</span>
   </a>
+  {{if .Data.FleetEnabled}}
+  <a class="nav-item{{if eq .Data.Page "fleet"}} active{{end}}" href="{{.Data.BasePath}}/fleet" data-nav="fleet">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 11L17 6M7 13L17 18"/></svg>
+    <span>Fleet View</span>
+  </a>
+  {{end}}
   <a class="nav-item{{if eq .Data.Page "events"}} active{{end}}" href="{{.Data.BasePath}}/events" data-nav="events">
     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 13 2 L 4 14 L 11 14 L 11 22 L 20 10 L 13 10 Z"/></svg>
     <span>Events</span>

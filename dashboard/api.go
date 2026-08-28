@@ -1,9 +1,12 @@
 package dashboard
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"runtime"
 	"strconv"
@@ -166,6 +169,9 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
 			"health", "performance", "timeline", "architecture",
 			"events", "video",
 		}
+		if c.cfg.FleetAggregatorURL != "" {
+			pages = append(pages, "fleet")
+		}
 
 		// Index route — auth + render overview
 		router.HandleBlocking(breeze.GET, base, func(ctx *breeze.Context) {
@@ -200,7 +206,8 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
 	router.HandleBlocking(breeze.GET, api+"/requests", c.wrap(auth, c.handleRequests))
 	router.HandleBlocking(breeze.GET, api+"/cache", c.wrap(auth, c.handleCache))
 	router.HandleBlocking(breeze.POST, api+"/cache/clear", c.wrap(auth, c.handleCacheClear))
-	router.HandleBlocking(breeze.GET, api+"/logs", c.wrap(auth, c.handleLogs))
+	router.HandleBlocking(breeze.GET, api+"/logs", c.wrapService(auth, c.handleLogs))
+
 	router.HandleBlocking(breeze.GET, api+"/health", c.wrap(auth, c.handleHealth))
 	router.HandleBlocking(breeze.GET, api+"/performance", c.wrap(auth, c.handlePerformance))
 	router.HandleBlocking(breeze.GET, api+"/timeline", c.wrap(auth, c.handleTimelineList))
@@ -208,6 +215,10 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
 	router.HandleBlocking(breeze.GET, api+"/architecture", c.wrap(auth, c.handleArchitecture))
 	router.HandleBlocking(breeze.GET, api+"/events", c.wrap(auth, c.handleEvents))
 	router.HandleBlocking(breeze.GET, api+"/video", c.wrap(auth, c.handleVideo))
+	router.HandleBlocking(breeze.GET, api+"/capabilities", c.wrap(auth, c.handleCapabilities))
+	if c.cfg.FleetAggregatorURL != "" {
+		router.HandleBlocking(breeze.GET, api+"/fleet/*path", c.wrap(auth, c.handleFleetProxy))
+	}
 
 	router.HandleBlocking(breeze.GET, api+"/db/tables", c.wrap(auth, c.handleDBTables))
 	router.HandleBlocking(breeze.GET, api+"/db/tables/:name", c.wrap(auth, c.handleDBTableData))
@@ -226,10 +237,11 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
 // the assets path, and the page title.
 func (c *Collector) viewData(ctx *breeze.Context, page string) map[string]any {
 	return map[string]any{
-		"Page":       page,
-		"BasePath":   strings.TrimSuffix(c.cfg.BasePath, "/"),
-		"AssetsPath": strings.TrimSuffix(c.cfg.BasePath, "/") + "/assets",
-		"PageTitle":  pageLabelFor(page),
+		"Page":         page,
+		"BasePath":     strings.TrimSuffix(c.cfg.BasePath, "/"),
+		"AssetsPath":   strings.TrimSuffix(c.cfg.BasePath, "/") + "/assets",
+		"PageTitle":    pageLabelFor(page),
+		"FleetEnabled": c.cfg.FleetAggregatorURL != "",
 	}
 }
 
@@ -248,6 +260,7 @@ func pageLabelFor(page string) string {
 		"architecture": "Architecture",
 		"events":       "Events",
 		"video":        "Video Streaming",
+		"fleet":        "Fleet View",
 	}
 
 	if t, ok := titles[page]; ok {
@@ -269,7 +282,41 @@ func (c *Collector) wrap(auth breeze.HandlerFunc, h breeze.HandlerFunc) breeze.H
 	}
 }
 
+// wrapService is wrap plus a service-to-service path, for endpoints the fleet
+// aggregator fans out to on a human's behalf (§9C.2).
+//
+// The aggregator has no session cookie and no dashboard password — giving it one
+// would mean putting the credential a person logs in with into another process's
+// config. It instead presents ServiceToken, and this wrapper accepts that in
+// place of a session. Order matters: the token is checked first, so a valid
+// service call never depends on the browser auth path it cannot satisfy.
+//
+// When ServiceToken is unset there is no service path at all and this behaves
+// exactly like wrap. That is what keeps the feature opt-in: an operator who
+// never configures a token has not silently opened a second way in.
+func (c *Collector) wrapService(auth breeze.HandlerFunc, h breeze.HandlerFunc) breeze.HandlerFunc {
+	return func(ctx *breeze.Context) {
+		if token := ctx.Req.Header["x-fleet-token"]; token != "" {
+			if c.cfg.ServiceToken == "" ||
+				subtle.ConstantTimeCompare([]byte(token), []byte(c.cfg.ServiceToken)) != 1 {
+				// A presented-but-wrong token is rejected outright
+				// rather than falling through to session auth. Falling
+				// through would turn a token typo into a confusing
+				// login redirect instead of the 401 that names the
+				// actual problem.
+				ctx.Status(401)
+				ctx.JSON(map[string]any{"error": "unauthorized"})
+				return
+			}
+			h(ctx)
+			return
+		}
+		c.wrap(auth, h)(ctx)
+	}
+}
+
 // ─── Handlers ────────────────────────────────────────────────────────────
+
 
 func (c *Collector) handleOverview(ctx *breeze.Context) {
 	m := c.Metrics()
@@ -367,23 +414,68 @@ func (c *Collector) handleCacheClear(ctx *breeze.Context) {
 
 func (c *Collector) handleLogs(ctx *breeze.Context) {
 	level := ctx.Query("level")
+
 	if level == "" {
 		level = "app"
 	}
 	n := atoiDefault(ctx.Query("limit"), 500)
 	q := ctx.Query("q")
+	traceID := ctx.Query("trace_id")
 	all := c.Logs(level, n)
-	if q == "" {
+	if q == "" && traceID == "" {
 		ctx.JSON(all)
 		return
 	}
 	out := make([]LogEntry, 0, len(all))
 	for _, e := range all {
-		if strings.Contains(strings.ToLower(e.Message), strings.ToLower(q)) {
+		if traceID != "" && e.TraceID != traceID {
+			continue
+		}
+		if q == "" || strings.Contains(strings.ToLower(e.Message), strings.ToLower(q)) {
 			out = append(out, e)
 		}
 	}
 	ctx.JSON(out)
+}
+
+func (c *Collector) handleCapabilities(ctx *breeze.Context) {
+	ctx.JSON(map[string]any{"fleet_enabled": c.cfg.FleetAggregatorURL != ""})
+}
+
+// handleFleetProxy keeps aggregator credentials and topology off the browser.
+// Only GET is registered: Fleet View is observability and must not mutate the
+// aggregator through the dashboard seam.
+func (c *Collector) handleFleetProxy(ctx *breeze.Context) {
+	path := strings.TrimPrefix(ctx.GetParam("path"), "/")
+	base := strings.TrimSuffix(c.cfg.FleetAggregatorURL, "/")
+	u := base + "/api/" + path
+	if raw := ctx.Req.Query.Encode(); raw != "" {
+		u += "?" + raw
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
+	if err != nil {
+		ctx.Status(502)
+		ctx.JSON(map[string]any{"error": "fleet aggregator unreachable", "url": base})
+		return
+	}
+	if c.cfg.FleetAggregatorUsername != "" && c.cfg.FleetAggregatorPassword != "" {
+		req.SetBasicAuth(c.cfg.FleetAggregatorUsername, c.cfg.FleetAggregatorPassword)
+	}
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		ctx.Status(502)
+		ctx.JSON(map[string]any{"error": "fleet aggregator unreachable", "url": base})
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		ctx.Status(502)
+		ctx.JSON(map[string]any{"error": "fleet aggregator response unreadable"})
+		return
+	}
+	ctx.Res = &breeze.HTTPResponse{Status: resp.StatusCode, Headers: map[string]string{"Content-Type": resp.Header.Get("Content-Type")}, Body: body}
 }
 
 func (c *Collector) handleHealth(ctx *breeze.Context) {

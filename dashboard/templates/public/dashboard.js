@@ -32,6 +32,7 @@ var S = {
   logSearch: '',
   _slowOnly: false,
   _routeSearch: '',
+  fleet: {cursor:'', hasMore:false, loading:false, traces:[], topology:null, services:[], playback:null},
 };
 
 // ─── Utils ─────────────────────────────────────────────────────────────
@@ -51,6 +52,68 @@ function el(tag, attrs, kids){
     e.appendChild(typeof k==='string'?document.createTextNode(k):k);
   });
   return e;
+}
+// reconcileList patches a container's children to match `items`, keyed by
+// keyFn(item), instead of replacing innerHTML wholesale. This is what most
+// render*() functions in this file don't do — they rebuild their whole
+// subtree on every refresh, which throws away any per-row UI state (an open
+// accordion, scroll position inside a long table, focus) even when the
+// underlying data for that row hasn't changed.
+//
+//   container   — element whose children are the rendered rows
+//   items       — array of data objects
+//   keyFn       — item -> stable string key (e.g. trace_id)
+//   sigFn       — item -> string signature; if unchanged since last render,
+//                 the existing DOM node for that key is left completely
+//                 untouched (so any state a user toggled on it survives)
+//   buildFn     — (item) -> new DOM node for a key seen for the first time
+//   updateFn    — (existingNode, item) -> mutate node in place when sigFn
+//                 changed but the node itself should be kept (not replaced),
+//                 so any accordion-open class the user set on it survives
+//
+// Existing nodes are matched by a data-key attribute the caller's buildFn
+// must set. Nodes for keys no longer present in `items` are removed; nodes
+// for new keys are inserted in the correct position; everything else is
+// left alone or patched via updateFn, never replaced outright.
+function reconcileList(container, items, keyFn, sigFn, buildFn, updateFn){
+  if(!container) return;
+  var existing = {};
+  $$('[data-key]', container).forEach(function(node){ existing[node.dataset.key] = node; });
+
+  var seen = {};
+  var prevNode = null;
+  items.forEach(function(item){
+    var key = String(keyFn(item));
+    seen[key] = true;
+    var sig = sigFn ? String(sigFn(item)) : null;
+    var node = existing[key];
+
+    if(!node){
+      node = buildFn(item);
+      node.dataset.key = key;
+      if(sig!=null) node.dataset.sig = sig;
+    } else if(sig!=null && node.dataset.sig !== sig){
+      if(updateFn) updateFn(node, item);
+      node.dataset.sig = sig;
+    }
+    // else: identical signature, existing node left completely untouched —
+    // this is what preserves an open accordion / scroll offset across a
+    // refresh that didn't actually change this row's data.
+
+    // Ensure correct order without detaching nodes that are already in
+    // place (which would otherwise reset e.g. an open <details> or CSS
+    // transition state even for an untouched node).
+    if(prevNode){
+      if(prevNode.nextSibling !== node) container.insertBefore(node, prevNode.nextSibling);
+    } else if(container.firstChild !== node){
+      container.insertBefore(node, container.firstChild);
+    }
+    prevNode = node;
+  });
+
+  Object.keys(existing).forEach(function(key){
+    if(!seen[key]) existing[key].remove();
+  });
 }
 function fmtTime(t){
   if(!t) return '-';
@@ -213,6 +276,7 @@ var PAGES = {
   architecture: {title:'Architecture', init: initArchitecture},
   events: {title:'Events', init: initEvents},
   video: {title:'Video Streaming', init: initVideo},
+  fleet: {title:'Fleet View', init: initFleet},
 };
 
 
@@ -226,6 +290,604 @@ function initPage(page){
     n.classList.toggle('active', n.getAttribute('data-nav') === page);
   });
   if(PAGES[page] && PAGES[page].init) PAGES[page].init();
+}
+
+// ─── Fleet View ─────────────────────────────────────────────────────────
+function initFleet(){
+  var tag=$('#fleet-tag');
+  if(tag && !tag.dataset.bound){
+    tag.dataset.bound='1';
+    tag.addEventListener('change', loadFleet);
+  }
+  var next=$('#fleet-next-page');
+  if(next && !next.dataset.bound){
+    next.dataset.bound='1';
+    next.addEventListener('click', function(){ if(S.fleet.hasMore && !S.fleet.loading) loadFleet(true); });
+  }
+  S.fleet.cursor=''; S.fleet.traces=[];
+  loadFleet();
+  // Every other "live" page in this dashboard polls itself (see initHealth,
+  // initQueue, initScheduler). Fleet View previously had no refresh at all —
+  // it only ever updated on the tag-filter change event. That's now safe to
+  // add because renderFleetTraces/renderFleetTopology reconcile in place
+  // instead of rebuilding the DOM, so a poll tick no longer collapses an
+  // open accordion or resets scroll position.
+  //
+  // Armed exactly once, not once per visit. initFleet runs on *every*
+  // navigation to this page, so an unguarded setInterval here left one extra
+  // live poller behind per visit — and they were never cleared. By the fifth
+  // visit five pollers were interleaving calls to loadFleet(), each mutating
+  // the shared S.fleet.cursor/traces mid-flight: one tick's response would
+  // land on a cursor a different tick had already advanced, so pages of
+  // traces overwrote each other and the list stopped tracking what the
+  // aggregator actually held. It looked like Fleet View only refreshed on a
+  // tab change, because a tab change re-ran the one code path that reset
+  // cursor and traces from scratch (above) before any poller could interfere.
+  if(!_fleetPoll) _fleetPoll=setInterval(function(){
+    if(S.page==='fleet' && !S.fleet.loading) loadFleet();
+  }, 5000);
+}
+var _fleetPoll=0;
+
+function loadFleet(nextPage){
+  var tag=$('#fleet-tag'), suffix='page_size=40&min_services=2';
+  if(tag && tag.value) suffix+='&tag='+encodeURIComponent(tag.value);
+  if(nextPage && S.fleet.cursor) suffix+='&cursor='+encodeURIComponent(S.fleet.cursor);
+  else if(!nextPage) S.fleet.cursor='';
+  S.fleet.loading=true;
+  Promise.all([api('fleet/services'),api('fleet/topology'),api('fleet/traces?'+suffix),api('fleet/incidents')]).then(function(v){
+    var dead=$('#fleet-unreachable'); if(dead) dead.style.display='none';
+    var page=Array.isArray(v[2])?{traces:v[2],has_more:false}:v[2]||{};
+    S.fleet.services=v[0]||[]; S.fleet.topology=v[1]||{};
+    S.fleet.hasMore=!!page.has_more; S.fleet.cursor=page.next_cursor||'';
+    if(nextPage) S.fleet.traces=S.fleet.traces.concat(page.traces||[]); else S.fleet.traces=page.traces||[];
+    renderFleetCards(v[0],v[3]); renderFleetTopology(v[1],v[0]); renderFleetTraces(S.fleet.traces);
+    var status=$('#fleet-page-status'); if(status) status.textContent=S.fleet.traces.length+' traces loaded';
+    var next=$('#fleet-next-page'); if(next) next.style.display=S.fleet.hasMore?'inline-flex':'none';
+  }).catch(function(){
+    var dead=$('#fleet-unreachable');
+    if(dead){dead.style.display='block';dead.innerHTML='<div class="icon">&#9888;</div>Fleet Aggregator unreachable — check that it is running and the configured URL is correct.';}
+  }).finally(function(){S.fleet.loading=false;});
+}
+function renderFleetCards(services,incidents){
+  var root=$('#fleet-cards'); if(!root)return;
+  services=services||[]; incidents=incidents||[];
+  var up=services.filter(function(s){return s.status==='up';}).length;
+  root.innerHTML='<div class="card"><div class="label">Services</div><div class="value">'+services.length+'</div></div>'+
+    '<div class="card"><div class="label">Healthy</div><div class="value">'+up+'</div></div>'+
+    '<div class="card"><div class="label">Active incidents</div><div class="value">'+incidents.length+'</div></div>';
+}
+// A trace's signature is everything the collapsed summary row shows, plus
+// span_count (a decent proxy for "has this trace grown since last poll").
+// Two identical signatures back-to-back means reconcileList leaves that
+// row's DOM completely alone — including its open/closed accordion state
+// and whatever detail markup is already rendered inside it.
+function _fleetTraceSig(t){
+  return [t.duration_ms, t.status, t.has_error, t.span_count].join('|');
+}
+function _fleetTraceBuild(t){
+  var row = el('div', {class:'accordion-item fleet-trace'});
+  var head = el('div', {class:'accordion-head', role:'button', tabindex:'0'});
+  head.innerHTML =
+    '<span class="fleet-t-time">'+fmtTime(t.start_ns/1000000)+'</span>'+
+    '<span class="fleet-t-services">'+escapeHTML((t.services||[]).join(' → '))+'</span>'+
+    '<span class="fleet-t-dur">'+fmtMS(t.duration_ms)+'</span>'+
+    '<span class="status '+statusClass(t.status||0)+'">'+(t.has_error?'error':(t.status||'-'))+'</span>'+
+    '<span class="fleet-t-spans">'+t.span_count+' spans</span>'+
+    '<code class="fleet-t-id">'+escapeHTML(t.trace_id.slice(0,12))+'…</code>'+
+    '<span class="accordion-caret">&#9656;</span>';
+  var body = el('div', {class:'accordion-body', style:'display:none'});
+  head.addEventListener('click', function(){ toggleFleetTrace(row, t.trace_id); });
+  row.appendChild(head);
+  row.appendChild(body);
+  return row;
+}
+function _fleetTraceUpdate(row, t){
+  // Only the summary head needs to reflect new data (e.g. duration/status
+  // changed on a poll); the body — including whether it's expanded and any
+  // already-rendered detail/play-state inside it — is left untouched.
+  var head = $('.accordion-head', row);
+  if(!head) return;
+  head.innerHTML =
+    '<span class="fleet-t-time">'+fmtTime(t.start_ns/1000000)+'</span>'+
+    '<span class="fleet-t-services">'+escapeHTML((t.services||[]).join(' → '))+'</span>'+
+    '<span class="fleet-t-dur">'+fmtMS(t.duration_ms)+'</span>'+
+    '<span class="status '+statusClass(t.status||0)+'">'+(t.has_error?'error':(t.status||'-'))+'</span>'+
+    '<span class="fleet-t-spans">'+t.span_count+' spans</span>'+
+    '<code class="fleet-t-id">'+escapeHTML(t.trace_id.slice(0,12))+'…</code>'+
+    '<span class="accordion-caret">&#9656;</span>';
+  head.onclick = function(){ toggleFleetTrace(row, t.trace_id); };
+}
+function renderFleetTraces(traces){
+  var body=$('#fleet-traces'); if(!body)return; traces=traces||[];
+  // The zero-state placeholder is carried on its own node and removed
+  // explicitly, because reconcileList can only remove nodes it owns — it
+  // matches on [data-key], and the placeholder has none. Left in place it
+  // survived every subsequent poll: the first tick on an idle fleet wrote
+  // "No multi-service traces yet", and once traces began arriving they were
+  // inserted *before* that div (insertBefore(node, firstChild)), so the page
+  // showed live rows with a "no traces" message still sitting underneath
+  // them. Whether the list looked correct depended on whether the first
+  // poll after opening the tab happened to find any traces.
+  var placeholder=$('.fleet-empty', body);
+  if(traces.length){
+    if(placeholder) placeholder.remove();
+  } else if(!placeholder){
+    body.appendChild(el('div',{class:'empty fleet-empty',text:'No multi-service traces yet'}));
+  }
+  reconcileList(body, traces, function(t){return t.trace_id;}, _fleetTraceSig, _fleetTraceBuild, _fleetTraceUpdate);
+}
+
+// Toggling never touches sibling rows or the page's scroll position — it
+// only flips display/class on the one accordion item that was clicked, and
+// only fetches detail the first time a given trace is opened (cached on the
+// row itself via dataset.loaded) rather than re-fetching and re-rendering
+// on every click.
+function toggleFleetTrace(row, id){
+  var wasOpen = row.classList.contains('open');
+  row.classList.toggle('open', !wasOpen);
+  var bodyEl = $('.accordion-body', row);
+  var caret = $('.accordion-caret', row);
+  if(bodyEl) bodyEl.style.display = wasOpen ? 'none' : 'block';
+  if(caret) caret.innerHTML = wasOpen ? '&#9656;' : '&#9662;';
+  if(wasOpen || !bodyEl || row.dataset.loaded) return;
+  row.dataset.loaded = '1';
+  api('fleet/traces/'+id).then(function(t){
+    function stepRow(n,d){
+      var s=n||{}, tags=Object.keys(s.tags||{}).map(function(k){return '<span class="badge">'+escapeHTML(k)+'='+escapeHTML(s.tags[k])+'</span>';}).join(' ');
+      var html='<div class="t-step" style="margin-left:'+(d*20)+'px"><div><strong>'+escapeHTML(s.service||'unknown')+'</strong> '+escapeHTML(s.method||'')+' '+escapeHTML(s.route||'')+' — '+fmtMS(s.duration_ms||0)+' '+(n.root_cause?'<span class="status s5">ROOT CAUSE</span>':'')+(n.skewed?' &#9888;':'')+'</div><div>'+tags+'</div></div>';
+      (n.children||[]).forEach(function(c){html+=stepRow(c,d+1);});
+      return html;
+    }
+    row._fleetTrace=t;
+    bodyEl.innerHTML =
+      '<div class="fleet-summary">'+escapeHTML(t.summary||'')+'</div>'+
+      '<div class="fleet-play-controls">'+
+        '<button class="fleet-play-btn" type="button" data-action="play">&#9654; Play</button>'+ 
+        '<button type="button" data-action="prev" title="Previous span">&#9664; Prev</button>'+ 
+        '<button type="button" data-action="next" title="Next span">Next &#9654;</button>'+ 
+        '<label>Speed <select data-action="speed"><option value="1" selected>1x</option><option value="0.5">0.5x</option><option value="0.1">0.1x</option><option value="0.05">0.05x</option><option value="0">0.0x hold</option></select></label>'+ 
+      '</div>'+ 
+      '<div class="timeline">'+(t.roots||[]).map(function(r){return stepRow(r,0);}).join('')+'</div>';
+    $$('.fleet-play-controls [data-action]', bodyEl).forEach(function(control){
+      // Buttons report on click, but a <select> only reports a new value on
+      // change. Bound to click it handed back whatever was selected BEFORE
+      // the user picked, so every speed change applied one step late, and
+      // keyboard selection never applied at all.
+      var evt = control.tagName === 'SELECT' ? 'change' : 'click';
+      control.addEventListener(evt, function(ev){ev.stopPropagation(); fleetPlaybackAction(row, t, control.dataset.action, control.value);});
+    });
+    fleetPlaybackAction(row, t, 'render');
+  }).catch(function(){
+    row.dataset.loaded = '';
+    bodyEl.innerHTML = '<div class="empty">Failed to load trace detail</div>';
+  });
+}
+function fleetFlattenTrace(trace){
+  var out=[];
+  (trace.roots||[]).forEach(function(root){
+    (function walk(n,caller){
+      if(!n)return;
+      // The parent's service, stamped on the span while the tree is still
+      // in hand. The topology renderer needs to know which edge a span
+      // travelled over, and this is the only walk of the tree — recovering
+      // it afterwards would mean re-walking and re-matching spans by an
+      // identity the flattened, start-sorted list no longer carries.
+      n._callerService=caller||'';
+      out.push(n);
+      (n.children||[]).forEach(function(kid){walk(kid,n.service);});
+    })(root,'');
+  });
+  return out.sort(function(a,b){return (a.start_ns||0)-(b.start_ns||0);});
+}
+
+// Delay before advancing off the span at pb.index, in wall-clock ms.
+//
+// Speed is a divisor on the span's own duration, so 0.5x runs at half
+// speed. 0.0x is the deliberate exception: it means "hold here", reported
+// as Infinity so the scheduler simply does not arm a timer. The old code
+// computed duration/(pb.speed||1), where 0 is falsy and silently became
+// 1x — the one speed the menu could not actually select.
+function fleetSpanDelay(pb){
+  var span=pb.spans[pb.index]||{};
+  var floor=Math.max(80,Number(span.duration_ms||80));
+  if(!(pb.speed>0)) return Infinity;
+  return floor/pb.speed;
+}
+// Arms the timer for the next span. Advancing used to recurse through
+// fleetPlaybackAction(...,'play'), but 'play' TOGGLES running — so the
+// second span switched playback off and it stopped two spans in.
+// Scheduling is its own function now, and the toggle stays on the button
+// path where a user action actually means "toggle".
+function fleetPlaybackSchedule(pb){
+  if(pb.timer){clearTimeout(pb.timer);pb.timer=null;}
+  if(!pb.running) return;
+  var delay=fleetSpanDelay(pb);
+  if(!isFinite(delay)) return;          // 0.0x: held, still animating
+  pb.timer=setTimeout(function(){
+    pb.timer=null;
+    if(pb.index>=pb.spans.length-1){
+      // End of trace: stop, and mark the moment so the response leg back
+      // to the user gets its own visible beat before the graph goes idle.
+      pb.running=false; pb.finishedAt=Date.now();
+    } else {
+      pb.index++;
+    }
+    renderFleetPlayback(pb);
+    fleetPlaybackSchedule(pb);
+  }, delay);
+}
+function fleetPlaybackAction(row, trace, action, value){
+  var pb=S.fleet.playback;
+  if(!pb || pb.row!==row){
+    pb={row:row,trace:trace,spans:fleetFlattenTrace(trace),index:-1,running:false,speed:1,timer:null,finishedAt:0};
+    S.fleet.playback=pb;
+  }
+  if(action==='speed'){
+    // Number('0') is 0, a legal speed here, so this guards on NaN rather
+    // than falsiness.
+    var s=Number(value); pb.speed=isNaN(s)?1:s;
+  }
+  if(action==='play'){
+    pb.running=!pb.running;
+    if(pb.running && pb.index>=pb.spans.length-1){pb.index=-1;pb.finishedAt=0;}
+  }
+  if(action==='next'){pb.running=false;pb.index=Math.min(pb.spans.length-1,pb.index+1);}
+  if(action==='prev'){pb.running=false;pb.index=Math.max(-1,pb.index-1);}
+  if(pb.running && pb.index<0) pb.index=0;
+  if(action==='play'||action==='next'||action==='prev') pb.finishedAt=0;
+  renderFleetPlayback(pb);
+  fleetPlaybackSchedule(pb);
+}
+function renderFleetPlayback(pb){
+  if(!pb || !pb.row)return;
+  $$('.t-step',pb.row).forEach(function(step,i){step.classList.toggle('fleet-step-active', i===pb.index);});
+  var button=$('[data-action="play"]',pb.row);
+  if(button) button.innerHTML=pb.running?'&#10074;&#10074; Pause':'&#9654; Play';
+  renderFleetTopology(S.fleet.topology,S.fleet.services,pb);
+}
+// ─── Topology drawing ──────────────────────────────────────────────────
+//
+// Nodes are labeled cards with a role icon, laid out in left-to-right
+// layers (User, entry service, then its callees), and the in-flight
+// request is drawn as a glow traveling the edge being served. The previous
+// version drew unlabeled circles on a ring: with callers and callees at
+// arbitrary angles an edge's direction carried no information, longer
+// traces crossed over themselves, and there was nowhere sensible to put
+// the user. Layering is the gateway-left to leaves-right arrangement the
+// fleet spec asks for.
+
+// Role is guessed from the service name, for the icon only. A wrong guess
+// costs nothing but a generic box, so this never needs to be exhaustive.
+function fleetServiceKind(name){
+  var n=String(name||'').toLowerCase();
+  if(/gate|edge|proxy|ingress|bff/.test(n)) return 'gateway';
+  if(/auth|identity|login|session|token/.test(n)) return 'lock';
+  if(/order|cart|checkout|payment|billing|invoice/.test(n)) return 'cart';
+  if(/db|database|sql|postgres|mysql|mongo|redis|store|storage/.test(n)) return 'db';
+  if(/notif|mail|email|sms|push|alert/.test(n)) return 'bell';
+  if(/analytic|report|metric|stats|event/.test(n)) return 'chart';
+  return 'box';
+}
+// Icons are drawn as paths rather than emoji or an icon font: the
+// dashboard ships no font files, and emoji rendering differs per platform.
+function fleetDrawGlyph(g,kind,cx,cy,color){
+  g.save(); g.strokeStyle=color; g.fillStyle=color; g.lineWidth=1.6;
+  g.lineJoin='round'; g.lineCap='round';
+  if(kind==='user'){
+    g.beginPath(); g.arc(cx,cy-4,3.6,0,Math.PI*2); g.stroke();
+    g.beginPath(); g.arc(cx,cy+7,6.4,Math.PI*1.15,Math.PI*1.85,true); g.stroke();
+  } else if(kind==='gateway'){
+    g.beginPath(); g.moveTo(cx-6,cy-6); g.lineTo(cx-6,cy+6); g.stroke();
+    g.beginPath(); g.moveTo(cx+6,cy-6); g.lineTo(cx+6,cy+6); g.stroke();
+    g.beginPath(); g.moveTo(cx-3,cy); g.lineTo(cx+3,cy); g.stroke();
+    g.beginPath(); g.moveTo(cx+1,cy-3); g.lineTo(cx+4,cy); g.lineTo(cx+1,cy+3); g.stroke();
+  } else if(kind==='lock'){
+    g.beginPath(); g.rect(cx-5,cy-1,10,8); g.stroke();
+    g.beginPath(); g.arc(cx,cy-1,3.4,Math.PI,0); g.stroke();
+  } else if(kind==='cart'){
+    g.beginPath(); g.moveTo(cx-7,cy-5); g.lineTo(cx-4,cy-5); g.lineTo(cx-2,cy+3); g.lineTo(cx+6,cy+3); g.stroke();
+    g.beginPath(); g.moveTo(cx-3,cy-2); g.lineTo(cx+7,cy-2); g.stroke();
+    g.beginPath(); g.arc(cx-1,cy+6,1.5,0,Math.PI*2); g.fill();
+    g.beginPath(); g.arc(cx+5,cy+6,1.5,0,Math.PI*2); g.fill();
+  } else if(kind==='db'){
+    g.beginPath(); g.ellipse(cx,cy-4,6,2.4,0,0,Math.PI*2); g.stroke();
+    g.beginPath(); g.moveTo(cx-6,cy-4); g.lineTo(cx-6,cy+4); g.stroke();
+    g.beginPath(); g.moveTo(cx+6,cy-4); g.lineTo(cx+6,cy+4); g.stroke();
+    g.beginPath(); g.ellipse(cx,cy+4,6,2.4,0,0,Math.PI); g.stroke();
+  } else if(kind==='bell'){
+    g.beginPath(); g.moveTo(cx-5,cy+3); g.lineTo(cx+5,cy+3);
+    g.lineTo(cx+3,cy-1); g.lineTo(cx+3,cy-3); g.arc(cx,cy-3,3,0,Math.PI,true);
+    g.lineTo(cx-3,cy-1); g.closePath(); g.stroke();
+    g.beginPath(); g.arc(cx,cy+5,1.6,0,Math.PI); g.stroke();
+  } else if(kind==='chart'){
+    g.beginPath(); g.moveTo(cx-6,cy+5); g.lineTo(cx-6,cy-1); g.stroke();
+    g.beginPath(); g.moveTo(cx-1,cy+5); g.lineTo(cx-1,cy-5); g.stroke();
+    g.beginPath(); g.moveTo(cx+4,cy+5); g.lineTo(cx+4,cy+1); g.stroke();
+  } else {
+    g.beginPath(); g.rect(cx-6,cy-5,12,10); g.stroke();
+    g.beginPath(); g.moveTo(cx-6,cy-1); g.lineTo(cx+6,cy-1); g.stroke();
+  }
+  g.restore();
+}
+function fleetRoundRect(g,rx,ry,rw,rh,r){
+  g.beginPath();
+  g.moveTo(rx+r,ry); g.lineTo(rx+rw-r,ry); g.quadraticCurveTo(rx+rw,ry,rx+rw,ry+r);
+  g.lineTo(rx+rw,ry+rh-r); g.quadraticCurveTo(rx+rw,ry+rh,rx+rw-r,ry+rh);
+  g.lineTo(rx+r,ry+rh); g.quadraticCurveTo(rx,ry+rh,rx,ry+rh-r);
+  g.lineTo(rx,ry+r); g.quadraticCurveTo(rx,ry,rx+r,ry);
+  g.closePath();
+}
+// Sentinel key for the user's own node in the position map. Prefixed so a
+// service literally named "user" still gets its own distinct node.
+var FLEET_USER_KEY='@@breeze-user';
+// Depth from the entry service over observed caller-to-callee edges, so a
+// service's column is its distance from the request's front door. Nodes no
+// edge reaches (reported, but never seen being called in the window) are
+// parked in a trailing column rather than dropped.
+function fleetTopoLayout(nodes,edges,entry,w,h){
+  var depth={}, adj={}, i;
+  for(i=0;i<edges.length;i++){
+    var from=edges[i].caller||edges[i].from, to=edges[i].callee||edges[i].to;
+    if(!from||!to) continue;
+    (adj[from]=adj[from]||[]).push(to);
+  }
+  var queue=[], seen={};
+  if(entry){depth[entry]=0;queue.push(entry);seen[entry]=1;}
+  var guard=0;
+  while(queue.length && guard++ < 4096){
+    var cur=queue.shift(), next=adj[cur]||[];
+    for(i=0;i<next.length;i++){
+      if(seen[next[i]]) continue;      // first visit wins; also breaks cycles
+      seen[next[i]]=1; depth[next[i]]=depth[cur]+1; queue.push(next[i]);
+    }
+  }
+  var maxDepth=0, names=nodes.map(function(n){return n.service||n.name;});
+  names.forEach(function(n){if(depth[n]>maxDepth)maxDepth=depth[n];});
+  names.forEach(function(n){if(depth[n]===undefined)depth[n]=maxDepth+1;});
+  var cols={}, colMax=0;
+  names.forEach(function(n){var d=depth[n];(cols[d]=cols[d]||[]).push(n);if(d>colMax)colMax=d;});
+  // Column 0 is reserved for the user, so services start one column in.
+  var span=Math.max(1,colMax+2), colW=w/(span+0.35), pos={};
+  Object.keys(cols).forEach(function(d){
+    var list=cols[d], cx=colW*(Number(d)+1.55);
+    for(var k=0;k<list.length;k++){
+      var slot=(k+1)/(list.length+1);
+      pos[list[k]]={x:cx,y:h*slot,depth:Number(d)};
+    }
+  });
+  pos[FLEET_USER_KEY]={x:colW*0.55,y:h/2,depth:-1,user:true};
+  return pos;
+}
+// Quadratic control point offset perpendicular to the edge, so the call
+// and response legs between one pair of nodes are two visibly separate
+// arcs instead of one line drawn over itself.
+function fleetCurve(a,b,bow){
+  var mx=(a.x+b.x)/2, my=(a.y+b.y)/2, dx=b.x-a.x, dy=b.y-a.y;
+  var len=Math.sqrt(dx*dx+dy*dy)||1;
+  return {cx:mx+(-dy/len)*bow, cy:my+(dx/len)*bow};
+}
+function fleetCurvePoint(a,b,c,t){
+  var u=1-t;
+  return {x:u*u*a.x+2*u*t*c.cx+t*t*b.x, y:u*u*a.y+2*u*t*c.cy+t*t*b.y};
+}
+function fleetDrawEdge(g,a,b,c,color,width,dash){
+  g.save(); g.strokeStyle=color; g.lineWidth=width; g.setLineDash(dash||[]);
+  g.beginPath(); g.moveTo(a.x,a.y); g.quadraticCurveTo(c.cx,c.cy,b.x,b.y); g.stroke();
+  // Arrowhead along the curve's tangent at the target end.
+  var near=fleetCurvePoint(a,b,c,0.93), ang=Math.atan2(b.y-near.y,b.x-near.x);
+  g.setLineDash([]); g.beginPath();
+  g.moveTo(b.x,b.y);
+  g.lineTo(b.x-9*Math.cos(ang-0.38),b.y-9*Math.sin(ang-0.38));
+  g.lineTo(b.x-9*Math.cos(ang+0.38),b.y-9*Math.sin(ang+0.38));
+  g.closePath(); g.fillStyle=color; g.fill();
+  g.restore();
+}
+// The traveling request: a soft radial blob plus a short bright trail
+// behind it, so direction of travel reads at a glance. A single flat dot
+// (what this used to draw) gave position but not direction.
+function fleetDrawGlow(g,a,b,c,phase,color){
+  var p=fleetCurvePoint(a,b,c,phase);
+  g.save();
+  var grad=g.createRadialGradient(p.x,p.y,0,p.x,p.y,16);
+  grad.addColorStop(0,color); grad.addColorStop(0.35,color); grad.addColorStop(1,'rgba(0,0,0,0)');
+  g.globalAlpha=0.55; g.fillStyle=grad;
+  g.beginPath(); g.arc(p.x,p.y,16,0,Math.PI*2); g.fill();
+  g.globalAlpha=1; g.fillStyle=color;
+  g.beginPath(); g.arc(p.x,p.y,4.2,0,Math.PI*2); g.fill();
+  g.globalAlpha=0.5; g.strokeStyle=color; g.lineWidth=3.2; g.lineCap='round';
+  var tail=fleetCurvePoint(a,b,c,Math.max(0,phase-0.12));
+  g.beginPath(); g.moveTo(tail.x,tail.y); g.lineTo(p.x,p.y); g.stroke();
+  g.restore();
+}
+// Per-hop timings for the trace currently open, keyed caller→callee.
+//
+// Rebuilt per render rather than cached: a trace is tens of spans, so the
+// walk is free, and a cache would go stale the moment a different trace is
+// opened — the exact bug class this file has already been bitten by.
+//
+// first/last are span positions in playback order. A hop is "in flight"
+// while the cursor sits on one of its spans and "returned" once the cursor
+// is past the last of them, which is what lets the response leg light up
+// without inventing a second timeline.
+function fleetHopTimings(playback){
+  var out={};
+  if(!playback||!playback.spans) return out;
+  playback.spans.forEach(function(sp,i){
+    var caller=sp._callerService; if(!caller||caller===sp.service) return;
+    var key=caller+'\u0000'+sp.service, hop=out[key];
+    if(!hop){hop=out[key]={ms:0,calls:0,first:i,last:i,status:sp.status||0};}
+    hop.ms+=Number(sp.duration_ms||0);
+    hop.calls++;
+    if(i<hop.first) hop.first=i;
+    if(i>hop.last) hop.last=i;
+    // The worst status on the hop wins, so one failed retry is not hidden
+    // by a successful one over the same edge.
+    if((sp.status||0)>hop.status) hop.status=sp.status||0;
+  });
+  return out;
+}
+// Per-hop latency, printed on the arc it belongs to.
+//
+// The alternatives are a legend or a hover tooltip. A legend makes the
+// reader map names back to lines, and canvas has no hover without
+// hit-testing every curve. Printed inline it also survives the screenshot
+// that gets pasted into an incident channel, which is how these graphs are
+// actually shared.
+function fleetDrawEdgeLabel(g,a,b,c,text,fill,color){
+  if(!text) return;
+  var p=fleetCurvePoint(a,b,c,0.5);
+  g.save();
+  g.font='600 10px system-ui, sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+  var bw=g.measureText(text).width+10, bh=15;
+  fleetRoundRect(g,p.x-bw/2,p.y-bh/2,bw,bh,7);
+  g.globalAlpha=0.94; g.fillStyle=fill; g.fill(); g.globalAlpha=1;
+  g.lineWidth=1; g.setLineDash([]); g.strokeStyle=color; g.stroke();
+  g.fillStyle=color; g.fillText(text,p.x,p.y);
+  g.restore();
+}
+function fleetDrawNode(g,label,kind,p,fill,accent,textColor,active){
+
+  var bw=124,bh=46,bx=p.x-bw/2,by=p.y-bh/2;
+  g.save();
+  if(active){g.shadowColor=accent;g.shadowBlur=18;}
+  fleetRoundRect(g,bx,by,bw,bh,9); g.fillStyle=fill; g.fill();
+  g.shadowBlur=0;
+  g.lineWidth=active?2.4:1.4; g.strokeStyle=accent; g.stroke();
+  // Left accent bar carries status colour even when the fill is neutral.
+  g.save(); fleetRoundRect(g,bx,by,bw,bh,9); g.clip();
+  g.fillStyle=accent; g.fillRect(bx,by,4,bh); g.restore();
+  fleetDrawGlyph(g,kind,bx+22,p.y,accent);
+  g.fillStyle=textColor; g.textAlign='left'; g.textBaseline='middle';
+  g.font='600 12px system-ui, sans-serif';
+  var full=String(label||''), text=full, max=bw-46;
+  while(text.length>4 && g.measureText(text).width>max) text=text.slice(0,-1);
+  if(text!==full) text=text+'...';
+  g.fillText(text,bx+38,p.y);
+  g.restore();
+}
+// One shared frame loop. Each render used to schedule its own
+// requestAnimationFrame, so two overlapping renders (a 5s poll tick
+// landing on a playback frame) compounded into two loops that each kept
+// scheduling more — the animation visibly sped up and burned CPU the
+// longer it played. This module-level handle keeps exactly one frame in
+// flight no matter how many callers ask to render.
+var _fleetRaf=0;
+function fleetTopoNeedsFrame(pb){
+  if(!pb) return false;
+  if(pb.running) return true;
+  if(!(pb.speed>0) && pb.index>=0) return true;   // 0.0x: held, still live
+  return !!(pb.finishedAt && Date.now()-pb.finishedAt<1800);
+}
+function fleetTopoFrame(){
+  _fleetRaf=0;
+  renderFleetTopology(S.fleet.topology,S.fleet.services,S.fleet.playback);
+}
+// Colours come from the same CSS variables drawLineChart uses, so the
+// graph tracks the active theme rather than the dark-only palette this
+// once hardcoded.
+function renderFleetTopology(topology,services,playback){
+  var c=$('#fleet-topology'); if(!c)return;
+  // A poll tick calls this with no playback argument; falling back to the
+  // stored one keeps a running animation from being wiped every refresh.
+  if(playback===undefined||playback===null) playback=S.fleet.playback;
+  var nodes=(topology&&topology.nodes)||[], edges=(topology&&topology.edges)||[];
+  if(!nodes.length && services){nodes=services.map(function(s){return {service:s.name||s.service,status:s.status,error_rate:s.error_rate};});}
+  var edgeColor  = cssVar('--chart-grid', '#94a3b8');
+  var upColor    = cssVar('--green', '#22c55e');
+  var downColor  = cssVar('--err', '#ef4444');
+  var labelColor = cssVar('--text', '#1a1a2e');
+  var panelColor = cssVar('--panel', cssVar('--bg', '#ffffff'));
+  var accentColor= cssVar('--accent', upColor);
+  var dpr=window.devicePixelRatio||1,w=c.clientWidth||800,h=340;
+  c.width=w*dpr;c.height=h*dpr;
+  var g=c.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+  if(!nodes.length){
+    g.fillStyle=labelColor;g.globalAlpha=0.6;g.textAlign='center';g.font='13px system-ui, sans-serif';
+    g.fillText('No services reporting yet',w/2,h/2);g.globalAlpha=1;
+    var m0=$('#fleet-topology-meta');if(m0)m0.textContent='0 nodes · 0 edges';
+    return;
+  }
+  var span=playback&&playback.index>=0?playback.spans[playback.index]:null;
+  var activeService=span?span.service:'';
+  // The entry point is where the user's request actually landed when a
+  // trace is loaded, and otherwise the service nothing is observed calling.
+  var entry='';
+  if(playback&&playback.spans&&playback.spans.length) entry=playback.spans[0].service;
+  if(!entry){
+    var called={};
+    edges.forEach(function(e){var to=e.callee||e.to;if(to)called[to]=1;});
+    for(var i=0;i<nodes.length;i++){var nm=nodes[i].service||nodes[i].name;if(nm&&!called[nm]){entry=nm;break;}}
+    if(!entry&&nodes.length) entry=nodes[0].service||nodes[0].name;
+  }
+  var pos=fleetTopoLayout(nodes,edges,entry,w,h);
+  var phase=(Date.now()/900)%1;
+  var hops=fleetHopTimings(playback);
+  var cursor=playback?playback.index:-1;
+  // Service-to-service edges first, so node cards paint over their ends.
+  //
+  // Every observed edge is drawn as a PAIR of arcs — the request going out
+  // and the response coming back — on opposite sides of the line between
+  // the two nodes (fleetCurve bows perpendicular to direction of travel,
+  // so reversing the endpoints mirrors the arc for free). A single arrow
+  // per pair, which is what this drew before, showed that A calls B but
+  // never that B answered: on a failed hop there was nothing to colour
+  // red, and mid-playback there was no way to see a call was still
+  // outstanding versus already returned.
+  edges.forEach(function(e){
+    var from=e.caller||e.from, to=e.callee||e.to;
+    var a=pos[from], b=pos[to]; if(!a||!b) return;
+    var hop=hops[from+'\u0000'+to];
+    // In flight while the cursor is inside the hop's spans; returned once
+    // it has moved past the last of them.
+    var inFlight=!!(hop&&cursor>=hop.first&&cursor<=hop.last);
+    var returned=!!(hop&&cursor>hop.last);
+    var failed=!!(hop&&hop.status>=500);
+
+    var callCp=fleetCurve(a,b,18);
+    fleetDrawEdge(g,a,b,callCp,inFlight?upColor:edgeColor,inFlight?3:1.6,inFlight?[]:[5,5]);
+    if(inFlight) fleetDrawGlow(g,a,b,callCp,phase,upColor);
+
+    var respCp=fleetCurve(b,a,18);
+    var respColor=returned?(failed?downColor:accentColor):edgeColor;
+    fleetDrawEdge(g,b,a,respCp,respColor,returned?2.4:1.2,returned?[]:[3,7]);
+    if(returned&&cursor<=hop.last+1) fleetDrawGlow(g,b,a,respCp,phase,respColor);
+
+    // Timing goes on the leg it describes: the measured hop when a trace
+    // is open, otherwise the aggregate the topology endpoint already
+    // computes over the retention window.
+    var label='';
+    if(hop) label=fmtMS(hop.ms)+(hop.calls>1?' \u00d7'+hop.calls:'');
+    else if(e.p50_ms!=null||e.p95_ms!=null) label='p50 '+fmtMS(e.p50_ms||0)+' \u00b7 p95 '+fmtMS(e.p95_ms||0);
+    else if(e.avg_ms!=null) label=fmtMS(e.avg_ms);
+
+    fleetDrawEdgeLabel(g,a,b,callCp,label,panelColor,failed?downColor:labelColor);
+  });
+
+  // The user's own call, and the response back to them. Without these the
+  // graph showed services talking to each other but never showed the
+  // request entering or the answer leaving.
+  var userPos=pos[FLEET_USER_KEY], entryPos=pos[entry];
+  if(userPos&&entryPos){
+    var callActive=!!(playback&&playback.index>=0&&!playback.finishedAt);
+    var respActive=!!(playback&&playback.finishedAt);
+    var callCp=fleetCurve(userPos,entryPos,-16);
+    fleetDrawEdge(g,userPos,entryPos,callCp,callActive?upColor:edgeColor,callActive?3:1.6,callActive?[]:[5,5]);
+    if(callActive&&activeService===entry) fleetDrawGlow(g,userPos,entryPos,callCp,phase,upColor);
+    var respCp=fleetCurve(entryPos,userPos,-16);
+    var respColor=respActive?((span&&span.status>=500)?downColor:accentColor):edgeColor;
+    fleetDrawEdge(g,entryPos,userPos,respCp,respColor,respActive?3:1.2,respActive?[]:[3,7]);
+    if(respActive) fleetDrawGlow(g,entryPos,userPos,respCp,phase,respColor);
+  }
+  nodes.forEach(function(n){
+    var name=n.service||n.name, p=pos[name]; if(!p) return;
+    var bad=(n.status==='down'||n.error_rate>.1);
+    fleetDrawNode(g,name,fleetServiceKind(name),p,panelColor,bad?downColor:upColor,labelColor,name===activeService);
+  });
+  if(userPos) fleetDrawNode(g,'User','user',userPos,panelColor,accentColor,labelColor,false);
+  var meta=$('#fleet-topology-meta');
+  if(meta) meta.textContent=nodes.length+' nodes · '+edges.length+' edges'+(activeService?' · serving '+activeService:'');
+  if(fleetTopoNeedsFrame(playback) && !_fleetRaf) _fleetRaf=requestAnimationFrame(fleetTopoFrame);
 }
 
 // ─── Overview ──────────────────────────────────────────────────────────
@@ -1505,6 +2167,7 @@ function setTheme(t){
     if(S.page==='overview') renderOverview();
     else if(S.page==='performance') loadPerf();
     else if(S.page==='cache') loadCache();
+    else if(S.page==='fleet') loadFleet();
   }catch(e){}
 }
 

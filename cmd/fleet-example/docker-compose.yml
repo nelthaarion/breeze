@@ -1,0 +1,110 @@
+# Breeze Fleet Tracing — three services and an aggregator.
+#
+#   docker compose -f cmd/fleet-example/docker-compose.yml up --build
+#   curl http://localhost:3000/api/orders/123
+#
+# Then open http://localhost:3000/dashboard (admin/admin) and pick Fleet View.
+#
+# Request path:  client → gateway :3000 → auth :3001 → orders :3002
+# Reporting:     every service → aggregator :9000 (spans and heartbeats)
+#
+# Each service overrides the image's own HEALTHCHECK. The image defaults to
+# probing :3000, which is correct only for the gateway; the others listen on
+# their own ports and would report unhealthy forever. Every probe here targets
+# /healthz — a route each service defines and deliberately excludes from
+# tracing, so probe traffic never appears in the trace list.
+#
+# All trace state is in memory. Stopping the aggregator discards it.
+
+services:
+  aggregator:
+    build:
+      context: ../..
+      args:
+        BREEZE_TARGET: ./cmd/fleet-aggregator
+    environment:
+      FLEET_USERNAME: admin
+      FLEET_PASSWORD: admin
+      # Write credential for span/heartbeat ingestion, distinct from the
+      # Basic Auth above that humans use to read (§11.1).
+      FLEET_INGEST_TOKEN: fleet-demo-token
+    ports: ["9000:9000"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9000/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  orders:
+    build:
+      context: ../..
+      args:
+        BREEZE_TARGET: ./cmd/fleet-example/orders
+    environment: &fleet-env
+      FLEET_WRITE_URL: http://aggregator:9000/fleet
+      FLEET_INGEST_TOKEN: fleet-demo-token
+      # Shared secret that lets the aggregator fetch this service's own logs
+      # when stitching a trace's merged log panel (§9C.2).
+      FLEET_SERVICE_TOKEN: fleet-demo-service-token
+      # Must be resolvable *from the aggregator*, which is why it is this
+      # service's Compose DNS name and not localhost.
+      ORDERS_OPENAPI_URL: http://orders:3002/openapi.json
+    ports: ["3002:3002"]
+    depends_on:
+      aggregator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3002/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  auth:
+    build:
+      context: ../..
+      args:
+        BREEZE_TARGET: ./cmd/fleet-example/auth
+    environment:
+      <<: *fleet-env
+      ORDERS_URL: http://orders:3002
+    ports: ["3001:3001"]
+    # Gated on orders being healthy, not merely started: the first request
+    # otherwise races container startup and produces a broken-looking trace as
+    # the example's very first impression.
+    depends_on:
+      aggregator:
+        condition: service_healthy
+      orders:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  gateway:
+    build:
+      context: ../..
+      args:
+        BREEZE_TARGET: ./cmd/fleet-example/gateway
+    environment:
+      <<: *fleet-env
+      # Write path for its own spans; read path for the dashboard's Fleet View
+      # proxy. Same aggregator, opposite directions.
+      FLEET_READ_URL: http://aggregator:9000/fleet
+      AUTH_URL: http://auth:3001
+    ports: ["3000:3000"]
+    depends_on:
+      aggregator:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

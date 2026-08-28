@@ -19,6 +19,7 @@ func registerRouteFeatures() {
 	registerStatic()
 	registerVideo()
 	registerWebSocket()
+	registerJSONRPC()
 	registerTemplates()
 }
 

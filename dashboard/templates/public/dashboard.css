@@ -622,6 +622,24 @@ pre{background:var(--surface2);padding:14px;border-radius:var(--r-md);overflow:a
 
 .empty{padding:48px;text-align:center;color:var(--text-muted);font-size:var(--fs-md)}
 .empty .icon{font-size:40px;opacity:.3;margin-bottom:12px}
+.fleet-trace-list{display:flex;flex-direction:column;gap:8px;padding:12px}
+.fleet-trace{border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);overflow:hidden}
+.accordion-head{display:grid;grid-template-columns:150px minmax(150px,1fr) 90px 70px 75px 110px 24px;gap:10px;align-items:center;padding:12px 14px;cursor:pointer;color:var(--text);background:var(--surface);font-size:var(--fs-xs)}
+.accordion-head:hover{background:var(--surface2)}
+.fleet-t-services{font-weight:var(--fw-med);color:var(--text)}
+.fleet-t-id{color:var(--text-muted);font-size:var(--fs-2xs)}
+.accordion-body{border-top:1px solid var(--border);padding:14px;color:var(--text-dim)}
+.fleet-play-controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:12px 0}
+.fleet-play-controls button{padding:5px 9px;border:1px solid var(--border-strong);border-radius:var(--r-xs);background:var(--surface2);color:var(--text);cursor:pointer}
+.fleet-play-controls button:hover{border-color:var(--primary);color:var(--primary)}
+.fleet-play-controls select{margin-left:4px;padding:4px;background:var(--surface2);color:var(--text);border:1px solid var(--border-strong);border-radius:var(--r-xs)}
+.t-step{padding:7px 9px;border-left:3px solid var(--border-strong);transition:background .15s,border-color .15s}
+.t-step.fleet-step-active{background:var(--primary-soft);border-left-color:var(--primary);color:var(--text)}
+.fleet-page-controls{display:flex;align-items:center;justify-content:center;gap:12px;padding:12px;border-top:1px solid var(--border)}
+.fleet-page-controls button{padding:7px 12px;border:1px solid var(--border-strong);border-radius:var(--r-xs);background:var(--surface2);color:var(--text);cursor:pointer}
+.fleet-page-controls span{font-size:var(--fs-xs);color:var(--text-muted)}
+@media(max-width:800px){.accordion-head{grid-template-columns:1fr 1fr 70px 24px}.fleet-t-time,.fleet-t-spans,.fleet-t-id{display:none}}
+.badge{display:inline-block;padding:2px 7px;margin:3px;border-radius:10px;background:var(--surface2);font-size:10px;color:var(--text-dim)}
 
 /* ─── Database browser ────────────────────────────────────────────────── */
 

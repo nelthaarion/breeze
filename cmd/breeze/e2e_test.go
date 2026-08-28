@@ -51,6 +51,16 @@ var e2eFeatures = [][]string{
 	{"static"},
 	{"video", "--signed"},
 	{"websocket"},
+	// Dotted and undotted names together, and one method registered as
+	// blocking: that combination is what exercises the worker-pool branch and
+	// the runtime import, both of which are emitted conditionally and so are
+	// invisible to a test that scaffolds the default shape.
+	{"jsonrpc", "--methods=sum,user.create", "--blocking=user.create"},
+	// The ws transport rather than the default http one: it is the arm with a
+	// distinct constructor and its own config field, so it exercises the code
+	// path that the default would leave uncompiled.
+	{"fleet", "--transport=ws", "--service=gateway"},
+
 	{"templates", "--spa"},
 	{"tuning", "--inline"},
 }

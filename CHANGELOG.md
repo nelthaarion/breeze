@@ -4,6 +4,38 @@ All changes made to the Breeze framework.
 
 ---
 
+## [Unreleased] — Native Fleet Tracing
+
+### Fleet
+
+- Added W3C Trace Context parsing/formatting, bounded baggage and custom span
+  tags, root-only fixed-rate sampling, and lightweight always-sample-errors.
+- Added non-blocking per-service tracers with bounded drop-oldest buffers,
+  asynchronous batch export, heartbeats, timeout/retry discipline, and disabled
+  zero-overhead fast paths.
+- Added HTTP and in-process events transports plus isolated gnet/WebSocket
+  compatibility adapters without adding a mandatory dependency; gRPC is
+  explicitly planned rather than partially advertised.
+- Added a standalone bounded in-memory Fleet Aggregator with authenticated span
+  and heartbeat ingestion, service registry, TTL eviction, orphan/skew-aware
+  trace assembly, topology percentiles, deterministic root-cause summaries,
+  blast radius, and a multiplexed event stream.
+- Added asynchronous live OpenAPI contract validation with bounded deduped
+  violations and source-side sensitive-payload redaction.
+- Added `go run ./cmd/fleet-aggregator` and the full Fleet guide at
+  `docs/fleet-tracing.md`.
+
+### Dashboard
+
+- Added capability-gated Fleet View as the 15th page. An empty
+  `FleetAggregatorURL` keeps the nav and capability hidden; a configured but
+  unreachable aggregator produces an explicit degraded state without affecting
+  any existing dashboard API.
+- Added server-side Fleet API proxying so aggregator credentials stay out of the
+  browser, plus trace filtering support on dashboard logs.
+
+---
+
 ## [v1.8.0] — Throughput
 
 ### Inline Handler Execution

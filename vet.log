@@ -1,0 +1,10 @@
+﻿go : # github.com/nelthaarion/breeze/fleet/aggregator
+At line:1 char:1
++ go vet ./fleet/aggregator/ 2>&1 | Out-File -Encoding utf8 vet.log; ty ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (# github.com/ne...leet/aggregator:String) [], R 
+   emoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+# [github.com/nelthaarion/breeze/fleet/aggregator]
+vet.exe: fleet\aggregator\logfanout_test.go:230:22: undefined: heartbeat

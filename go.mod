@@ -5,6 +5,7 @@ go 1.25.13
 require (
 	github.com/goccy/go-json v0.10.6
 	github.com/panjf2000/gnet/v2 v2.10.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

@@ -86,6 +86,7 @@ type LogEntry struct {
 	Level   string    `json:"level"` // app / http / error / panic / warning
 	Message string    `json:"message"`
 	Source  string    `json:"source,omitempty"` // file:line when known
+	TraceID string    `json:"trace_id,omitempty"`
 }
 
 // CacheStat is a snapshot of cache driver statistics.

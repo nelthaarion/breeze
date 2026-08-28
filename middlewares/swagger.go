@@ -5,8 +5,14 @@ import (
 	"github.com/nelthaarion/breeze/scalar"
 )
 
-// SwaggerOptions configures the OpenAPI/Scalar middleware.
-type SwaggerOptions struct {
+// ScalarOptions configures the OpenAPI documentation middleware.
+//
+// Scalar is the only viewer this framework ships. The Swagger-prefixed spellings
+// below are retained as aliases because they are exported API, but the
+// Scalar-prefixed ones are canonical: what actually gets served is a Scalar
+// reference UI over a spec produced by the scalar package.
+type ScalarOptions struct {
+
 	// Title is the API name shown in Scalar (default: "Breeze API").
 	Title string
 
@@ -24,17 +30,21 @@ type SwaggerOptions struct {
 	UIPath string
 }
 
-// ScalarOptions is the Scalar-native alias for SwaggerOptions.
-type ScalarOptions = SwaggerOptions
+// SwaggerOptions is a deprecated alias for ScalarOptions.
+//
+// Deprecated: use ScalarOptions. The name predates the move to Scalar and
+// describes a viewer this framework does not ship; it is kept only so existing
+// code continues to compile.
+type SwaggerOptions = ScalarOptions
 
-// SwaggerMiddleware enables the OpenAPI documentation system and registers the
+// ScalarMiddleware enables the OpenAPI documentation system and registers the
 // spec/UI endpoints.  Call it once at startup, before adding routes:
 //
-//	router.Use(middleware.SwaggerMiddleware(router, middleware.SwaggerOptions{
+//	router.Use(middleware.ScalarMiddleware(router, middleware.ScalarOptions{
 //	    Title:   "My API",
 //	    Version: "2.0.0",
 //	}))
-//
+
 // Then annotate individual routes by passing a *scalar.RouteDoc as the last
 // argument to router.Handle via the Doc() helper:
 //
@@ -47,8 +57,9 @@ type ScalarOptions = SwaggerOptions
 //	        Output: UserResponse{},
 //	    }),
 //	)
-func SwaggerMiddleware(router *breeze.Router, opts SwaggerOptions) breeze.HandlerFunc {
+func ScalarMiddleware(router *breeze.Router, opts ScalarOptions) breeze.HandlerFunc {
 	// Apply defaults
+
 	if opts.Title == "" {
 		opts.Title = "Breeze API"
 	}
@@ -95,9 +106,12 @@ func SwaggerMiddleware(router *breeze.Router, opts SwaggerOptions) breeze.Handle
 	}
 }
 
-// ScalarMiddleware is the Scalar-native entrypoint for the docs middleware.
-func ScalarMiddleware(router *breeze.Router, opts ScalarOptions) breeze.HandlerFunc {
-	return SwaggerMiddleware(router, opts)
+// SwaggerMiddleware is a deprecated alias for ScalarMiddleware.
+//
+// Deprecated: use ScalarMiddleware. This name is retained because it is
+// exported API; it has always served Scalar.
+func SwaggerMiddleware(router *breeze.Router, opts ScalarOptions) breeze.HandlerFunc {
+	return ScalarMiddleware(router, opts)
 }
 
 // ─── Route documentation helper ─────────────────────────────────────────────

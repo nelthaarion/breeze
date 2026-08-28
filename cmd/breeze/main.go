@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/nelthaarion/breeze/internal/generator"
 )
 
 func main() {
@@ -20,20 +22,21 @@ func main() {
 	var err error
 	switch cmd {
 	case "new":
-		err = runNew(args)
+		err = generator.New(args)
 	case "generate", "g":
-		err = runGenerate(args)
+		err = generator.Generate(args)
 	case "add":
-		err = runAdd(args)
+		err = generator.Add(args)
 	case "routes":
-		err = runRoutes(args)
+		err = generator.Routes(args)
 	case "migrate":
-		err = runMigrate(args)
+		err = generator.Migrate(args)
 	case "makemigration":
-		err = runMakeMigration(args)
+		err = generator.MakeMigration(args)
 	case "version", "--version", "-v":
-		printVersion(os.Stdout)
+		generator.PrintVersion(os.Stdout)
 		return
+
 	case "help", "-h", "--help":
 		err = runHelp(args)
 	default:
@@ -75,9 +78,10 @@ Examples:
   breeze new myapp --template=views --module=example.com/me/myapp
 `)
 	case "generate", "g":
-		printGenerateHelp(os.Stdout)
+		generator.PrintGenerateHelp(os.Stdout)
 	case "add":
-		printAddHelp(os.Stdout)
+		generator.PrintAddHelp(os.Stdout)
+
 	case "routes":
 		fmt.Print(`Usage: breeze routes [--json]
 
@@ -92,7 +96,8 @@ Flags:
   --json   emit machine-readable JSON instead of a table
 `)
 	case "migrate":
-		printMigrateHelp(os.Stdout)
+		generator.PrintMigrateHelp(os.Stdout)
+
 	case "makemigration":
 		fmt.Print(`Usage: breeze makemigration <Name> [--dir=<path>]
 

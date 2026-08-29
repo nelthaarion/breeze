@@ -54,6 +54,39 @@ All changes made to the Breeze framework.
   same dispatcher, for peers that speak JSON-RPC over a pipe rather than a
   socket.
 
+#### Benchmarks
+
+Measured on a 12-core Windows box, `-benchtime=300ms`. Short runs, so treat
+these as the right order of magnitude rather than settled figures:
+
+| Benchmark | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `RegistryLookup` | **38.2** | **0** | **0** |
+| `AppendErrorResponse` | 64.3 | **0** | **0** |
+| `AppendResponse` | 114.2 | 2 | 1 |
+| `NextValue` (framing only) | 144.4 | **0** | **0** |
+| `HandleNotification` | 327.5 | 160 | 4 |
+| `HandleSingleNoParams` | 477.7 | 216 | 7 |
+| `HandleSingle` | 1331 | 329 | 15 |
+| `OnTrafficSingle` (full event-loop path) | 2391 | 321 | 14 |
+| `StdioSingle` | 1396 | 248 | 8 |
+
+Batch dispatch is linear in N, which is the property worth pinning — a batch
+should not degrade superlinearly:
+
+| Batch size | ns/op | ns per request | allocs/op |
+|---|---|---|---|
+| N=1 | 1462 | 1462 | 20 |
+| N=10 | 10,956 | 1096 | 164 |
+| N=100 | 104,967 | 1050 | 1604 |
+| N=1000 | 1,491,056 | 1491 | 16,010 |
+
+The three pieces that are hot on every message — framing, method lookup, and
+error serialisation — are all allocation-free. The remaining allocations are in
+`encoding/json` unmarshalling of params and the result value, which is where the
+next round of tightening belongs if the numbers ever justify it. Nothing has been
+optimised speculatively beyond that point.
+
 ### MCP server (`cmd/breeze-mcp`, `internal/mcp`)
 
 - Added a Model Context Protocol server exposing Breeze's own tooling to an MCP

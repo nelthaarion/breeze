@@ -9,10 +9,12 @@ package rpc
 // stream surviving a message too large to buffer.
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -333,3 +335,148 @@ func (b *lockedBuffer) Write(p []byte) (int, error) {
 }
 
 var _ io.Writer = (*lockedBuffer)(nil)
+
+// ─── Benchmarks ──────────────────────────────────────────────────────────────
+//
+// BenchmarkHandle* already covers dispatch, so these measure only what stdio
+// adds on top of it: reading a line, and writing a framed response. Comparing a
+// row here against its BenchmarkHandle counterpart is what shows whether the
+// framing is close to free, which is the only claim this file makes about
+// performance.
+//
+// The reader is a repeating stream rather than one message replayed, because a
+// single-message reader would return EOF on the second iteration and measure
+// nothing.
+
+// repeatReader yields the same payload endlessly without allocating per read,
+// so the benchmark measures the server rather than the fixture.
+type repeatReader struct {
+	msg []byte
+	off int
+}
+
+func (r *repeatReader) Read(p []byte) (int, error) {
+	n := 0
+	for n < len(p) {
+		c := copy(p[n:], r.msg[r.off:])
+		n += c
+		r.off += c
+		if r.off == len(r.msg) {
+			r.off = 0
+		}
+		if c == 0 {
+			break
+		}
+	}
+	return n, nil
+}
+
+// countingDiscard is an io.Writer that records how much it was given, so a
+// benchmark can report throughput without keeping the bytes.
+type countingDiscard struct{ n int64 }
+
+func (d *countingDiscard) Write(p []byte) (int, error) {
+	d.n += int64(len(p))
+	return len(p), nil
+}
+
+// benchmarkStdio runs the read-dispatch-write loop b.N times over a repeating
+// stream of msg.
+//
+// Serve cannot be used directly: it runs until EOF, and the stream here never
+// ends. The loop below is what Serve does per message, which is exactly the part
+// worth measuring.
+//
+// wantResponse says whether the message shape should produce output. It is not
+// decoration: without it the sanity check below cannot tell a benchmark that
+// measured nothing from a notification benchmark working exactly as intended.
+func benchmarkStdio(b *testing.B, msg string, wantResponse bool) {
+	b.Helper()
+
+	srv := NewServer(NewRegistry())
+	srv.Register("echo", func(ctx *Context) { ctx.ResultRaw(ctx.Params) })
+
+	in := &repeatReader{msg: []byte(msg + "\n")}
+	out := &countingDiscard{}
+	s := NewStdioServer(srv, in, out)
+
+	br := bufio.NewReaderSize(in, 64<<10)
+
+	b.SetBytes(int64(len(msg)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		line, err := readLine(br, defaultStdioMaxLine)
+		if err != nil {
+			b.Fatalf("readLine: %v", err)
+		}
+		if err := s.handleLine(line); err != nil {
+			b.Fatalf("handleLine: %v", err)
+		}
+	}
+
+	b.StopTimer()
+
+	// A benchmark that measured an empty loop would report a flattering number
+	// for doing nothing, so the expectation is asserted rather than assumed.
+	switch {
+	case wantResponse && out.n == 0:
+		b.Fatal("nothing was written; the benchmark measured an empty loop")
+	case !wantResponse && out.n != 0:
+		b.Fatalf("a notification produced %d bytes of output", out.n)
+	}
+}
+
+// BenchmarkStdioSingle is the round trip for one request: read a line, dispatch,
+// write a framed response.
+func BenchmarkStdioSingle(b *testing.B) {
+	benchmarkStdio(b, `{"jsonrpc":"2.0","id":1,"method":"echo","params":[1,2,3]}`, true)
+}
+
+// BenchmarkStdioNotification isolates the read side: a notification is
+// dispatched but produces no response, so the gap against BenchmarkStdioSingle
+// is what serialising and writing one costs.
+func BenchmarkStdioNotification(b *testing.B) {
+	benchmarkStdio(b, `{"jsonrpc":"2.0","method":"echo","params":[1,2,3]}`, false)
+}
+
+// BenchmarkStdioBatch measures a batch of N arriving as one line, which is the
+// shape a client uses to amortise round trips.
+func BenchmarkStdioBatch(b *testing.B) {
+	for _, n := range []int{1, 10, 100} {
+		b.Run("N="+strconv.Itoa(n), func(b *testing.B) {
+			var sb strings.Builder
+			sb.WriteByte('[')
+			for i := 0; i < n; i++ {
+				if i > 0 {
+					sb.WriteByte(',')
+				}
+				sb.WriteString(`{"jsonrpc":"2.0","id":`)
+				sb.WriteString(strconv.Itoa(i))
+				sb.WriteString(`,"method":"echo","params":[1,2,3]}`)
+			}
+			sb.WriteByte(']')
+			benchmarkStdio(b, sb.String(), true)
+		})
+	}
+}
+
+// BenchmarkStdioReadLine is the framing cost on its own, with no dispatch at
+// all: it is the number to look at if the rows above ever regress, because it
+// separates "the transport got slower" from "the dispatcher got slower".
+func BenchmarkStdioReadLine(b *testing.B) {
+	msg := `{"jsonrpc":"2.0","id":1,"method":"echo","params":[1,2,3]}`
+	in := &repeatReader{msg: []byte(msg + "\n")}
+	br := bufio.NewReaderSize(in, 64<<10)
+
+	b.SetBytes(int64(len(msg)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		if _, err := readLine(br, defaultStdioMaxLine); err != nil {
+			b.Fatalf("readLine: %v", err)
+		}
+	}
+}

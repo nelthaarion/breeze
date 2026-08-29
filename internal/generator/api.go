@@ -71,7 +71,9 @@ func PrintMigrateHelp(w io.Writer) { printMigrateHelp(w) }
 func FeatureNames() []string { return featureNames() }
 
 // CanonicalFeatureName resolves an alias ("rate-limit") to the registered name
-// ("ratelimit"), returning "" if no such feature exists.
+// ("ratelimit"). Names that are not aliases are returned unchanged; callers
+// that need validation should use FeatureSummary or FeatureFlags as the registry
+// lookup.
 func CanonicalFeatureName(name string) string { return canonicalFeatureName(name) }
 
 // FeatureSummary returns the one-line description shown by `breeze add --list`,

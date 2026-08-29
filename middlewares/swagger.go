@@ -11,6 +11,13 @@ import (
 // below are retained as aliases because they are exported API, but the
 // Scalar-prefixed ones are canonical: what actually gets served is a Scalar
 // reference UI over a spec produced by the scalar package.
+//
+// Swagger UI generation was removed rather than kept as an opt-in viewer. That
+// was a change of direction from the earlier plan, not the plan all along, and
+// it is recorded in CHANGELOG.md under "Documentation viewer: Scalar only" with
+// the reasoning and the migration note. Restoring a second viewer is a real
+// option; it is a deliberate decision that it is not currently taken, and the
+// changelog entry is the place that decision lives.
 type ScalarOptions struct {
 
 	// Title is the API name shown in Scalar (default: "Breeze API").
@@ -33,8 +40,9 @@ type ScalarOptions struct {
 // SwaggerOptions is a deprecated alias for ScalarOptions.
 //
 // Deprecated: use ScalarOptions. The name predates the move to Scalar and
-// describes a viewer this framework does not ship; it is kept only so existing
-// code continues to compile.
+// describes a viewer this framework no longer ships (see CHANGELOG.md,
+// "Documentation viewer: Scalar only"); it is kept only so existing code
+// continues to compile.
 type SwaggerOptions = ScalarOptions
 
 // ScalarMiddleware enables the OpenAPI documentation system and registers the
@@ -108,8 +116,10 @@ func ScalarMiddleware(router *breeze.Router, opts ScalarOptions) breeze.HandlerF
 
 // SwaggerMiddleware is a deprecated alias for ScalarMiddleware.
 //
-// Deprecated: use ScalarMiddleware. This name is retained because it is
-// exported API; it has always served Scalar.
+// Deprecated: use ScalarMiddleware. This name is retained because it is exported
+// API and removing it would break callers. Note what it does *not* do: it serves
+// Scalar, not Swagger UI. If a project needs Swagger UI specifically, it is not
+// available here — see CHANGELOG.md, "Documentation viewer: Scalar only".
 func SwaggerMiddleware(router *breeze.Router, opts ScalarOptions) breeze.HandlerFunc {
 	return ScalarMiddleware(router, opts)
 }

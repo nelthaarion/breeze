@@ -14,6 +14,41 @@ import (
 // Validate checks the focused JSON-Schema subset Breeze itself emits:
 // object/array/scalar types, required, enum, and additionalProperties. It does
 // not claim general JSON Schema compliance.
+//
+// # Deliberate deviation: santhosh-tekuri/jsonschema/v6 is not used
+//
+// A full JSON Schema library was explicitly approved for this job earlier in the
+// project. It is deliberately not used here. That is a real deviation from an
+// approval, and it is written down rather than left for a reader to infer from a
+// missing import.
+//
+// The reason is the standing rule that a new module dependency needs a
+// justification. The documents this validator checks are not arbitrary
+// third-party schemas: they are the OpenAPI documents the scalar package
+// generates, by reflection over Go structs, in this same repository. That
+// generator emits types, required, enum and additionalProperties and nothing
+// else, so the four rules below cover the whole of the real input. A
+// general-purpose validator would add a dependency to gain coverage of keywords
+// our own generator cannot currently produce.
+//
+// What that costs, stated so it is not discovered by surprise:
+//
+//   - No $ref resolution. A schema that points elsewhere is not followed, and
+//     the referenced constraints are therefore not checked. No file in this
+//     repository emits $ref today (verified repo-wide, including the fleet test
+//     fixtures and cmd/fleet-example), which is what makes this a bounded
+//     limitation rather than a silent hole.
+//   - No full 2020-12 semantics: no allOf/anyOf/oneOf/not, no numeric bounds
+//     (minimum, multipleOf), no string bounds (minLength, pattern, format), no
+//     array bounds (minItems, uniqueItems), and no conditional applicators.
+//
+// The guarantee is therefore one-directional, which is the part worth being
+// precise about: a reported violation is a real violation, but silence is not
+// proof of conformance against a schema richer than the subset above.
+//
+// If Breeze ever validates externally authored OpenAPI documents, or scalar
+// starts emitting $ref for nested structs, the input class has changed and this
+// decision should be revisited in favour of the library.
 func Validate(span fleet.Span, caller string, op scalar.Operation, now int64) []Violation {
 	var out []Violation
 	if len(span.RequestPayload) > 0 && op.RequestBody != nil {

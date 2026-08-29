@@ -46,6 +46,8 @@ efficiently while keeping your code clean and maintainable.
 
   - [Built-in Developer Dashboard](#-built-in-developer-dashboard)
   - [Fleet Tracing](#-fleet-tracing)
+  - [JSON-RPC 2.0](#-json-rpc-20)
+  - [MCP Server](#-mcp-server)
 
   - [Developer Experience](#-developer-experience)
   - [Performance Optimizations](#-performance-optimizations)
@@ -598,6 +600,89 @@ broker, or third-party WebSocket dependency.
 
 See [`docs/fleet-tracing.md`](./docs/fleet-tracing.md) for setup, transport
 status, security, architecture, and migration guidance.
+
+### 🔗 JSON-RPC 2.0
+
+A complete JSON-RPC 2.0 implementation in `rpc/`. The distinction worth stating
+plainly, because it is easy to assume otherwise: **this is a peer protocol on
+gnet, not a route on the HTTP router.** It is not `net/http`, not `net/rpc`, and
+not an `http.Handler` mounted on a path. It sits on the same event-loop
+primitives the HTTP layer itself uses, for the same reasons — no reflection-based
+method discovery anywhere in the dispatch path.
+
+Methods register the way routes do, so there is no second pattern to learn:
+
+```go
+reg := rpc.NewRegistry()
+reg.Use(logging)                        // mirrors Router.Use
+reg.Register("sum", sum)                // mirrors Router.Handle
+reg.RegisterBlocking("db.query", query) // mirrors Router.HandleBlocking
+
+srv := rpc.NewServer(reg)
+srv.SetPool(breeze.NewEventLoopWorkerPool(runtime.NumCPU()))
+log.Fatal(srv.Run(9000, true))
+```
+
+A handler takes a `*rpc.Context` and reads params off it, exactly as a
+`breeze.HandlerFunc` takes a `*breeze.Context`. The same inline-vs-blocking rule
+applies: a handler that blocks stalls every connection pinned to its event loop,
+so those register with `RegisterBlocking` and run on the worker pool.
+
+Single requests, notifications, batches, the five standard error codes and the
+reserved application-defined range are all covered, with `id` echoed exactly
+(including large integers that would lose precision through a float).
+
+JSON-RPC specifies a message format but not how messages are delimited on a byte
+stream, so framing is by structural completeness — one complete JSON value at a
+time, tracking depth while respecting strings and escapes. Newline-delimited,
+whitespace-separated and back-to-back packed messages all work without the
+client declaring which it chose. `SetMaxMessageBytes` bounds what one message may
+accumulate, so a client cannot pin memory by opening a brace and going quiet.
+
+For peers that speak JSON-RPC over a pipe rather than a socket, `NewStdioServer`
+runs the same dispatcher over any `io.Reader`/`io.Writer`.
+
+### 🤖 MCP Server
+
+`cmd/breeze-mcp` exposes Breeze's own tooling to an AI agent over the Model
+Context Protocol, so an assistant can scaffold and inspect a project through
+structured tool calls instead of guessing at shell commands. It is built on the
+`rpc` dispatcher above rather than a second JSON-RPC implementation.
+
+```bash
+go build -o breeze-mcp ./cmd/breeze-mcp
+```
+
+Then register it with any MCP client (stdio transport):
+
+```json
+{
+  "mcpServers": {
+    "breeze": { "command": "/path/to/breeze-mcp" }
+  }
+}
+```
+
+It implements `initialize`, `notifications/initialized`, `tools/list` and
+`tools/call`, currently exposing five tools:
+
+| Tool | What it does |
+|---|---|
+| `breeze_new` | Scaffold a new project (`api` or `views` template) |
+| `breeze_generate` | Generate a handler, resource, model, event, workflow, middleware, ws, view, job or grpc |
+| `breeze_add` | Wire in a feature (events, dashboard, jwt, cors, observability, …) |
+| `breeze_features` | List available features and their flags |
+| `breeze_routes` | Report the routes registered in a project |
+
+Every tool calls the real generator rather than reimplementing it, so a tool call
+and the equivalent CLI invocation produce identical files — including a
+generator's refusal to overwrite a hand-edited file, which is reported rather
+than worked around.
+
+One transport detail that is a protocol requirement rather than a style choice:
+on stdio, **stdout is the protocol stream**. A single human-readable log line
+written there is a malformed MCP message to the peer, so generator progress is
+captured and returned inside the tool result, and diagnostics go to stderr.
 
 ### ⚙️ Developer Experience
 

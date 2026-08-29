@@ -34,6 +34,77 @@ All changes made to the Breeze framework.
 - Added server-side Fleet API proxying so aggregator credentials stay out of the
   browser, plus trace filtering support on dashboard logs.
 
+### JSON-RPC 2.0 (`rpc/`)
+
+- Added a full JSON-RPC 2.0 implementation as a **peer protocol on gnet**, not a
+  route on the HTTP router. It sits on the same event-loop primitives the HTTP
+  layer uses, so it does not go through `net/http` and adds no reflection to the
+  dispatch path.
+- Covers single requests, notifications, batches, the five standard error codes
+  (-32700, -32600, -32601, -32602, -32603) and the reserved
+  application-defined range, with exact `id` echo including large-integer
+  precision.
+- Handlers register as `reg.Register(method, handler)`, mirroring how HTTP routes
+  are registered, and compose middleware the same way. `RegisterBlocking` moves a
+  method off the event loop for handlers that block.
+- Frames JSON values off the raw byte stream, so pipelined, packed and
+  split-across-reads messages all decode; a message cap closes runaway
+  connections instead of buffering without bound.
+- Added a stdio transport (`rpc.NewStdioServer`, `rpc.NewStdioServerOS`) over the
+  same dispatcher, for peers that speak JSON-RPC over a pipe rather than a
+  socket.
+
+### MCP server (`cmd/breeze-mcp`, `internal/mcp`)
+
+- Added a Model Context Protocol server exposing Breeze's own tooling to an MCP
+  client over stdio. It is built on the `rpc` dispatcher above rather than a
+  second JSON-RPC implementation.
+- Implements `initialize`, `notifications/initialized`, `tools/list` and
+  `tools/call`, with five tools in this initial version: `breeze_new`,
+  `breeze_generate`, `breeze_add`, `breeze_features` and `breeze_routes`. Each
+  one calls the real generator rather than reimplementing it, so a tool call and
+  the equivalent CLI invocation produce the same files.
+- Generator progress is captured rather than written through, because stdout is
+  the protocol stream on this transport and printed output would corrupt it.
+  Diagnostics go to stderr.
+
+### CLI generator
+
+- Extracted the generator out of `package main` into `internal/generator` with a
+  small exported API, so the CLI and the MCP server drive the same code. CLI
+  behaviour and flags are unchanged.
+- The generator is driven by one unified `ProjectConfig` schema, settable from a
+  YAML config file or from `--dotted.path` flags that resolve against the same
+  struct, so both paths produce an identical configuration.
+
+### Documentation viewer: Scalar only
+
+Swagger UI generation was **removed**, and Scalar is now the only documentation
+viewer the framework ships. This is a change of direction: the earlier plan was
+to keep Swagger UI available as an opt-in choice.
+
+The reason for the change is that two viewers over one generated spec meant two
+HTML generators, two sets of asset/CDN decisions and two things to keep working,
+to render a document that is identical in both. Scalar renders the OpenAPI 3.1
+output the `scalar` package already produces, so the second viewer was cost
+without capability.
+
+**Migration.** `middleware.SwaggerOptions` and `middleware.SwaggerMiddleware`
+remain as deprecated aliases of `ScalarOptions`/`ScalarMiddleware`, so existing
+code keeps compiling. What changes is what gets served: the UI path renders
+Scalar. The spec endpoint is unaffected — `/openapi.json` still serves the same
+document, so any external tool that consumes the spec directly (including
+Swagger UI hosted elsewhere) keeps working unchanged.
+
+### Removed
+
+- Removed `dashboard/spa.go`, `dashboard/spajavascript.go` and
+  `dashboard/spa_css.go` (~1,400 lines). These held an unused
+  JavaScript/CSS single-page dashboard: `dashboard.SPA()` had no callers
+  anywhere in the repository, and the dashboard is served from the
+  server-rendered templates in `dashboard/templates/` instead. Nothing
+  referenced the removed symbols, so there is no migration.
+
 ---
 
 ## [v1.8.0] — Throughput

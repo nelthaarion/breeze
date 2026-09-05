@@ -55,7 +55,7 @@ type Config struct {
 	// of a fleet.Aggregator (for example http://fleet:9000/fleet). Empty keeps
 	// the page and all proxy routes disabled, so existing dashboards allocate
 	// and dial nothing.
-	FleetAggregatorURL      string `yaml:"fleet_aggregator_url"      json:"fleet_aggregator_url"`
+	FleetAggregatorURL      string `yaml:"fleet_aggregator_url" json:"fleet_aggregator_url"`
 	FleetAggregatorUsername string `yaml:"fleet_aggregator_username" json:"-"`
 	FleetAggregatorPassword string `yaml:"fleet_aggregator_password" json:"-"`
 

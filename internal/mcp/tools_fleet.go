@@ -120,17 +120,13 @@ func fleetProps(extra map[string]any) map[string]any {
 		"aggregator_url": stringProp("Base URL of the running Fleet aggregator, e.g. " +
 			"http://127.0.0.1:9000. A bare host:port is accepted. This is the aggregator's " +
 			"own address, not the address of a service that reports to it."),
-		"base_path": stringProp(
-			"Where the aggregator is mounted. Defaults to " + defaultFleetBase + ".",
-		),
+		"base_path": stringProp("Where the aggregator is mounted. Defaults to " + defaultFleetBase + "."),
 		"username": stringProp("Aggregator read username, sent as HTTP Basic. Required when the " +
 			"aggregator sets username and password."),
 		"password": stringProp("Aggregator read password, sent as HTTP Basic."),
-		"token": stringProp(
-			"Ingest token, sent as X-Fleet-Token. Not needed for reading — the read " +
-				"endpoints use Basic auth — and accepted only so one credential set can be passed to " +
-				"every tool.",
-		),
+		"token": stringProp("Ingest token, sent as X-Fleet-Token. Not needed for reading — the read " +
+			"endpoints use Basic auth — and accepted only so one credential set can be passed to " +
+			"every tool."),
 	}
 	for k, v := range extra {
 		props[k] = v
@@ -340,56 +336,34 @@ func getTopology(a fleetArgs) toolCallResult {
 			report.Isolated = append(report.Isolated, n.Service)
 		}
 		if n.Errors > 0 {
-			report.Unhealthy = append(
-				report.Unhealthy,
-				fmt.Sprintf(
-					"%s (%s of %d calls failing)",
-					n.Service,
-					formatRate(n.ErrorRate),
-					n.Calls,
-				),
-			)
+			report.Unhealthy = append(report.Unhealthy,
+				fmt.Sprintf("%s (%s of %d calls failing)", n.Service, formatRate(n.ErrorRate), n.Calls))
 		}
 	}
 	sort.Strings(report.EntryPoints)
 	sort.Strings(report.Isolated)
 
 	if report.ServiceCount == 0 {
-		report.Notes = append(
-			report.Notes,
-			"The aggregator is running but no service has reported yet. "+
-				"A service appears here once it exports its first span or heartbeat, so this usually means "+
-				"the services are not started, are not configured with this aggregator's URL, or are "+
-				"rejecting on the ingest token.",
-		)
+		report.Notes = append(report.Notes, "The aggregator is running but no service has reported yet. "+
+			"A service appears here once it exports its first span or heartbeat, so this usually means "+
+			"the services are not started, are not configured with this aggregator's URL, or are "+
+			"rejecting on the ingest token.")
 	} else if report.EdgeCount == 0 {
-		report.Notes = append(
-			report.Notes,
-			"Services are reporting but no call between them has been "+
-				"observed. An edge is recorded from a span's parent, so this is expected when each service "+
-				"is only receiving direct traffic, and a sign of missing trace propagation when they are "+
-				"in fact calling each other.",
-		)
+		report.Notes = append(report.Notes, "Services are reporting but no call between them has been "+
+			"observed. An edge is recorded from a span's parent, so this is expected when each service "+
+			"is only receiving direct traffic, and a sign of missing trace propagation when they are "+
+			"in fact calling each other.")
 	}
 	if len(report.Isolated) > 0 {
-		report.Notes = append(
-			report.Notes,
-			"Isolated services have no observed caller or callee. If "+
-				"something does call them, the caller is not propagating trace context and the graph is "+
-				"incomplete rather than sparse.",
-		)
+		report.Notes = append(report.Notes, "Isolated services have no observed caller or callee. If "+
+			"something does call them, the caller is not propagating trace context and the graph is "+
+			"incomplete rather than sparse.")
 	}
 
 	// Busiest first: on a graph of any size this is the order someone reading it
 	// cares about, and it is stable across calls.
-	sort.SliceStable(
-		report.Nodes,
-		func(i, j int) bool { return report.Nodes[i].Calls > report.Nodes[j].Calls },
-	)
-	sort.SliceStable(
-		report.Edges,
-		func(i, j int) bool { return report.Edges[i].Calls > report.Edges[j].Calls },
-	)
+	sort.SliceStable(report.Nodes, func(i, j int) bool { return report.Nodes[i].Calls > report.Nodes[j].Calls })
+	sort.SliceStable(report.Edges, func(i, j int) bool { return report.Edges[i].Calls > report.Edges[j].Calls })
 
 	summary := fmt.Sprintf("%d service(s), %d call edge(s)", report.ServiceCount, report.EdgeCount)
 	if len(report.Unhealthy) > 0 {
@@ -443,11 +417,8 @@ func getTracesTool() *tool {
 				"description": "Only traces spanning at least this many services. Defaults to 1 here, " +
 					"meaning no filtering. Pass 2 to see only genuinely cross-service traces.",
 			},
-			"tag": stringProp("Match a span tag, written key:value."),
-			"limit": map[string]any{
-				"type":        "integer",
-				"description": "Maximum traces to return. The aggregator caps this at 500 and defaults to 100.",
-			},
+			"tag":   stringProp("Match a span tag, written key:value."),
+			"limit": map[string]any{"type": "integer", "description": "Maximum traces to return. The aggregator caps this at 500 and defaults to 100."},
 			"cursor": stringProp("Opaque continuation token from a previous call's next_cursor, " +
 				"for reading the next page."),
 		}), "aggregator_url"),
@@ -558,11 +529,8 @@ func getTraces(a tracesArgs) toolCallResult {
 		report.Notes = append(report.Notes, note)
 	}
 	if minServices > 1 {
-		report.Notes = append(
-			report.Notes,
-			fmt.Sprintf("Only traces spanning at least %d services were "+
-				"considered; single-service traces were excluded.", minServices),
-		)
+		report.Notes = append(report.Notes, fmt.Sprintf("Only traces spanning at least %d services were "+
+			"considered; single-service traces were excluded.", minServices))
 	}
 
 	summary := fmt.Sprintf("%d trace(s), %d failing", report.Count, report.Failing)
@@ -584,10 +552,7 @@ func decodeTracePage(raw json.RawMessage) (fleetTracePage, error) {
 	}
 	var page fleetTracePage
 	if err := json.Unmarshal(raw, &page); err != nil {
-		return fleetTracePage{}, fmt.Errorf(
-			"trace page is neither an array nor a page envelope: %w",
-			err,
-		)
+		return fleetTracePage{}, fmt.Errorf("trace page is neither an array nor a page envelope: %w", err)
 	}
 	return page, nil
 }
@@ -647,9 +612,7 @@ func getTraceTool() *tool {
 			"span the aggregator identified and its plain-language summary. Use this after " +
 			"breeze_get_traces has narrowed down which request to look at.",
 		schema: objectSchema(fleetProps(map[string]any{
-			"trace_id": stringProp(
-				"The 32-character hex trace id, as returned by breeze_get_traces.",
-			),
+			"trace_id": stringProp("The 32-character hex trace id, as returned by breeze_get_traces."),
 		}), "aggregator_url", "trace_id"),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a traceArgs
@@ -748,40 +711,28 @@ func buildTraceReport(aggregatorURL string, trace fleetTrace) traceReport {
 	}
 
 	if report.OrphanCount > 0 {
-		report.Notes = append(
-			report.Notes,
-			fmt.Sprintf("%d span(s) could not be linked to a parent and "+
-				"were re-rooted. The tree is incomplete: a service crashed before exporting, sampled "+
-				"differently, or is not instrumented. Gaps in the shape below are missing data, not idle time.",
-				report.OrphanCount),
-		)
+		report.Notes = append(report.Notes, fmt.Sprintf("%d span(s) could not be linked to a parent and "+
+			"were re-rooted. The tree is incomplete: a service crashed before exporting, sampled "+
+			"differently, or is not instrumented. Gaps in the shape below are missing data, not idle time.",
+			report.OrphanCount))
 	}
 	if report.SpansDropped > 0 {
-		report.Notes = append(
-			report.Notes,
-			fmt.Sprintf("%d span(s) were dropped by the aggregator's "+
-				"per-trace limit, so this trace is truncated.", report.SpansDropped),
-		)
+		report.Notes = append(report.Notes, fmt.Sprintf("%d span(s) were dropped by the aggregator's "+
+			"per-trace limit, so this trace is truncated.", report.SpansDropped))
 	}
 	if report.SkewFlagged {
-		report.Notes = append(
-			report.Notes,
-			"At least one span started before its parent, which is "+
-				"impossible and means the reporting machines' clocks disagree. Read the durations, which are "+
-				"measured locally, rather than comparing absolute start times across services.",
-		)
+		report.Notes = append(report.Notes, "At least one span started before its parent, which is "+
+			"impossible and means the reporting machines' clocks disagree. Read the durations, which are "+
+			"measured locally, rather than comparing absolute start times across services.")
 	}
 	if report.HasError && report.RootCauseSpanID == "" {
 		report.Notes = append(report.Notes, "The trace failed but no single root-cause span was "+
 			"identified, which happens when the failing span's own parent was never reported.")
 	}
 	if len(trace.Roots) > 1 {
-		report.Notes = append(
-			report.Notes,
-			fmt.Sprintf("This trace has %d root spans. Either it had "+
-				"several entry points, or — more often — some spans' parents were never reported.",
-				len(trace.Roots)),
-		)
+		report.Notes = append(report.Notes, fmt.Sprintf("This trace has %d root spans. Either it had "+
+			"several entry points, or — more often — some spans' parents were never reported.",
+			len(trace.Roots)))
 	}
 
 	return report
@@ -838,16 +789,11 @@ func getContractViolationsTool() *tool {
 			"repeated a thousand times reads as one finding. Optionally filter by service, " +
 			"severity, or rule.",
 		schema: objectSchema(fleetProps(map[string]any{
-			"service": stringProp(
-				"Only violations where this service is the caller or the callee.",
-			),
+			"service": stringProp("Only violations where this service is the caller or the callee."),
 			"severity": stringProp("Only violations of this severity, as reported by the checker " +
 				"(for example error or warning)."),
-			"rule": stringProp("Only violations of rules whose name contains this text."),
-			"limit": map[string]any{
-				"type":        "integer",
-				"description": "Maximum groups to return after filtering.",
-			},
+			"rule":  stringProp("Only violations of rules whose name contains this text."),
+			"limit": map[string]any{"type": "integer", "description": "Maximum groups to return after filtering."},
 		}), "aggregator_url"),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a violationsArgs
@@ -910,26 +856,17 @@ func getContractViolations(a violationsArgs) toolCallResult {
 	})
 
 	if len(groups) == 0 {
-		report.Notes = append(
-			report.Notes,
-			"No violation has been recorded. Contract checking compares "+
-				"observed payloads against the schemas services publish in their heartbeats, so an empty "+
-				"list means either that everything matched or that payload capture and schema publishing "+
-				"are not both enabled.",
-		)
+		report.Notes = append(report.Notes, "No violation has been recorded. Contract checking compares "+
+			"observed payloads against the schemas services publish in their heartbeats, so an empty "+
+			"list means either that everything matched or that payload capture and schema publishing "+
+			"are not both enabled.")
 	} else if report.Count == 0 {
-		report.Notes = append(
-			report.Notes,
-			fmt.Sprintf("%d violation group(s) are recorded but none "+
-				"matched the filters given.", len(groups)),
-		)
+		report.Notes = append(report.Notes, fmt.Sprintf("%d violation group(s) are recorded but none "+
+			"matched the filters given.", len(groups)))
 	}
 	if matched > report.Count {
-		report.Notes = append(
-			report.Notes,
-			fmt.Sprintf("%d group(s) matched; %d shown because of the "+
-				"limit argument.", matched, report.Count),
-		)
+		report.Notes = append(report.Notes, fmt.Sprintf("%d group(s) matched; %d shown because of the "+
+			"limit argument.", matched, report.Count))
 	}
 	if len(report.BySeverity) == 0 {
 		report.BySeverity = nil
@@ -1130,12 +1067,8 @@ func buildIncidentExplanation(r incidentReport) string {
 		}
 
 	default:
-		fmt.Fprintf(
-			&b,
-			"This trace failed with status %d, but the aggregator could not identify a "+
-				"single originating span. ",
-			r.Trace.Status,
-		)
+		fmt.Fprintf(&b, "This trace failed with status %d, but the aggregator could not identify a "+
+			"single originating span. ", r.Trace.Status)
 	}
 
 	if r.Trace.Summary != "" {
@@ -1147,11 +1080,9 @@ func buildIncidentExplanation(r incidentReport) string {
 	switch len(r.Incidents) {
 	case 0:
 		if r.Trace.HasError {
-			b.WriteString(
-				"No fleet-level incident is open for the services involved, so this looks " +
-					"like an isolated failure rather than an ongoing outage — a service must exceed its " +
-					"error-rate threshold over a minimum number of calls before an incident is raised. ",
-			)
+			b.WriteString("No fleet-level incident is open for the services involved, so this looks " +
+				"like an isolated failure rather than an ongoing outage — a service must exceed its " +
+				"error-rate threshold over a minimum number of calls before an incident is raised. ")
 		}
 	default:
 		for _, inc := range r.Incidents {
@@ -1171,37 +1102,20 @@ func buildIncidentExplanation(r incidentReport) string {
 
 	if n := len(r.RelatedViolations); n > 0 {
 		v := r.RelatedViolations[0]
-		fmt.Fprintf(
-			&b,
-			"A contract violation was recorded on this very trace: %s expected %s at %s "+
-				"from %s but observed %s (rule %s). That mismatch is the most likely explanation, and it is "+
-				"a code-level fix rather than an operational one. ",
-			v.Caller,
-			v.Expected,
-			v.Path,
-			v.Callee,
-			v.Observed,
-			v.Rule,
-		)
+		fmt.Fprintf(&b, "A contract violation was recorded on this very trace: %s expected %s at %s "+
+			"from %s but observed %s (rule %s). That mismatch is the most likely explanation, and it is "+
+			"a code-level fix rather than an operational one. ",
+			v.Caller, v.Expected, v.Path, v.Callee, v.Observed, v.Rule)
 		if n > 1 {
 			fmt.Fprintf(&b, "%d further violation(s) were recorded on this trace. ", n-1)
 		}
 	} else if len(r.NearbyViolations) > 0 {
 		v := r.NearbyViolations[0]
-		fmt.Fprintf(
-			&b,
-			"No contract violation was recorded on this trace, but %s and %s have violated "+
-				"rule %s at %s on other traces, which is worth ruling out. ",
-			v.Caller,
-			v.Callee,
-			v.Rule,
-			v.Path,
-		)
+		fmt.Fprintf(&b, "No contract violation was recorded on this trace, but %s and %s have violated "+
+			"rule %s at %s on other traces, which is worth ruling out. ", v.Caller, v.Callee, v.Rule, v.Path)
 	} else if r.Trace.HasError {
-		b.WriteString(
-			"No contract violation involves these services, so the payloads matched the " +
-				"published schemas and the failure is in behaviour rather than shape. ",
-		)
+		b.WriteString("No contract violation involves these services, so the payloads matched the " +
+			"published schemas and the failure is in behaviour rather than shape. ")
 	}
 
 	if r.Trace.OrphanCount > 0 {

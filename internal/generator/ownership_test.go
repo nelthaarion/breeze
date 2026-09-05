@@ -32,10 +32,8 @@ func TestFilenameCollisionWithAnotherFeaturesFileIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = runGenerate([]string{
-		"resource", "Widget", "name:string",
-		"--" + outputFilenameFlag + "=session.go",
-	})
+	err = runGenerate([]string{"resource", "Widget", "name:string",
+		"--" + outputFilenameFlag + "=session.go"})
 	if err == nil {
 		t.Fatal("the resource generator overwrote a file the handler generator owns")
 	}
@@ -69,10 +67,8 @@ func TestForceDoesNotOverrideAnotherFeaturesOwnership(t *testing.T) {
 		t.Fatalf("breeze generate handler: %v", err)
 	}
 
-	err := runGenerate([]string{
-		"resource", "Widget", "name:string",
-		"--" + outputFilenameFlag + "=session.go", "--force",
-	})
+	err := runGenerate([]string{"resource", "Widget", "name:string",
+		"--" + outputFilenameFlag + "=session.go", "--force"})
 	if err == nil {
 		t.Fatal("--force overwrote another generator's file")
 	}
@@ -101,9 +97,7 @@ func TestSameGeneratorStillNeedsForceToReplaceItsOwnFile(t *testing.T) {
 		t.Errorf("the error does not name the escape hatch: %v", err)
 	}
 
-	if err := runGenerate(
-		[]string{"model", "Gadget", "sku:string", "price:float64", "--force"},
-	); err != nil {
+	if err := runGenerate([]string{"model", "Gadget", "sku:string", "price:float64", "--force"}); err != nil {
 		t.Fatalf("--force did not let the owning generator replace its own file: %v", err)
 	}
 	src, err := os.ReadFile(filepath.Join("models", "gadget.go"))
@@ -170,10 +164,7 @@ func TestEveryGeneratedFileRecordsItsOwner(t *testing.T) {
 				path := filepath.Join(tc.dir, e.Name())
 				owner := fileOwner(path)
 				if owner == "" {
-					t.Errorf(
-						"%s carries no generated-by header, so no other generator can tell it is owned",
-						path,
-					)
+					t.Errorf("%s carries no generated-by header, so no other generator can tell it is owned", path)
 					continue
 				}
 				if want := generateOwner(tc.kind); owner != want {

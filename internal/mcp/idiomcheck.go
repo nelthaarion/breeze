@@ -43,7 +43,7 @@ import (
 // these rather than off the local identifier, so an alias or a same-named
 // package from somewhere else cannot produce a false finding.
 const (
-	breezeModulePath = "github.com/nelthaarion/breeze/v2"
+	breezeModulePath = "github.com/nelthaarion/breeze"
 	fleetPath        = breezeModulePath + "/fleet"
 	dashboardPath    = breezeModulePath + "/dashboard"
 	middlewaresPath  = breezeModulePath + "/middlewares"
@@ -161,10 +161,7 @@ func runIdiomCheck(root string) (idiomReport, error) {
 		if parseErr != nil {
 			// Reported rather than returned: the rest of the project is still
 			// worth checking, and a caller needs to know this file was not.
-			report.Skipped = append(
-				report.Skipped,
-				fmt.Sprintf("%s (does not parse: %v)", rel, parseErr),
-			)
+			report.Skipped = append(report.Skipped, fmt.Sprintf("%s (does not parse: %v)", rel, parseErr))
 			return nil
 		}
 
@@ -194,10 +191,8 @@ func runIdiomCheck(root string) (idiomReport, error) {
 	}
 
 	if report.Files == 0 {
-		report.Notes = append(
-			report.Notes,
-			"No Go files were found under this path, so a clean report is not evidence of anything.",
-		)
+		report.Notes = append(report.Notes,
+			"No Go files were found under this path, so a clean report is not evidence of anything.")
 	}
 
 	return report, nil
@@ -255,13 +250,7 @@ func selectorPath(imports map[string]string, expr ast.Expr) (path, member string
 	return path, sel.Sel.Name, true
 }
 
-func checkFileIdioms(
-	fset *token.FileSet,
-	file *ast.File,
-	rel string,
-	tables map[string]string,
-	report *idiomReport,
-) {
+func checkFileIdioms(fset *token.FileSet, file *ast.File, rel string, tables map[string]string, report *idiomReport) {
 	imports := importedAs(file)
 
 	checkNoReflectionInHandlers(fset, file, imports, rel, report)
@@ -308,13 +297,7 @@ func (r *idiomReport) add(fset *token.FileSet, pos token.Pos, rel, rule, message
 // several frames deep is not caught — catching that needs a call graph, and a
 // call graph needs types. The rule as stated ("in handlers") is what is checked,
 // and the message says where the call was seen so a reader can judge.
-func checkNoReflectionInHandlers(
-	fset *token.FileSet,
-	file *ast.File,
-	imports map[string]string,
-	rel string,
-	report *idiomReport,
-) {
+func checkNoReflectionInHandlers(fset *token.FileSet, file *ast.File, imports map[string]string, rel string, report *idiomReport) {
 	if _, usesReflect := pathLocalName(imports, reflectPath); !usesReflect {
 		// No reflect import means no reflect call, and skipping here keeps the
 		// walk off every file in a project that never touches it.
@@ -345,16 +328,8 @@ func checkNoReflectionInHandlers(
 		}
 
 		for _, pos := range reflectCallsIn(imports, body) {
-			report.add(
-				fset,
-				pos,
-				rel,
-				"no-reflection-in-handlers",
-				fmt.Sprintf(
-					"%s calls reflect, which allocates and escapes on a path that runs per request",
-					what,
-				),
-			)
+			report.add(fset, pos, rel, "no-reflection-in-handlers",
+				fmt.Sprintf("%s calls reflect, which allocates and escapes on a path that runs per request", what))
 		}
 		return true
 	})
@@ -435,13 +410,7 @@ func pathLocalName(imports map[string]string, want string) (string, bool) {
 // the order is decided by the order the setup functions are called, which is
 // generated, and second-guessing that from syntax would produce findings that
 // are wrong as often as right.
-func checkFleetBeforeDashboard(
-	fset *token.FileSet,
-	file *ast.File,
-	imports map[string]string,
-	rel string,
-	report *idiomReport,
-) {
+func checkFleetBeforeDashboard(fset *token.FileSet, file *ast.File, imports map[string]string, rel string, report *idiomReport) {
 	type useCall struct {
 		pos  token.Pos
 		path string
@@ -483,13 +452,8 @@ func checkFleetBeforeDashboard(
 		case c.path == dashboardPath && firstDashboard == token.NoPos:
 			firstDashboard = c.pos
 		case c.path == fleetPath && firstDashboard != token.NoPos:
-			report.add(
-				fset,
-				c.pos,
-				rel,
-				"fleet-before-dashboard",
-				"fleet.Middleware is registered after dashboard.Middleware in this file; the dashboard reads the trace context Fleet establishes, so this order attributes dashboard requests to the wrong span",
-			)
+			report.add(fset, c.pos, rel, "fleet-before-dashboard",
+				"fleet.Middleware is registered after dashboard.Middleware in this file; the dashboard reads the trace context Fleet establishes, so this order attributes dashboard requests to the wrong span")
 			return
 		}
 	}
@@ -503,13 +467,7 @@ func checkFleetBeforeDashboard(
 // not break — which is exactly why this needs saying: the call works, no Swagger
 // UI is served, and the author is left looking for a page that was never going
 // to appear.
-func checkScalarIsTheViewer(
-	fset *token.FileSet,
-	file *ast.File,
-	imports map[string]string,
-	rel string,
-	report *idiomReport,
-) {
+func checkScalarIsTheViewer(fset *token.FileSet, file *ast.File, imports map[string]string, rel string, report *idiomReport) {
 	deprecated := map[string]string{
 		"SwaggerMiddleware": "middlewares.ScalarMiddleware",
 		"SwaggerOptions":    "middlewares.ScalarOptions",
@@ -525,17 +483,8 @@ func checkScalarIsTheViewer(
 			return true
 		}
 		if replacement, isDeprecated := deprecated[member]; isDeprecated {
-			report.add(
-				fset,
-				sel.Pos(),
-				rel,
-				"scalar-is-the-viewer",
-				fmt.Sprintf(
-					"middlewares.%s is a deprecated alias that serves Scalar, not Swagger UI; use %s so the code says what is served",
-					member,
-					replacement,
-				),
-			)
+			report.add(fset, sel.Pos(), rel, "scalar-is-the-viewer",
+				fmt.Sprintf("middlewares.%s is a deprecated alias that serves Scalar, not Swagger UI; use %s so the code says what is served", member, replacement))
 		}
 		return true
 	})
@@ -555,13 +504,7 @@ func checkScalarIsTheViewer(
 // is deliberately narrow — the string has to look like SQL and name a known
 // table — because a rule that flagged every string containing a table-like word
 // would be turned off within a day.
-func checkGeneratedModelAccessors(
-	fset *token.FileSet,
-	file *ast.File,
-	rel string,
-	tables map[string]string,
-	report *idiomReport,
-) {
+func checkGeneratedModelAccessors(fset *token.FileSet, file *ast.File, rel string, tables map[string]string, report *idiomReport) {
 	if isGeneratedFile(file) {
 		return
 	}
@@ -589,17 +532,8 @@ func checkGeneratedModelAccessors(
 			if !sqlNamesTable(lowered, table) {
 				continue
 			}
-			report.add(
-				fset,
-				lit.Pos(),
-				rel,
-				"generated-model-accessors",
-				fmt.Sprintf(
-					"this query writes the table name %q by hand; use the generated %s constant so a rename moves the query with the model",
-					table,
-					constant,
-				),
-			)
+			report.add(fset, lit.Pos(), rel, "generated-model-accessors",
+				fmt.Sprintf("this query writes the table name %q by hand; use the generated %s constant so a rename moves the query with the model", table, constant))
 			return true
 		}
 		return true
@@ -654,8 +588,7 @@ func isGeneratedFile(file *ast.File) bool {
 	for _, group := range file.Comments {
 		for _, comment := range group.List {
 			text := comment.Text
-			if strings.HasPrefix(text, "// Code generated ") &&
-				strings.Contains(text, "DO NOT EDIT") {
+			if strings.HasPrefix(text, "// Code generated ") && strings.Contains(text, "DO NOT EDIT") {
 				return true
 			}
 		}

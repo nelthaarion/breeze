@@ -37,7 +37,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // diagName is the registry key, matching the `breeze add migrator` feature name.

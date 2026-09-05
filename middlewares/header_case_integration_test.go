@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // header_case_integration_test.go — regression tests that verify middlewares
@@ -98,11 +98,8 @@ func TestJWT_HappyPathViaParseHTTPRequest(t *testing.T) {
 	})
 
 	if !handlerCalled {
-		t.Fatalf(
-			"handler was not called — JWT middleware rejected a valid token. status=%d body=%q",
-			ctx.Res.Status,
-			string(ctx.Res.Body),
-		)
+		t.Fatalf("handler was not called — JWT middleware rejected a valid token. status=%d body=%q",
+			ctx.Res.Status, string(ctx.Res.Body))
 	}
 	if ctx.Res.Status != 200 {
 		t.Errorf("status = %d, want 200", ctx.Res.Status)

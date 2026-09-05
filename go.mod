@@ -1,4 +1,4 @@
-module github.com/nelthaarion/breeze/v2
+module github.com/nelthaarion/breeze
 
 go 1.25.13
 

@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 const explorerTestPort = 3000
@@ -39,10 +39,7 @@ func mustBeLocal(t *testing.T, target string, port int) {
 		t.Errorf("scheme = %q, want http", parsed.Scheme)
 	}
 	if parsed.Hostname() != "127.0.0.1" {
-		t.Errorf(
-			"host = %q, want 127.0.0.1 — the explorer dialled something else",
-			parsed.Hostname(),
-		)
+		t.Errorf("host = %q, want 127.0.0.1 — the explorer dialled something else", parsed.Hostname())
 	}
 	if parsed.Port() != strconv.Itoa(port) {
 		t.Errorf("port = %q, want %d", parsed.Port(), port)
@@ -70,11 +67,7 @@ func TestExplorerTargetRefusesAnExternalHost(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			got, err := explorerTarget(raw, "127.0.0.1:3000", explorerTestPort)
 			if err == nil {
-				t.Fatalf(
-					"explorerTarget(%q) returned %q; the server would have fetched it",
-					raw,
-					got,
-				)
+				t.Fatalf("explorerTarget(%q) returned %q; the server would have fetched it", raw, got)
 			}
 			if got != "" {
 				t.Errorf("a rejected input still produced a target: %q", got)
@@ -96,11 +89,7 @@ func TestExplorerTargetRefusesAnotherPortOnThisHost(t *testing.T) {
 		"http://[::1]:5432/",
 	} {
 		if got, err := explorerTarget(raw, "127.0.0.1:3000", explorerTestPort); err == nil {
-			t.Errorf(
-				"explorerTarget(%q) returned %q, want a refusal — that is a different service",
-				raw,
-				got,
-			)
+			t.Errorf("explorerTarget(%q) returned %q, want a refusal — that is a different service", raw, got)
 		}
 	}
 }

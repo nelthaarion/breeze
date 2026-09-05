@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2/fleet"
-	"github.com/nelthaarion/breeze/v2/scalar"
+	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/scalar"
 )
 
 // Validate checks the focused JSON-Schema subset Breeze itself emits:
@@ -53,18 +53,14 @@ func Validate(span fleet.Span, caller string, op scalar.Operation, now int64) []
 	var out []Violation
 	if len(span.RequestPayload) > 0 && op.RequestBody != nil {
 		if schema := mediaSchema(op.RequestBody.Content); schema != nil {
-			out = append(
-				out,
-				validatePayload(span, caller, "request", span.RequestPayload, schema, now)...)
+			out = append(out, validatePayload(span, caller, "request", span.RequestPayload, schema, now)...)
 		}
 	}
 	if len(span.ResponsePayload) > 0 {
 		resp, ok := responseFor(op, span.Status)
 		if ok {
 			if schema := mediaSchema(resp.Content); schema != nil {
-				out = append(
-					out,
-					validatePayload(span, caller, "response", span.ResponsePayload, schema, now)...)
+				out = append(out, validatePayload(span, caller, "response", span.ResponsePayload, schema, now)...)
 			}
 		}
 	}
@@ -92,62 +88,24 @@ func responseFor(op scalar.Operation, status int) (scalar.Response, bool) {
 	return r, ok
 }
 
-func validatePayload(
-	span fleet.Span,
-	caller, direction string,
-	raw json.RawMessage,
-	schema *scalar.Schema,
-	now int64,
-) []Violation {
+func validatePayload(span fleet.Span, caller, direction string, raw json.RawMessage, schema *scalar.Schema, now int64) []Violation {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var value any
 	if err := dec.Decode(&value); err != nil {
-		return []Violation{
-			makeViolation(
-				span,
-				caller,
-				direction,
-				"",
-				"type",
-				schema.Type,
-				"invalid JSON",
-				"error",
-				now,
-			),
-		}
+		return []Violation{makeViolation(span, caller, direction, "", "type", schema.Type, "invalid JSON", "error", now)}
 	}
 	var out []Violation
 	walkSchema(span, caller, direction, "", value, schema, now, &out)
 	return out
 }
 
-func walkSchema(
-	span fleet.Span,
-	caller, direction, path string,
-	value any,
-	schema *scalar.Schema,
-	now int64,
-	out *[]Violation,
-) {
+func walkSchema(span fleet.Span, caller, direction, path string, value any, schema *scalar.Schema, now int64, out *[]Violation) {
 	if schema == nil {
 		return
 	}
 	if !typeMatches(schema.Type, value) {
-		*out = append(
-			*out,
-			makeViolation(
-				span,
-				caller,
-				direction,
-				path,
-				"type",
-				schema.Type,
-				observedType(value),
-				"error",
-				now,
-			),
-		)
+		*out = append(*out, makeViolation(span, caller, direction, path, "type", schema.Type, observedType(value), "error", now))
 		return
 	}
 	if len(schema.Enum) > 0 {
@@ -159,40 +117,14 @@ func walkSchema(
 			}
 		}
 		if !found {
-			*out = append(
-				*out,
-				makeViolation(
-					span,
-					caller,
-					direction,
-					path,
-					"enum",
-					fmt.Sprint(schema.Enum),
-					fmt.Sprint(value),
-					"error",
-					now,
-				),
-			)
+			*out = append(*out, makeViolation(span, caller, direction, path, "enum", fmt.Sprint(schema.Enum), fmt.Sprint(value), "error", now))
 		}
 	}
 	switch typed := value.(type) {
 	case map[string]any:
 		for _, required := range schema.Required {
 			if _, ok := typed[required]; !ok {
-				*out = append(
-					*out,
-					makeViolation(
-						span,
-						caller,
-						direction,
-						pointer(path, required),
-						"required",
-						"present",
-						"missing",
-						"error",
-						now,
-					),
-				)
+				*out = append(*out, makeViolation(span, caller, direction, pointer(path, required), "required", "present", "missing", "error", now))
 			}
 		}
 		for key, child := range typed {
@@ -202,36 +134,14 @@ func walkSchema(
 				if schema.AdditionalProperties != nil && !*schema.AdditionalProperties {
 					severity = "error"
 				}
-				*out = append(
-					*out,
-					makeViolation(
-						span,
-						caller,
-						direction,
-						pointer(path, key),
-						"additionalProperties",
-						"declared property",
-						"unknown field",
-						severity,
-						now,
-					),
-				)
+				*out = append(*out, makeViolation(span, caller, direction, pointer(path, key), "additionalProperties", "declared property", "unknown field", severity, now))
 				continue
 			}
 			walkSchema(span, caller, direction, pointer(path, key), child, childSchema, now, out)
 		}
 	case []any:
 		for i, child := range typed {
-			walkSchema(
-				span,
-				caller,
-				direction,
-				pointer(path, strconv.Itoa(i)),
-				child,
-				schema.Items,
-				now,
-				out,
-			)
+			walkSchema(span, caller, direction, pointer(path, strconv.Itoa(i)), child, schema.Items, now, out)
 		}
 	}
 }
@@ -286,29 +196,10 @@ func observedType(v any) string {
 	}
 	return fmt.Sprintf("%T", v)
 }
-
 func pointer(base, key string) string {
 	key = strings.NewReplacer("~", "~0", "/", "~1").Replace(key)
 	return base + "/" + key
 }
-
-func makeViolation(
-	s fleet.Span,
-	caller, direction, path, rule, expected, observed, severity string,
-	now int64,
-) Violation {
-	return Violation{
-		TraceID:   s.TraceID,
-		SpanID:    s.SpanID,
-		Caller:    caller,
-		Callee:    s.Service,
-		Route:     s.Route,
-		Direction: direction,
-		Path:      path,
-		Rule:      rule,
-		Expected:  expected,
-		Observed:  observed,
-		Severity:  severity,
-		Timestamp: now,
-	}
+func makeViolation(s fleet.Span, caller, direction, path, rule, expected, observed, severity string, now int64) Violation {
+	return Violation{TraceID: s.TraceID, SpanID: s.SpanID, Caller: caller, Callee: s.Service, Route: s.Route, Direction: direction, Path: path, Rule: rule, Expected: expected, Observed: observed, Severity: severity, Timestamp: now}
 }

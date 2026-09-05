@@ -31,7 +31,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2/internal/generator"
+	"github.com/nelthaarion/breeze/internal/generator"
 )
 
 // modelsDirName is where `breeze generate model` writes. It is a literal in the
@@ -87,13 +87,7 @@ func readSourceModels(root string) ([]sourceModel, []string) {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		if err != nil {
-			notes = append(
-				notes,
-				filepath.Join(
-					modelsDirName,
-					name,
-				)+" could not be parsed, so its models are not reported: "+err.Error(),
-			)
+			notes = append(notes, filepath.Join(modelsDirName, name)+" could not be parsed, so its models are not reported: "+err.Error())
 			continue
 		}
 

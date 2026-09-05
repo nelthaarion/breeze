@@ -145,13 +145,7 @@ func Incidents(g *TopologyGraph, cfg Config, now time.Time) []BlastRadius {
 // traversal itself has nothing left to tune. The normalisation read as if it
 // mattered, which is worse than its absence — a future reader would have looked
 // for the knob it implied.
-func ComputeBlastRadius(
-	g *TopologyGraph,
-	service string,
-	rate float64,
-	calls uint64,
-	now time.Time,
-) BlastRadius {
+func ComputeBlastRadius(g *TopologyGraph, service string, rate float64, calls uint64, now time.Time) BlastRadius {
 	br := BlastRadius{
 		Service:      service,
 		ErrorRate:    rate,
@@ -261,13 +255,7 @@ func buildBanner(br BlastRadius) string {
 	if len(names) == 1 {
 		noun = "service"
 	}
-	fmt.Fprintf(
-		&b,
-		" — impacting %d downstream %s: %s",
-		len(names),
-		noun,
-		strings.Join(names, ", "),
-	)
+	fmt.Fprintf(&b, " — impacting %d downstream %s: %s", len(names), noun, strings.Join(names, ", "))
 	b.WriteByte('.')
 	return b.String()
 }

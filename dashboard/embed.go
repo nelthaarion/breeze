@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 //go:embed templates/views/*.html
@@ -31,7 +31,7 @@ func writeTemplates() (string, error) {
 
 	// Write views
 	viewsDir := filepath.Join(dir, "views")
-	if err := os.MkdirAll(viewsDir, 0o755); err != nil {
+	if err := os.MkdirAll(viewsDir, 0755); err != nil {
 		os.RemoveAll(dir)
 		return "", err
 	}
@@ -46,7 +46,7 @@ func writeTemplates() (string, error) {
 			os.RemoveAll(dir)
 			return "", err
 		}
-		if err := os.WriteFile(filepath.Join(viewsDir, e.Name()), data, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(viewsDir, e.Name()), data, 0644); err != nil {
 			os.RemoveAll(dir)
 			return "", err
 		}
@@ -54,7 +54,7 @@ func writeTemplates() (string, error) {
 
 	// Write components
 	compDir := filepath.Join(dir, "components")
-	if err := os.MkdirAll(compDir, 0o755); err != nil {
+	if err := os.MkdirAll(compDir, 0755); err != nil {
 		os.RemoveAll(dir)
 		return "", err
 	}
@@ -69,7 +69,7 @@ func writeTemplates() (string, error) {
 			os.RemoveAll(dir)
 			return "", err
 		}
-		if err := os.WriteFile(filepath.Join(compDir, e.Name()), data, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(compDir, e.Name()), data, 0644); err != nil {
 			os.RemoveAll(dir)
 			return "", err
 		}
@@ -77,25 +77,21 @@ func writeTemplates() (string, error) {
 
 	// Write public assets
 	pubDir := filepath.Join(dir, "public")
-	if err := os.MkdirAll(pubDir, 0o755); err != nil {
+	if err := os.MkdirAll(pubDir, 0755); err != nil {
 		os.RemoveAll(dir)
 		return "", err
 	}
-	err = fs.WalkDir(
-		publicFS,
-		"templates/public",
-		func(path string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return err
-			}
-			data, err := publicFS.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			relPath := strings.TrimPrefix(path, "templates/public/")
-			return os.WriteFile(filepath.Join(pubDir, relPath), data, 0o644)
-		},
-	)
+	err = fs.WalkDir(publicFS, "templates/public", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := publicFS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		relPath := strings.TrimPrefix(path, "templates/public/")
+		return os.WriteFile(filepath.Join(pubDir, relPath), data, 0644)
+	})
 	if err != nil {
 		os.RemoveAll(dir)
 		return "", err

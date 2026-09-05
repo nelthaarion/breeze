@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 func testI18n(t *testing.T) *breeze.I18n {
@@ -37,11 +37,7 @@ func testI18n(t *testing.T) *breeze.I18n {
 // already does, and what the migration to an error-returning HandlerFunc made
 // mandatory. Its error is asserted rather than ignored: an arrangement step that fails
 // would otherwise leave the test running against a context it did not set up.
-func runLocale(
-	t *testing.T,
-	i18n *breeze.I18n,
-	setup func(ctx *breeze.Context) error,
-) *breeze.Context {
+func runLocale(t *testing.T, i18n *breeze.I18n, setup func(ctx *breeze.Context) error) *breeze.Context {
 	t.Helper()
 	ctx := breeze.NewContext(breeze.GET, "/")
 	if setup != nil {

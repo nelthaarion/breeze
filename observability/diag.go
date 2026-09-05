@@ -17,7 +17,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // diagName is the registry key. "observability" matches the feature name.
@@ -80,12 +80,9 @@ func (c *Collector) probe() diag.Report {
 			"TopNames() return nothing. The signal counts above are still accurate.")
 	}
 	if c.Len() == c.cfg.Capacity && st.Signals > uint64(c.cfg.Capacity) {
-		notes = append(
-			notes,
-			fmt.Sprintf("The ring buffer is full at %d, so the oldest signals have "+
-				"been evicted. Roughly %d signal(s) are no longer readable through Snapshot.",
-				c.cfg.Capacity, st.Signals-uint64(c.cfg.Capacity)),
-		)
+		notes = append(notes, fmt.Sprintf("The ring buffer is full at %d, so the oldest signals have "+
+			"been evicted. Roughly %d signal(s) are no longer readable through Snapshot.",
+			c.cfg.Capacity, st.Signals-uint64(c.cfg.Capacity)))
 	}
 
 	if degraded {

@@ -16,10 +16,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/events"
 )
 
 func main() {
+
 	fmt.Println("🚀 Breeze Event Demo")
 
 	// register handlers
@@ -27,7 +28,7 @@ func main() {
 
 	fmt.Println("Creating user...")
 
-	events.Emit(
+	_ = events.Emit(
 		UserRegistered{
 			ID:    1,
 			Email: "test@example.com",
@@ -37,4 +38,5 @@ func main() {
 	fmt.Println("Request finished")
 
 	time.Sleep(time.Second)
+
 }

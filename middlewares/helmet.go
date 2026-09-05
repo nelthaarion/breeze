@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // SecurityOptions defines configurable HTTP security headers
@@ -84,7 +84,10 @@ func DefaultSecurityMiddleware() breeze.HandlerFunc {
 	})
 }
 
-// Modifiable headers helper functions
+// Modifiable headers helper functions.
+
+// WithContentSecurityPolicy returns a SecurityOptions with only the
+// Content-Security-Policy header set, for merging with the defaults.
 func WithContentSecurityPolicy(csp string) SecurityOptions {
 	return SecurityOptions{ContentSecurityPolicy: csp}
 }

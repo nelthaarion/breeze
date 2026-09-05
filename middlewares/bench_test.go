@@ -14,7 +14,7 @@ package middleware
 import (
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // benchCtx returns a Context that looks like a parsed GET.

@@ -18,7 +18,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/fleet"
 )
 
 // Trace is one assembled request journey, ready to render.

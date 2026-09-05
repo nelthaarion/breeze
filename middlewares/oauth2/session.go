@@ -1,6 +1,6 @@
 package oauth2
 
-import "github.com/nelthaarion/breeze/v2"
+import "github.com/nelthaarion/breeze"
 
 // session is the resolved, authenticated session attached to a request after a
 // successful Auth/Optional/Callback. It is what oauth2.User and oauth2.Token

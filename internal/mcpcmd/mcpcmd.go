@@ -26,8 +26,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2/internal/mcp"
-	"github.com/nelthaarion/breeze/v2/rpc"
+	"github.com/nelthaarion/breeze/internal/mcp"
+	"github.com/nelthaarion/breeze/rpc"
 )
 
 // TokenEnv is the environment variable a bearer token may be supplied through.
@@ -114,17 +114,10 @@ func ParseFlags(name string, args []string, errOut io.Writer) (Options, error) {
 		"serve MCP Streamable HTTP on this control port instead of stdio (0 = stdio)")
 	fs.StringVar(&opts.Host, "host", mcp.DefaultNetworkHost,
 		"bind address for --port; the default is loopback only")
-	fs.StringVar(
-		&opts.Token,
-		"token",
-		os.Getenv(TokenEnv),
-		"bearer token required on every network request (default $"+TokenEnv+"; generated and printed once if unset)",
-	)
-	origins := fs.String(
-		"allow-origin",
-		"",
-		"comma-separated Origin values to accept in addition to loopback, or * to disable the check",
-	)
+	fs.StringVar(&opts.Token, "token", os.Getenv(TokenEnv),
+		"bearer token required on every network request (default $"+TokenEnv+"; generated and printed once if unset)")
+	origins := fs.String("allow-origin", "",
+		"comma-separated Origin values to accept in addition to loopback, or * to disable the check")
 	scope := fs.String("scope", "",
 		"comma-separated capability categories this token may use (default: all). "+
 			"Values: "+strings.Join(capabilityList(), ", "))
@@ -195,16 +188,8 @@ func ParseFlags(name string, args []string, errOut io.Writer) (Options, error) {
 // printUsage writes the usage block for either command.
 func printUsage(w io.Writer, name string, fs *flag.FlagSet) {
 	fmt.Fprintf(w, "%s serves the Breeze toolchain over MCP.\n", name)
-	fmt.Fprintf(
-		w,
-		"\n  %s                stdio (for an editor launching it as a subprocess)\n",
-		name,
-	)
-	fmt.Fprintf(
-		w,
-		"  %s --port 2000    MCP Streamable HTTP on a control port, loopback only\n",
-		name,
-	)
+	fmt.Fprintf(w, "\n  %s                stdio (for an editor launching it as a subprocess)\n", name)
+	fmt.Fprintf(w, "  %s --port 2000    MCP Streamable HTTP on a control port, loopback only\n", name)
 	fmt.Fprintln(w, "\nFlags:")
 	fs.PrintDefaults()
 }
@@ -302,8 +287,7 @@ func applyConfinement(opts Options) error {
 // Options because this function is also the one a test drives directly, and a test that
 // wants to see the events should not have to build a command line to get them.
 func ServeStdio(version string, mode mcp.ServerMode, scope mcp.Scope,
-	in io.Reader, out io.Writer, logger mcp.Logger,
-) error {
+	in io.Reader, out io.Writer, logger mcp.Logger) error {
 	server, err := mcp.NewServerForMode(version, mode)
 	if err != nil {
 		return err
@@ -389,13 +373,7 @@ func capabilityList() []string {
 //
 // stderr, not stdout, even in network mode: a process whose output is being read
 // by anything at all should not have its diagnostics mistaken for protocol.
-func announce(
-	errOut io.Writer,
-	name string,
-	opts Options,
-	server *mcp.NetworkServer,
-	token string,
-) {
+func announce(errOut io.Writer, name string, opts Options, server *mcp.NetworkServer, token string) {
 	// The token is printed only when it was generated here. Echoing one the
 	// operator supplied would copy a secret into logs that already have it under
 	// control.
@@ -403,13 +381,8 @@ func announce(
 		fmt.Fprintf(errOut, "%s: generated control token (shown once): %s\n", name, token)
 		fmt.Fprintf(errOut, "%s: set %s to keep it across restarts\n", name, TokenEnv)
 	}
-	fmt.Fprintf(
-		errOut,
-		"%s: control endpoint http://%s%s (MCP Streamable HTTP, bearer token required)\n",
-		name,
-		server.Addr(),
-		server.Endpoint(),
-	)
+	fmt.Fprintf(errOut, "%s: control endpoint http://%s%s (MCP Streamable HTTP, bearer token required)\n",
+		name, server.Addr(), server.Endpoint())
 	// The mode is printed unconditionally because it decides what the server can
 	// do, and an operator scanning a log for "why can this thing generate code"
 	// should find the answer on the startup line rather than by reading a config.
@@ -418,33 +391,17 @@ func announce(
 	// fact about a running server, and an operator who scoped a token wants to see
 	// that it took effect rather than trusting that it did.
 	if opts.Scope.IsScoped() {
-		fmt.Fprintf(
-			errOut,
-			"%s: token scope %s\n",
-			name,
-			strings.Join(scopeNames(opts.Scope), ", "),
-		)
+		fmt.Fprintf(errOut, "%s: token scope %s\n", name, strings.Join(scopeNames(opts.Scope), ", "))
 	} else {
 		fmt.Fprintf(errOut, "%s: token scope all capabilities (unscoped)\n", name)
 	}
-	fmt.Fprintf(
-		errOut,
-		"%s: capability report at http://%s%s\n",
-		name,
-		server.Addr(),
-		featuresEndpoint,
-	)
+	fmt.Fprintf(errOut, "%s: capability report at http://%s%s\n", name, server.Addr(), featuresEndpoint)
 	// The workspace is a security-relevant fact about a running server, printed
 	// either way for the same reason the scope line is: an operator who confined it
 	// wants to see that it took effect, and one who removed confinement should find
 	// that on the startup line rather than by reading a config.
 	if roots := mcp.WorkspaceRoots(); len(roots) > 0 {
-		fmt.Fprintf(
-			errOut,
-			"%s: filesystem tools confined to %s\n",
-			name,
-			strings.Join(roots, ", "),
-		)
+		fmt.Fprintf(errOut, "%s: filesystem tools confined to %s\n", name, strings.Join(roots, ", "))
 	} else {
 		fmt.Fprintf(errOut, "%s: WARNING filesystem confinement is OFF (--allow-any-path) — "+
 			"tools may read, write and run `go test` anywhere on this host\n", name)
@@ -452,12 +409,8 @@ func announce(
 	if opts.Host != mcp.DefaultNetworkHost {
 		// Worth one line: the bind was widened deliberately, and the token is now
 		// the only thing between the network and a code generator.
-		fmt.Fprintf(
-			errOut,
-			"%s: bound to %s — reachable beyond loopback; the bearer token is the only guard\n",
-			name,
-			opts.Host,
-		)
+		fmt.Fprintf(errOut, "%s: bound to %s — reachable beyond loopback; the bearer token is the only guard\n",
+			name, opts.Host)
 		// A generator-mode server on a non-loopback bind is the highest-consequence
 		// combination this package can produce: whoever holds the token can write
 		// files and start containers. The warning names the fix rather than only
@@ -465,13 +418,9 @@ func announce(
 		// telling an operator who has already narrowed the token to narrow it is how
 		// a warning becomes noise that gets filtered out.
 		if opts.Mode == mcp.ModeGenerator && !opts.Scope.IsScoped() {
-			fmt.Fprintf(
-				errOut,
-				"%s: this is a %s server reachable off-host with an unscoped token — "+
-					"consider --scope so a leaked credential cannot generate code or provision containers\n",
-				name,
-				mcp.ModeGenerator,
-			)
+			fmt.Fprintf(errOut, "%s: this is a %s server reachable off-host with an unscoped token — "+
+				"consider --scope so a leaked credential cannot generate code or provision containers\n",
+				name, mcp.ModeGenerator)
 		}
 	}
 }

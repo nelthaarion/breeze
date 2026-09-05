@@ -6,23 +6,13 @@ import (
 	"strings"
 )
 
-const (
-	middlewareImport = `middleware "github.com/nelthaarion/breeze/v2/middlewares"`
-	scalarImport     = `"github.com/nelthaarion/breeze/v2/scalar"`
-)
+const middlewareImport = `middleware "github.com/nelthaarion/breeze/middlewares"`
+const scalarImport = `"github.com/nelthaarion/breeze/scalar"`
 
 func generateResource(modulePath, name string, args []string) error {
 	fs := flag.NewFlagSet("generate resource", flag.ContinueOnError)
-	pluralOverride := fs.String(
-		"plural",
-		"",
-		"override the pluralized resource name (e.g. --plural=people)",
-	)
-	pathOverride := fs.String(
-		"path",
-		"",
-		"route prefix (default /<plural>, e.g. --path=/api/v1/users)",
-	)
+	pluralOverride := fs.String("plural", "", "override the pluralized resource name (e.g. --plural=people)")
+	pathOverride := fs.String("path", "", "route prefix (default /<plural>, e.g. --path=/api/v1/users)")
 	methods := parseMethodsFlag(fs)
 	noValidate := fs.Bool("no-validate", false, "do not infer validate tags for string fields")
 	force := fs.Bool("force", false, "overwrite an existing handler file")
@@ -38,9 +28,7 @@ func generateResource(modulePath, name string, args []string) error {
 		return err
 	}
 	if len(fields) == 0 {
-		return fmt.Errorf(
-			"usage: breeze generate resource <Name> field:type[:rules] [field:type ...]",
-		)
+		return fmt.Errorf("usage: breeze generate resource <Name> field:type[:rules] [field:type ...]")
 	}
 
 	// Inferred rules, unless the caller opted out. Explicit rules always win â€”
@@ -70,16 +58,7 @@ func generateResource(modulePath, name string, args []string) error {
 		return err
 	}
 
-	if err := writeResourceHandlerFileTo(
-		target,
-		modulePath,
-		name,
-		plural,
-		pathBase,
-		fields,
-		actions,
-		*force,
-	); err != nil {
+	if err := writeResourceHandlerFileTo(target, modulePath, name, plural, pathBase, fields, actions, *force); err != nil {
 		return err
 	}
 
@@ -88,15 +67,7 @@ func generateResource(modulePath, name string, args []string) error {
 		docArgs[i] = routeDoc(a, name, plural, pathBase+a.PathSuffix)
 	}
 
-	return registerActionRoutes(
-		modulePath,
-		name,
-		pathBase,
-		actions,
-		docArgs,
-		middlewareImport,
-		scalarImport,
-	)
+	return registerActionRoutes(modulePath, name, pathBase, actions, docArgs, middlewareImport, scalarImport)
 }
 
 // writeResourceHandlerFile writes the handler file to the destination the
@@ -107,12 +78,7 @@ func generateResource(modulePath, name string, args []string) error {
 // the destination before writing anything, while a caller that only has a
 // resource name should not have to reconstruct the default derivation to get the
 // same answer. Both end up in the same writer.
-func writeResourceHandlerFile(
-	name, plural, pathBase string,
-	fields []field,
-	actions []action,
-	force bool,
-) error {
+func writeResourceHandlerFile(name, plural, pathBase string, fields []field, actions []action, force bool) error {
 	target, err := (*outputFlags)(nil).target("handlers", strings.ToLower(name))
 	if err != nil {
 		return err
@@ -128,8 +94,8 @@ func writeResourceHandlerFile(
 // before writing anything, so that a bad --package or a filename another feature
 // owns fails before the route block is touched.
 func writeResourceHandlerFileTo(target outputTarget, modulePath, name, plural, pathBase string,
-	fields []field, actions []action, force bool,
-) error {
+	fields []field, actions []action, force bool) error {
+
 	nameLower := strings.ToLower(name)
 
 	// Which handlers get emitted decides which imports are used. Emitting an
@@ -151,7 +117,7 @@ func writeResourceHandlerFileTo(target outputTarget, modulePath, name, plural, p
 	validated := needsBinding && usesValidation(fields)
 	needsFmt := want["create"]
 
-	imports := []string{`"sync"`, `"github.com/nelthaarion/breeze/v2"`}
+	imports := []string{`"sync"`, `"github.com/nelthaarion/breeze"`}
 	if validated {
 		imports = append(imports, `"errors"`)
 	}
@@ -162,7 +128,7 @@ func writeResourceHandlerFileTo(target outputTarget, modulePath, name, plural, p
 		imports = append(imports, timeImport)
 	}
 	if needsBinding {
-		imports = append(imports, `"github.com/nelthaarion/breeze/v2/binding"`)
+		imports = append(imports, `"github.com/nelthaarion/breeze/binding"`)
 	}
 
 	var b strings.Builder
@@ -192,111 +158,43 @@ func writeResourceHandlerFileTo(target outputTarget, modulePath, name, plural, p
 		b.WriteString("}\n\n")
 	}
 
-	b.WriteString(
-		"// In-memory store for scaffolding only â€” replace with real persistence\n// before production use.\n",
-	)
-	fmt.Fprintf(
-		&b,
-		"var (\n\t%sMu sync.RWMutex\n\t%sStore = []%sResponse{}\n",
-		nameLower,
-		nameLower,
-		name,
-	)
+	b.WriteString("// In-memory store for scaffolding only â€” replace with real persistence\n// before production use.\n")
+	fmt.Fprintf(&b, "var (\n\t%sMu sync.RWMutex\n\t%sStore = []%sResponse{}\n", nameLower, nameLower, name)
 	if want["create"] {
 		fmt.Fprintf(&b, "\t%sNextID = 1\n", nameLower)
 	}
 	b.WriteString(")\n\n")
 
 	if want["list"] {
-		fmt.Fprintf(
-			&b,
-			"// List%s handles GET %s.\nfunc List%s(ctx *breeze.Context) error {\n",
-			plural,
-			pathBase,
-			plural,
-		)
+		fmt.Fprintf(&b, "// List%s handles GET %s.\nfunc List%s(ctx *breeze.Context) error {\n", plural, pathBase, plural)
 		fmt.Fprintf(&b, "\t%sMu.RLock()\n\tdefer %sMu.RUnlock()\n", nameLower, nameLower)
-		fmt.Fprintf(
-			&b,
-			"\treturn ctx.JSON(%sListResponse{%s: %sStore, Total: len(%sStore)})\n}\n\n",
-			name,
-			plural,
-			nameLower,
-			nameLower,
-		)
+		fmt.Fprintf(&b, "\treturn ctx.JSON(%sListResponse{%s: %sStore, Total: len(%sStore)})\n}\n\n", name, plural, nameLower, nameLower)
 	}
 
 	if want["get"] {
-		fmt.Fprintf(
-			&b,
-			"// Get%s handles GET %s/:id.\nfunc Get%s(ctx *breeze.Context) error {\n",
-			name,
-			pathBase,
-			name,
-		)
-		fmt.Fprintf(
-			&b,
-			"\tid := ctx.GetParam(\"id\")\n\t%sMu.RLock()\n\tdefer %sMu.RUnlock()\n",
-			nameLower,
-			nameLower,
-		)
-		fmt.Fprintf(
-			&b,
-			"\tfor _, item := range %sStore {\n\t\tif item.ID == id {\n\t\t\treturn ctx.JSON(item)\n\t\t}\n\t}\n",
-			nameLower,
-		)
+		fmt.Fprintf(&b, "// Get%s handles GET %s/:id.\nfunc Get%s(ctx *breeze.Context) error {\n", name, pathBase, name)
+		fmt.Fprintf(&b, "\tid := ctx.GetParam(\"id\")\n\t%sMu.RLock()\n\tdefer %sMu.RUnlock()\n", nameLower, nameLower)
+		fmt.Fprintf(&b, "\tfor _, item := range %sStore {\n\t\tif item.ID == id {\n\t\t\treturn ctx.JSON(item)\n\t\t}\n\t}\n", nameLower)
 		writeNotFound(&b, nameLower)
 	}
 
 	if want["create"] {
-		fmt.Fprintf(
-			&b,
-			"// Create%s handles POST %s.\nfunc Create%s(ctx *breeze.Context) error {\n",
-			name,
-			pathBase,
-			name,
-		)
-		fmt.Fprintf(
-			&b,
-			"\tvar req Create%sRequest\n\tif err := binding.Bind(&req, binding.JSONBody(ctx.Req.Body)); err != nil {\n",
-			name,
-		)
+		fmt.Fprintf(&b, "// Create%s handles POST %s.\nfunc Create%s(ctx *breeze.Context) error {\n", name, pathBase, name)
+		fmt.Fprintf(&b, "\tvar req Create%sRequest\n\tif err := binding.Bind(&req, binding.JSONBody(ctx.Req.Body)); err != nil {\n", name)
 		writeBindFailure(&b, nameLower, validated)
-		fmt.Fprintf(
-			&b,
-			"\t%sMu.Lock()\n\tid := fmt.Sprintf(\"%%d\", %sNextID)\n\t%sNextID++\n",
-			nameLower,
-			nameLower,
-			nameLower,
-		)
+		fmt.Fprintf(&b, "\t%sMu.Lock()\n\tid := fmt.Sprintf(\"%%d\", %sNextID)\n\t%sNextID++\n", nameLower, nameLower, nameLower)
 		fmt.Fprintf(&b, "\titem := %sResponse{ID: id", name)
 		for _, f := range fields {
 			fmt.Fprintf(&b, ", %s: req.%s", f.Name, f.Name)
 		}
 		b.WriteString("}\n")
-		fmt.Fprintf(
-			&b,
-			"\t%sStore = append(%sStore, item)\n\t%sMu.Unlock()\n\n",
-			nameLower,
-			nameLower,
-			nameLower,
-		)
+		fmt.Fprintf(&b, "\t%sStore = append(%sStore, item)\n\t%sMu.Unlock()\n\n", nameLower, nameLower, nameLower)
 		b.WriteString("\tctx.Status(201)\n\treturn ctx.JSON(item)\n}\n\n")
 	}
 
 	if want["update"] {
-		fmt.Fprintf(
-			&b,
-			"// Update%s handles PUT %s/:id.\nfunc Update%s(ctx *breeze.Context) error {\n",
-			name,
-			pathBase,
-			name,
-		)
-		fmt.Fprintf(
-			&b,
-			"\tvar req Update%sRequest\n\tif err := binding.Bind(&req, binding.JSONBody(ctx.Req.Body)); err != nil {\n",
-			name,
-		)
+		fmt.Fprintf(&b, "// Update%s handles PUT %s/:id.\nfunc Update%s(ctx *breeze.Context) error {\n", name, pathBase, name)
+		fmt.Fprintf(&b, "\tvar req Update%sRequest\n\tif err := binding.Bind(&req, binding.JSONBody(ctx.Req.Body)); err != nil {\n", name)
 		writeBindFailure(&b, nameLower, validated)
 		b.WriteString("\tid := ctx.GetParam(\"id\")\n")
 		fmt.Fprintf(&b, "\t%sMu.Lock()\n\tdefer %sMu.Unlock()\n", nameLower, nameLower)
@@ -309,23 +207,11 @@ func writeResourceHandlerFileTo(target outputTarget, modulePath, name, plural, p
 	}
 
 	if want["delete"] {
-		fmt.Fprintf(
-			&b,
-			"// Delete%s handles DELETE %s/:id.\nfunc Delete%s(ctx *breeze.Context) error {\n",
-			name,
-			pathBase,
-			name,
-		)
+		fmt.Fprintf(&b, "// Delete%s handles DELETE %s/:id.\nfunc Delete%s(ctx *breeze.Context) error {\n", name, pathBase, name)
 		b.WriteString("\tid := ctx.GetParam(\"id\")\n")
 		fmt.Fprintf(&b, "\t%sMu.Lock()\n\tdefer %sMu.Unlock()\n", nameLower, nameLower)
-		fmt.Fprintf(
-			&b,
-			"\tfor i, item := range %sStore {\n\t\tif item.ID == id {\n\t\t\t%sStore = append(%sStore[:i], %sStore[i+1:]...)\n\t\t\tctx.Status(204)\n\t\t\treturn nil\n\t\t}\n\t}\n",
-			nameLower,
-			nameLower,
-			nameLower,
-			nameLower,
-		)
+		fmt.Fprintf(&b, "\tfor i, item := range %sStore {\n\t\tif item.ID == id {\n\t\t\t%sStore = append(%sStore[:i], %sStore[i+1:]...)\n\t\t\tctx.Status(204)\n\t\t\treturn nil\n\t\t}\n\t}\n",
+			nameLower, nameLower, nameLower, nameLower)
 		writeNotFound(&b, nameLower)
 	}
 
@@ -349,11 +235,7 @@ func writeResourceHandlerFileTo(target outputTarget, modulePath, name, plural, p
 // writeNotFound and writeBindFailure emit the two error tails shared by the
 // generated handlers, so the per-resource error type name is spelled once.
 func writeNotFound(b *strings.Builder, nameLower string) {
-	fmt.Fprintf(
-		b,
-		"\tctx.Status(404)\n\treturn ctx.JSON(%sError{Error: \"not found\"})\n}\n\n",
-		nameLower,
-	)
+	fmt.Fprintf(b, "\tctx.Status(404)\n\treturn ctx.JSON(%sError{Error: \"not found\"})\n}\n\n", nameLower)
 }
 
 // writeBindFailure emits the error branch of a binding.Bind call.
@@ -374,11 +256,7 @@ func writeBindFailure(b *strings.Builder, nameLower string, validated bool) {
 		b.WriteString("\t\t\treturn ctx.JSON(ve.ToProblemJSON())\n")
 		b.WriteString("\t\t}\n")
 	}
-	fmt.Fprintf(
-		b,
-		"\t\tctx.Status(400)\n\t\treturn ctx.JSON(%sError{Error: \"invalid body\"})\n\t}\n\n",
-		nameLower,
-	)
+	fmt.Fprintf(b, "\t\tctx.Status(400)\n\t\treturn ctx.JSON(%sError{Error: \"invalid body\"})\n\t}\n\n", nameLower)
 }
 
 // writeStruct emits a request struct. A field's validate tag is included when
@@ -389,14 +267,7 @@ func writeStruct(b *strings.Builder, typeName string, fields []field) {
 	fmt.Fprintf(b, "type %s struct {\n", typeName)
 	for _, f := range fields {
 		if f.Validate != "" {
-			fmt.Fprintf(
-				b,
-				"\t%s %s `json:\"%s\" validate:\"%s\"`\n",
-				f.Name,
-				f.Type,
-				f.JSON,
-				f.Validate,
-			)
+			fmt.Fprintf(b, "\t%s %s `json:\"%s\" validate:\"%s\"`\n", f.Name, f.Type, f.JSON, f.Validate)
 			continue
 		}
 		fmt.Fprintf(b, "\t%s %s `json:\"%s\"`\n", f.Name, f.Type, f.JSON)

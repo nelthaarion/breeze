@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // resetFlows clears the per-provider registry so each test starts from nothing.
@@ -149,11 +149,7 @@ func TestProbeCountsAFailedCallbackSeparatelyFromOneThatNeverArrived(t *testing.
 		t.Fatalf("callbacks_failed = %v, want 3", report.Detail["callbacks_failed"])
 	}
 	if report.Status != diag.StatusDegraded {
-		t.Errorf(
-			"status = %q with every callback failing, want %q",
-			report.Status,
-			diag.StatusDegraded,
-		)
+		t.Errorf("status = %q with every callback failing, want %q", report.Status, diag.StatusDegraded)
 	}
 	if !strings.Contains(strings.Join(report.Notes, " "), "arrive and fail") {
 		t.Errorf("the note does not distinguish the two failure shapes: %q", report.Notes)

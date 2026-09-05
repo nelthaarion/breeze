@@ -52,6 +52,10 @@ var shellPrograms = map[string]bool{
 func TestNoToolStartsAShell(t *testing.T) {
 	for _, dir := range []string{".", filepath.Join("..", "generator")} {
 		fset := token.NewFileSet()
+		//lint:ignore SA1019 this test only needs a simple file-level parse of each
+		// package (no build-tag-aware file selection is required here); switching to
+		// golang.org/x/tools/go/packages would add a new module dependency for no
+		// behavioral gain in this audit.
 		pkgs, err := parser.ParseDir(fset, dir, func(info fs.FileInfo) bool {
 			return !strings.HasSuffix(info.Name(), "_test.go")
 		}, parser.SkipObjectResolution)

@@ -21,7 +21,7 @@ package fleet
 import (
 	"net/http"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // HTTPHeaderCarrier adapts http.Header to Carrier.
@@ -61,6 +61,7 @@ func (c httpHeaderCarrier) Get(key string) (string, bool) {
 // Safe with a nil ctx, a nil req, or tracing disabled — in each case it does
 // nothing, so call sites need no guards.
 func PropagateFromHTTP(ctx *breeze.Context, req *http.Request) {
+
 	if req == nil {
 		return
 	}
@@ -107,6 +108,7 @@ type Client struct {
 // The wrapper is a small struct with no allocation beyond itself, so creating one
 // per request is not a cost worth avoiding.
 func WrapClient(underlying *http.Client, ctx *breeze.Context) *Client {
+
 	return &Client{Underlying: underlying, ctx: ctx}
 }
 

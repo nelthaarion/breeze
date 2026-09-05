@@ -411,12 +411,10 @@ type benchmarkResult struct {
 // always present; the memory columns appear only under -benchmem, and custom
 // metrics can follow, so the tail is captured and scanned separately.
 var (
-	benchmarkLine = regexp.MustCompile(
-		`^(Benchmark\S*?)(?:-(\d+))?\s+(\d+)\s+([\d.]+)\s+ns/op(.*)$`,
-	)
-	bytesPerOp  = regexp.MustCompile(`([\d.]+)\s+B/op`)
-	allocsPerOp = regexp.MustCompile(`(\d+)\s+allocs/op`)
-	mbPerSecond = regexp.MustCompile(`([\d.]+)\s+MB/s`)
+	benchmarkLine = regexp.MustCompile(`^(Benchmark\S*?)(?:-(\d+))?\s+(\d+)\s+([\d.]+)\s+ns/op(.*)$`)
+	bytesPerOp    = regexp.MustCompile(`([\d.]+)\s+B/op`)
+	allocsPerOp   = regexp.MustCompile(`(\d+)\s+allocs/op`)
+	mbPerSecond   = regexp.MustCompile(`([\d.]+)\s+MB/s`)
 )
 
 // parseBenchmarks pulls measurements out of `go test -bench` output.

@@ -61,11 +61,7 @@ func generateWS(modulePath, name string, args []string) error {
 	// OnMessage
 	b.WriteString("// OnMessage runs for each complete message, after defragmentation.\n")
 	b.WriteString("// opcode is breeze.WsOpText or breeze.WsOpBinary.\n")
-	fmt.Fprintf(
-		&b,
-		"func (h *%s) OnMessage(conn *breeze.WSConn, opcode byte, payload []byte) {\n",
-		name,
-	)
+	fmt.Fprintf(&b, "func (h *%s) OnMessage(conn *breeze.WSConn, opcode byte, payload []byte) {\n", name)
 	b.WriteString("\tif opcode != breeze.WsOpText {\n")
 	b.WriteString("\t\t// Binary frame â€” handle or ignore.\n")
 	b.WriteString("\t\treturn\n")
@@ -80,11 +76,7 @@ func generateWS(modulePath, name string, args []string) error {
 
 	// OnClose
 	b.WriteString("// OnClose runs when the connection closes, with the close code and reason.\n")
-	fmt.Fprintf(
-		&b,
-		"func (h *%s) OnClose(conn *breeze.WSConn, code uint16, reason string) {\n",
-		name,
-	)
+	fmt.Fprintf(&b, "func (h *%s) OnClose(conn *breeze.WSConn, code uint16, reason string) {\n", name)
 	fmt.Fprintf(&b, "\tlog.Printf(%q, code, reason)\n", name+": client disconnected (%d %s)")
 	b.WriteString("\t// TODO: implement\n")
 	b.WriteString("}\n\n")
@@ -99,7 +91,7 @@ func generateWS(modulePath, name string, args []string) error {
 	if err := writeGeneratedGoFile(generatedFile{
 		Target:     target,
 		Owner:      generateOwner("ws"),
-		Imports:    []string{logImport, `"github.com/nelthaarion/breeze/v2"`},
+		Imports:    []string{logImport, `"github.com/nelthaarion/breeze"`},
 		Body:       b.String(),
 		ModulePath: modulePath,
 		Force:      *force,
@@ -117,17 +109,13 @@ func generateWS(modulePath, name string, args []string) error {
 	var body strings.Builder
 	fmt.Fprintf(&body, "// %sHandler serves %s.\n", name, wsPath)
 	fmt.Fprintf(&body, "var %sHandler = %s.New%s()\n\n", lower, target.Package, name)
-	fmt.Fprintf(
-		&body,
-		"func %s(app *breeze.Breeze, router *breeze.Router) {\n",
-		featureSetupFunc("ws"+name),
-	)
+	fmt.Fprintf(&body, "func %s(app *breeze.Breeze, router *breeze.Router) {\n", featureSetupFunc("ws"+name))
 	fmt.Fprintf(&body, "\thub := app.WebSocket(%q, %sHandler)\n", wsPath, lower)
 	fmt.Fprintf(&body, "\t%sHandler.SetHub(hub)\n", lower)
 	body.WriteString("}\n")
 
 	if err := upsertGeneratedFeature("ws"+name, body.String(), []string{
-		`"github.com/nelthaarion/breeze/v2"`,
+		`"github.com/nelthaarion/breeze"`,
 		fmt.Sprintf("%s %q", target.Package, modulePath+"/ws"),
 	}); err != nil {
 		return err
@@ -135,12 +123,7 @@ func generateWS(modulePath, name string, args []string) error {
 
 	printNotes([]string{
 		fmt.Sprintf("Serving on:   %s", wsPath),
-		fmt.Sprintf(
-			"Broadcast:    %s.%sHandler is reachable from main as %sHandler",
-			target.Package,
-			name,
-			lower,
-		),
+		fmt.Sprintf("Broadcast:    %s.%sHandler is reachable from main as %sHandler", target.Package, name, lower),
 		"Test it:      websocat " + "ws://localhost:8080" + wsPath,
 	})
 	return nil

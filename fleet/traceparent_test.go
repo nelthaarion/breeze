@@ -279,10 +279,7 @@ func TestBaggageStringIsDeterministic(t *testing.T) {
 func TestBaggageStringRespectsCap(t *testing.T) {
 	b := Baggage{}
 	for i := 0; i < 200; i++ {
-		b[strings.Repeat("k", 10)+string(rune('a'+i%26))+string(rune('a'+i/26))] = strings.Repeat(
-			"v",
-			20,
-		)
+		b[strings.Repeat("k", 10)+string(rune('a'+i%26))+string(rune('a'+i/26))] = strings.Repeat("v", 20)
 	}
 	got := b.String()
 	if len(got) > DefaultMaxBaggageBytes {

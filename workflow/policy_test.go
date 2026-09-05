@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/events"
 )
 
 // Retry timing and the remaining builder options are covered here.
@@ -438,10 +438,8 @@ func TestMetadataSurvivesTheStore(t *testing.T) {
 		t.Fatalf("GetWorkflow: %v", err)
 	}
 	if got.Metadata["tenant"] != "acme" {
-		t.Errorf(
-			"Metadata[tenant] = %q, want \"acme\"; the store kept a reference to the caller's map",
-			got.Metadata["tenant"],
-		)
+		t.Errorf("Metadata[tenant] = %q, want \"acme\"; the store kept a reference to the caller's map",
+			got.Metadata["tenant"])
 	}
 	if string(got.Payload) != `{"id":1}` {
 		t.Errorf("Payload = %s, want the stored bytes", got.Payload)

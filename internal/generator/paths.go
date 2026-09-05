@@ -47,8 +47,7 @@ func validatePathFlag(flag, value string) error {
 		return nil
 	}
 
-	if filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, `\`) ||
-		strings.HasPrefix(trimmed, "/") {
+	if filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, `\`) || strings.HasPrefix(trimmed, "/") {
 		return fmt.Errorf("--%s %q is an absolute path. This flag names a location inside the "+
 			"project, so it must be relative to the project root", flag, value)
 	}

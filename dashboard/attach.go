@@ -6,7 +6,7 @@ package dashboard
 // A full runnable example lives in the cmd/dashboard-example/ directory.
 
 import (
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // Attach is a one-liner that installs the dashboard with the default

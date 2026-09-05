@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // diagName is the registry key, matching the `breeze add fleet` feature name.
@@ -103,12 +103,9 @@ func (t *Tracer) probe() diag.Report {
 	}
 	if m.ExportFails > 0 {
 		degraded = true
-		notes = append(
-			notes,
-			fmt.Sprintf("%d export attempt(s) failed. Check that %s is reachable "+
-				"from inside this process — in a container, the host's loopback is not the container's.",
-				m.ExportFails, t.cfg.AggregatorURL),
-		)
+		notes = append(notes, fmt.Sprintf("%d export attempt(s) failed. Check that %s is reachable "+
+			"from inside this process — in a container, the host's loopback is not the container's.",
+			m.ExportFails, t.cfg.AggregatorURL))
 	}
 	if m.SpansRecorded > 0 && m.SpansExported == 0 {
 		degraded = true

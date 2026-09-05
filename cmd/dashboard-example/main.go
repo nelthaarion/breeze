@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/dashboard"
 )
 
 // ─── In-memory data store ──────────────────────────────────────────────────
@@ -115,11 +115,7 @@ func (s *UserStore) Tables() ([]dashboard.TableInfo, error) {
 	return []dashboard.TableInfo{{Name: "users", Rows: int64(s.Count())}}, nil
 }
 
-func (s *UserStore) TableData(
-	name string,
-	page, pageSize int,
-	search string,
-) (dashboard.TableData, error) {
+func (s *UserStore) TableData(name string, page, pageSize int, search string) (dashboard.TableData, error) {
 	if name != "users" {
 		return dashboard.TableData{}, fmt.Errorf("unknown table: %s", name)
 	}
@@ -136,8 +132,7 @@ func (s *UserStore) TableData(
 		q := strings.ToLower(search)
 		filtered := all[:0]
 		for _, u := range all {
-			if strings.Contains(strings.ToLower(u.Name), q) ||
-				strings.Contains(strings.ToLower(u.Email), q) {
+			if strings.Contains(strings.ToLower(u.Name), q) || strings.Contains(strings.ToLower(u.Email), q) {
 				filtered = append(filtered, u)
 			}
 		}

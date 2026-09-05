@@ -1,8 +1,8 @@
 package dashboard
 
 import (
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/events"
 )
 
 // AttachVideo starts tracking video streaming published on bus and returns

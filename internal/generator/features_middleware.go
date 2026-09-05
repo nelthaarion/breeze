@@ -37,14 +37,12 @@ func registerRecovery() {
 		Imports:  []string{middlewareImport},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
 			return func(ctx featureCtx) (featureOutput, error) {
-				return featureOutput{
-					Body: `func setupRecovery(app *breeze.Breeze, router *breeze.Router) {
+				return featureOutput{Body: `func setupRecovery(app *breeze.Breeze, router *breeze.Router) {
 	// First in the chain, so it wraps every other middleware as well as the
 	// handler. A panic in an inner middleware is just as fatal to the
 	// connection as one in your code.
 	router.Use(middleware.RecoveryMiddleware())
-}`,
-				}, nil
+}`}, nil
 			}
 		},
 	})
@@ -58,13 +56,11 @@ func registerLogging() {
 		Imports:  []string{middlewareImport},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
 			return func(ctx featureCtx) (featureOutput, error) {
-				return featureOutput{
-					Body: `func setupLogging(app *breeze.Breeze, router *breeze.Router) {
+				return featureOutput{Body: `func setupLogging(app *breeze.Breeze, router *breeze.Router) {
 	// Just inside recovery: a request rejected by rate limiting or auth still
 	// gets logged, which is exactly when you want the line.
 	router.Use(middleware.LoggingMiddleware())
-}`,
-				}, nil
+}`}, nil
 			}
 		},
 	})
@@ -77,37 +73,20 @@ func registerSecurity() {
 		Priority: 30,
 		Imports:  []string{middlewareImport},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
-			csp := fs.String(
-				"csp",
-				"",
-				"Content-Security-Policy value (default: the package default)",
-			)
-			frame := fs.String(
-				"frame-options",
-				"",
-				"X-Frame-Options value, e.g. DENY or SAMEORIGIN",
-			)
+			csp := fs.String("csp", "", "Content-Security-Policy value (default: the package default)")
+			frame := fs.String("frame-options", "", "X-Frame-Options value, e.g. DENY or SAMEORIGIN")
 			referrer := fs.String("referrer-policy", "", "Referrer-Policy value")
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				var builders []string
 				if *csp != "" {
-					builders = append(
-						builders,
-						fmt.Sprintf("middleware.WithContentSecurityPolicy(%q)", *csp),
-					)
+					builders = append(builders, fmt.Sprintf("middleware.WithContentSecurityPolicy(%q)", *csp))
 				}
 				if *frame != "" {
-					builders = append(
-						builders,
-						fmt.Sprintf("middleware.WithXFrameOptions(%q)", *frame),
-					)
+					builders = append(builders, fmt.Sprintf("middleware.WithXFrameOptions(%q)", *frame))
 				}
 				if *referrer != "" {
-					builders = append(
-						builders,
-						fmt.Sprintf("middleware.WithReferrerPolicy(%q)", *referrer),
-					)
+					builders = append(builders, fmt.Sprintf("middleware.WithReferrerPolicy(%q)", *referrer))
 				}
 
 				var body string
@@ -119,22 +98,16 @@ func registerSecurity() {
 	router.Use(middleware.DefaultSecurityMiddleware())
 }`
 				} else {
-					body = fmt.Sprintf(
-						`func setupSecurity(app *breeze.Breeze, router *breeze.Router) {
+					body = fmt.Sprintf(`func setupSecurity(app *breeze.Breeze, router *breeze.Router) {
 	router.Use(middleware.SecurityMiddleware(
 		%s,
 	))
-}`,
-						strings.Join(builders, ",\n\t\t"),
-					)
+}`, strings.Join(builders, ",\n\t\t"))
 				}
 
 				notes := []string{}
 				if len(builders) == 0 {
-					notes = append(
-						notes,
-						"Using the default header set â€” check the CSP against any CDN or inline script your pages rely on.",
-					)
+					notes = append(notes, "Using the default header set â€” check the CSP against any CDN or inline script your pages rely on.")
 				}
 				return featureOutput{Body: body, Notes: notes}, nil
 			}
@@ -162,8 +135,7 @@ func registerCORS() {
 				// silently never works. Fail at generation instead.
 				if *credentials && *origins == "*" {
 					return featureOutput{}, fmt.Errorf(
-						"--credentials with --origins=* is refused by browsers: name the origins explicitly, e.g. --origins=https://app.example.com",
-					)
+						"--credentials with --origins=* is refused by browsers: name the origins explicitly, e.g. --origins=https://app.example.com")
 				}
 
 				var extra strings.Builder
@@ -188,10 +160,7 @@ func registerCORS() {
 
 				notes := []string{}
 				if *origins == "*" {
-					notes = append(
-						notes,
-						"Origins is \"*\" â€” any site can call this API. Narrow it before production.",
-					)
+					notes = append(notes, "Origins is \"*\" â€” any site can call this API. Narrow it before production.")
 				}
 				return featureOutput{Body: body, Notes: notes}, nil
 			}
@@ -207,13 +176,11 @@ func registerCompression() {
 		Imports:  []string{middlewareImport},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
 			return func(ctx featureCtx) (featureOutput, error) {
-				return featureOutput{
-					Body: `func setupCompression(app *breeze.Breeze, router *breeze.Router) {
+				return featureOutput{Body: `func setupCompression(app *breeze.Breeze, router *breeze.Router) {
 	// Outside etag, so the ETag is computed over the uncompressed body and
 	// stays stable whether or not a given client accepts gzip.
 	router.Use(middleware.CompressionMiddleware())
-}`,
-				}, nil
+}`}, nil
 			}
 		},
 	})
@@ -232,10 +199,7 @@ func registerRateLimit() {
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				if *requests < 1 {
-					return featureOutput{}, fmt.Errorf(
-						"--requests must be at least 1, got %d",
-						*requests,
-					)
+					return featureOutput{}, fmt.Errorf("--requests must be at least 1, got %d", *requests)
 				}
 
 				window := "time.Minute"
@@ -248,8 +212,7 @@ func registerRateLimit() {
 					msgLine = fmt.Sprintf("\t\tMessage:  %q,\n", *message)
 				}
 
-				body := fmt.Sprintf(
-					`func setupRatelimit(app *breeze.Breeze, router *breeze.Router) {
+				body := fmt.Sprintf(`func setupRatelimit(app *breeze.Breeze, router *breeze.Router) {
 	// After cors so preflights are never counted or rejected, before auth so a
 	// flood of bad tokens is dropped without paying for signature
 	// verification.
@@ -257,18 +220,10 @@ func registerRateLimit() {
 		Requests: %d,
 		Per:      %s,
 %s	}))
-}`,
-					*requests,
-					window,
-					msgLine,
-				)
+}`, *requests, window, msgLine)
 
 				return featureOutput{Body: body, Notes: []string{
-					fmt.Sprintf(
-						"Limiting to %d requests per %s.",
-						*requests,
-						strings.TrimPrefix(window, "time."),
-					),
+					fmt.Sprintf("Limiting to %d requests per %s.", *requests, strings.TrimPrefix(window, "time.")),
 					"The limiter keys on client address, so behind a proxy every request looks like one client â€” set the proxy to pass a real client IP.",
 				}}, nil
 			}
@@ -285,11 +240,7 @@ func registerI18n() {
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
 			locales := fs.String("locales", "en", "comma-separated locales to scaffold")
 			dir := fs.String("dir", "./locales", "directory holding the locale JSON files")
-			fallback := fs.Bool(
-				"fallback",
-				true,
-				"fall back to the default locale for a missing key",
-			)
+			fallback := fs.Bool("fallback", true, "fall back to the default locale for a missing key")
 			devMode := fs.Bool("dev", true, "reload catalogs on change")
 
 			return func(ctx featureCtx) (featureOutput, error) {
@@ -302,8 +253,7 @@ func registerI18n() {
 				}
 				def := list[0]
 
-				body := fmt.Sprintf(
-					`// I18n holds the loaded message catalogs. Look up a translation with the
+				body := fmt.Sprintf(`// I18n holds the loaded message catalogs. Look up a translation with the
 // request's locale, which the middleware below resolves from Accept-Language.
 var I18n *breeze.I18n
 
@@ -323,12 +273,7 @@ func setupI18n(app *breeze.Breeze, router *breeze.Router) {
 	}
 
 	router.Use(middleware.LocaleMiddleware(I18n))
-}`,
-					*dir,
-					def,
-					*fallback,
-					*devMode,
-				)
+}`, *dir, def, *fallback, *devMode)
 
 				// NewI18n returns an error when the locale directory contains
 				// no files, so a catalog per locale has to ship with the
@@ -336,22 +281,15 @@ func setupI18n(app *breeze.Breeze, router *breeze.Router) {
 				// log.Fatalf above.
 				files := make(map[string]string, len(list))
 				for _, loc := range list {
-					files[strings.TrimPrefix(strings.TrimPrefix(*dir, "./"), "/")+"/"+loc+".json"] = fmt.Sprintf(
-						"{\n  \"greeting\": \"Hello\",\n  \"locale_name\": %q\n}\n",
-						loc,
-					)
+					files[strings.TrimPrefix(strings.TrimPrefix(*dir, "./"), "/")+"/"+loc+".json"] =
+						fmt.Sprintf("{\n  \"greeting\": \"Hello\",\n  \"locale_name\": %q\n}\n", loc)
 				}
 
 				return featureOutput{
 					Body:  body,
 					Files: files,
 					Notes: []string{
-						fmt.Sprintf(
-							"Scaffolded catalogs for %s in %s (default locale: %s).",
-							strings.Join(list, ", "),
-							*dir,
-							def,
-						),
+						fmt.Sprintf("Scaffolded catalogs for %s in %s (default locale: %s).", strings.Join(list, ", "), *dir, def),
 						"Catalogs must exist before the app boots â€” NewI18n treats an empty locale directory as an error.",
 					},
 				}, nil
@@ -367,26 +305,14 @@ func registerJWT() {
 		Priority: 100,
 		Imports:  []string{middlewareImport, osImport, logImport},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
-			secretEnv := fs.String(
-				"secret-env",
-				"JWT_ACCESS_SECRET",
-				"environment variable holding the signing secret",
-			)
+			secretEnv := fs.String("secret-env", "JWT_ACCESS_SECRET", "environment variable holding the signing secret")
 			refresh := fs.Bool("refresh", false, "enable refresh-token support")
-			contextKey := fs.String(
-				"context-key",
-				"user",
-				"context key the claims are stored under",
-			)
+			contextKey := fs.String("context-key", "user", "context key the claims are stored under")
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				var extra strings.Builder
 				if *refresh {
-					fmt.Fprintf(
-						&extra,
-						"\t\tRefreshSecret:      os.Getenv(%q),\n",
-						*secretEnv+"_REFRESH",
-					)
+					fmt.Fprintf(&extra, "\t\tRefreshSecret:      os.Getenv(%q),\n", *secretEnv+"_REFRESH")
 					extra.WriteString("\t\tEnableRefreshToken: true,\n")
 				}
 
@@ -406,8 +332,7 @@ func registerJWT() {
 `, *secretEnv+"_REFRESH")
 				}
 
-				body := fmt.Sprintf(
-					`// JWTAuth returns the bearer-token middleware for routes that require a
+				body := fmt.Sprintf(`// JWTAuth returns the bearer-token middleware for routes that require a
 // signed caller.
 //
 // It is deliberately not registered globally. router.Use would apply it to
@@ -435,12 +360,7 @@ func setupJwt(app *breeze.Breeze, router *breeze.Router) {
 	if os.Getenv(%[1]q) == "" {
 		log.Fatal("%[1]s is not set. Verifying against an empty secret accepts any token an attacker signs, so this build refuses to start.")
 	}
-%[4]s}`,
-					*secretEnv,
-					extra.String(),
-					*contextKey,
-					refreshCheck,
-				)
+%[4]s}`, *secretEnv, extra.String(), *contextKey, refreshCheck)
 
 				notes := []string{
 					fmt.Sprintf("Set %s before starting the app. The app now exits without it: "+
@@ -449,10 +369,7 @@ func setupJwt(app *breeze.Breeze, router *breeze.Router) {
 					"Apply per route: router.Handle(breeze.GET, \"/me\", handlers.Me, JWTAuth()).",
 				}
 				if *refresh {
-					notes = append(
-						notes,
-						fmt.Sprintf("Refresh tokens are on â€” also set %s_REFRESH.", *secretEnv),
-					)
+					notes = append(notes, fmt.Sprintf("Refresh tokens are on â€” also set %s_REFRESH.", *secretEnv))
 				}
 				return featureOutput{Body: body, Notes: notes}, nil
 			}
@@ -477,42 +394,20 @@ func registerOAuth2() {
 		Priority: 105,
 		Imports:  []string{oauth2Import, osImport, timeImport},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
-			provider := fs.String(
-				"provider",
-				"google",
-				"identity provider: google, github, microsoft, discord",
-			)
+			provider := fs.String("provider", "google", "identity provider: google, github, microsoft, discord")
 			sessionMode := fs.String("session", "cookie", "session persistence: cookie or jwt")
-			success := fs.String(
-				"success-redirect",
-				"/",
-				"where to send the browser after a successful login",
-			)
-			failure := fs.String(
-				"failure-redirect",
-				"/login",
-				"where to send the browser after a failed login",
-			)
-			secure := fs.Bool(
-				"secure",
-				false,
-				"mark session cookies Secure (required in production)",
-			)
+			success := fs.String("success-redirect", "/", "where to send the browser after a successful login")
+			failure := fs.String("failure-redirect", "/login", "where to send the browser after a failed login")
+			secure := fs.Bool("secure", false, "mark session cookies Secure (required in production)")
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				constant, ok := oauthProviders[strings.ToLower(*provider)]
 				if !ok {
-					return featureOutput{}, fmt.Errorf(
-						"unknown provider %q â€” must be one of: discord, github, google, microsoft",
-						*provider,
-					)
+					return featureOutput{}, fmt.Errorf("unknown provider %q â€” must be one of: discord, github, google, microsoft", *provider)
 				}
 				mode := strings.ToLower(*sessionMode)
 				if mode != "cookie" && mode != "jwt" {
-					return featureOutput{}, fmt.Errorf(
-						"unknown --session %q â€” must be cookie or jwt",
-						*sessionMode,
-					)
+					return featureOutput{}, fmt.Errorf("unknown --session %q â€” must be cookie or jwt", *sessionMode)
 				}
 
 				secretField := "CookieSecret: os.Getenv(\"OAUTH_COOKIE_SECRET\"),"
@@ -520,8 +415,7 @@ func registerOAuth2() {
 					secretField = "JWTSecret:    os.Getenv(\"OAUTH_JWT_SECRET\"),"
 				}
 
-				body := fmt.Sprintf(
-					`// OAuth2Config is the provider configuration, kept package-level so the
+				body := fmt.Sprintf(`// OAuth2Config is the provider configuration, kept package-level so the
 // per-route helpers below can reuse it.
 //
 // Credentials come from the environment rather than this file: it is generated
@@ -555,12 +449,7 @@ func OAuth2Auth() breeze.HandlerFunc { return oauth2.Auth(OAuth2Config) }
 // OAuth2Optional resolves the session when one exists and passes anonymous
 // requests through untouched.
 func OAuth2Optional() breeze.HandlerFunc { return oauth2.Optional(OAuth2Config) }`,
-					constant,
-					secretField,
-					*success,
-					*failure,
-					*secure,
-				)
+					constant, secretField, *success, *failure, *secure)
 
 				envVars := "OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, OAUTH_BASE_URL, OAUTH_COOKIE_SECRET"
 				if mode == "jwt" {
@@ -569,18 +458,11 @@ func OAuth2Optional() breeze.HandlerFunc { return oauth2.Optional(OAuth2Config) 
 
 				notes := []string{
 					fmt.Sprintf("Set %s.", envVars),
-					fmt.Sprintf(
-						"Register the callback URL with %s as $OAUTH_BASE_URL/auth/%s/callback.",
-						*provider,
-						strings.ToLower(*provider),
-					),
+					fmt.Sprintf("Register the callback URL with %s as $OAUTH_BASE_URL/auth/%s/callback.", *provider, strings.ToLower(*provider)),
 					"Guard routes with OAuth2Auth(); use OAuth2Optional() where anonymous access is fine.",
 				}
 				if !*secure {
-					notes = append(
-						notes,
-						"Session cookies are not marked Secure â€” fine over localhost, wrong over HTTPS. Re-run with --secure for production.",
-					)
+					notes = append(notes, "Session cookies are not marked Secure â€” fine over localhost, wrong over HTTPS. Re-run with --secure for production.")
 				}
 				return featureOutput{Body: body, Notes: notes}, nil
 			}

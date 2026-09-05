@@ -16,7 +16,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // newTestContext returns a bare request context, as breeze hands one to a
@@ -47,13 +47,7 @@ func (c *capturingTransport) Extract(carrier Carrier) (TraceContext, Baggage, bo
 
 func (c *capturingTransport) ExportSpans(context.Context, string, []Span) error { return nil }
 
-func (c *capturingTransport) ExportHeartbeat(
-	context.Context,
-	string,
-	Heartbeat,
-) error {
-	return nil
-}
+func (c *capturingTransport) ExportHeartbeat(context.Context, string, Heartbeat) error { return nil }
 
 // injectedContext returns a context carrying request state as the middleware
 // would leave it, plus the state itself so a test can read the span id Inject is
@@ -118,14 +112,10 @@ func TestInjectAdvertisesThisHopAsParent(t *testing.T) {
 		t.Error("trace id changed across a hop — the two services would appear in separate traces")
 	}
 	if got.ParentSpanID != st.spanID {
-		t.Error(
-			"outgoing parent-span-id is not this hop's span id, so the callee will link to the wrong parent",
-		)
+		t.Error("outgoing parent-span-id is not this hop's span id, so the callee will link to the wrong parent")
 	}
 	if !got.Sampled {
-		t.Error(
-			"sampled bit was not carried; the callee would make its own decision and split the trace",
-		)
+		t.Error("sampled bit was not carried; the callee would make its own decision and split the trace")
 	}
 }
 
@@ -174,9 +164,7 @@ func TestInjectOmitsEmptyBaggage(t *testing.T) {
 	Inject(ctx, carrier)
 
 	if _, ok := carrier.Get(HeaderBaggage); ok {
-		t.Error(
-			"an empty baggage header was written; every hop would pay for a value carrying nothing",
-		)
+		t.Error("an empty baggage header was written; every hop would pay for a value carrying nothing")
 	}
 }
 
@@ -329,9 +317,7 @@ func TestExtractMalformedHeaderIsCounted(t *testing.T) {
 		t.Error("Extract accepted a malformed traceparent")
 	}
 	if got := ReadMetrics().MalformedHeaderTotal; got <= before {
-		t.Error(
-			"a malformed traceparent was dropped without incrementing fleet_malformed_header_total",
-		)
+		t.Error("a malformed traceparent was dropped without incrementing fleet_malformed_header_total")
 	}
 }
 
@@ -453,8 +439,6 @@ func TestUnsampledContextPropagatesTheDecision(t *testing.T) {
 		t.Fatal("Extract failed")
 	}
 	if got.Sampled {
-		t.Error(
-			"an unsampled trace arrived sampled, so downstream would capture timelines the root declined",
-		)
+		t.Error("an unsampled trace arrived sampled, so downstream would capture timelines the root declined")
 	}
 }

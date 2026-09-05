@@ -9,9 +9,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/client"
-	"github.com/nelthaarion/breeze/v2/fleet"
-	"github.com/nelthaarion/breeze/v2/fleet/transport/httptransport"
+	"github.com/nelthaarion/breeze/client"
+	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/fleet/transport/httptransport"
 )
 
 type Config struct {
@@ -35,15 +35,12 @@ func (*Transport) Name() string { return "gnet" }
 func (t *Transport) Inject(tc fleet.TraceContext, b fleet.Baggage, c fleet.Carrier) {
 	t.http.Inject(tc, b, c)
 }
-
 func (t *Transport) Extract(c fleet.Carrier) (fleet.TraceContext, fleet.Baggage, bool) {
 	return t.http.Extract(c)
 }
-
 func (t *Transport) ExportSpans(ctx context.Context, addr string, spans []fleet.Span) error {
 	return t.http.ExportSpans(ctx, addr, spans)
 }
-
 func (t *Transport) ExportHeartbeat(ctx context.Context, addr string, hb fleet.Heartbeat) error {
 	return t.http.ExportHeartbeat(ctx, addr, hb)
 }

@@ -133,7 +133,7 @@ func diagnoseService(a diagnoseArgs) toolCallResult {
 	// down to one entry. Filtering would work but would make the service run every
 	// probe to answer a question about one.
 	if name := strings.TrimSpace(a.Subsystem); name != "" {
-		req := a.request("/diagnostics", "dashboard")
+		req := a.liveArgs.request("/diagnostics", "dashboard")
 		req.path += "?subsystem=" + name
 		// A 404 here means the subsystem is not registered, not that the
 		// dashboard is missing — the default reading would send a caller to
@@ -150,7 +150,7 @@ func diagnoseService(a diagnoseArgs) toolCallResult {
 	}
 
 	var env diagnosticsEnvelope
-	if err := fetchLiveJSON(a.request("/diagnostics", "dashboard"), &env); err != nil {
+	if err := fetchLiveJSON(a.liveArgs.request("/diagnostics", "dashboard"), &env); err != nil {
 		return liveResultError("reading diagnostics", err)
 	}
 

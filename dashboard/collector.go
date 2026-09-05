@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/observability"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/observability"
 )
 
 // Collector is the central aggregation point for every dashboard signal.

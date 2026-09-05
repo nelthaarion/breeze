@@ -184,21 +184,13 @@ func TestChangeSetLimitsAreEnforcedBeforeTheWork(t *testing.T) {
 	// taken — which is the state the first half of this test just established.
 	args := json.RawMessage(`{}`)
 	for i := len(spare.Calls); i < maxStagedCalls; i++ {
-		if _, err := spare.stage(
-			"breeze_add",
-			args,
-			func(string) error { return nil },
-		); err != nil {
+		if _, err := spare.stage("breeze_add", args, func(string) error { return nil }); err != nil {
 			t.Fatalf("staging call %d: %v", i+1, err)
 		}
 	}
 
 	ran := false
-	if _, err := spare.stage(
-		"breeze_add",
-		args,
-		func(string) error { ran = true; return nil },
-	); err == nil {
+	if _, err := spare.stage("breeze_add", args, func(string) error { ran = true; return nil }); err == nil {
 		t.Fatal("expected the staged-call limit to refuse this call")
 	}
 	if ran {

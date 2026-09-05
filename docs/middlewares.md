@@ -4,7 +4,7 @@ Every middleware Breeze ships, what each one does, and the order to install them
 in.
 
 ```go
-import middleware "github.com/nelthaarion/breeze/v2/middlewares"
+import middleware "github.com/nelthaarion/breeze/middlewares"
 
 router.Use(middleware.RecoveryMiddleware())            // outermost
 router.Use(middleware.LoggingMiddleware())

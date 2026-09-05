@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/events"
 )
 
 // These tests drive the live tracker through a real bus rather than
@@ -80,10 +80,7 @@ func TestWorkflowLiveTracksStepProgress(t *testing.T) {
 
 	// A running step must be visible as running — this is the state the
 	// ring buffer can never show, and the reason the tracker exists.
-	_ = events.EmitBus(
-		bus,
-		events.WorkflowStepStarted{ExecutionID: "e1", Step: "reserve", Attempt: 1},
-	)
+	_ = events.EmitBus(bus, events.WorkflowStepStarted{ExecutionID: "e1", Step: "reserve", Attempt: 1})
 	if got := stepState(t, findExec(t, live, "e1"), "reserve"); got != liveStepRunning {
 		t.Errorf("reserve = %q, want running", got)
 	}
@@ -146,10 +143,7 @@ func TestWorkflowLiveCompensationMarksRolledBack(t *testing.T) {
 	defer live.attach(bus)()
 
 	emitStart(t, bus, "e3", "order", "reserve", "charge")
-	_ = events.EmitBus(
-		bus,
-		events.WorkflowStepCompleted{ExecutionID: "e3", Step: "reserve", Attempt: 1},
-	)
+	_ = events.EmitBus(bus, events.WorkflowStepCompleted{ExecutionID: "e3", Step: "reserve", Attempt: 1})
 	_ = events.EmitBus(bus, events.WorkflowCompensationStarted{ExecutionID: "e3"})
 
 	if !findExec(t, live, "e3").Compensating {
@@ -269,10 +263,7 @@ func TestWorkflowLiveUnplannedStepAppended(t *testing.T) {
 	emitStart(t, bus, "e5", "wf", "a")
 	// A step the plan did not mention still carries information, so it
 	// is appended rather than dropped.
-	_ = events.EmitBus(
-		bus,
-		events.WorkflowStepStarted{ExecutionID: "e5", Step: "surprise", Attempt: 1},
-	)
+	_ = events.EmitBus(bus, events.WorkflowStepStarted{ExecutionID: "e5", Step: "surprise", Attempt: 1})
 
 	ex := findExec(t, live, "e5")
 	if len(ex.Steps) != 2 {
@@ -322,14 +313,8 @@ func TestWorkflowLiveConcurrentEvents(t *testing.T) {
 			live.start(events.WorkflowStarted{
 				ExecutionID: id, Workflow: "wf", StepNames: []string{"a", "b"},
 			})
-			_ = events.EmitBus(
-				bus,
-				events.WorkflowStepStarted{ExecutionID: id, Step: "a", Attempt: 1},
-			)
-			_ = events.EmitBus(
-				bus,
-				events.WorkflowStepCompleted{ExecutionID: id, Step: "a", Attempt: 1},
-			)
+			_ = events.EmitBus(bus, events.WorkflowStepStarted{ExecutionID: id, Step: "a", Attempt: 1})
+			_ = events.EmitBus(bus, events.WorkflowStepCompleted{ExecutionID: id, Step: "a", Attempt: 1})
 			_ = events.EmitBus(bus, events.WorkflowCompleted{ExecutionID: id})
 		}(i)
 	}
@@ -383,10 +368,7 @@ func TestAttachEventsTracksLiveWorkflows(t *testing.T) {
 	detach := c.AttachEvents(bus)
 
 	emitStart(t, bus, "wired", "checkout", "reserve")
-	_ = events.EmitBus(
-		bus,
-		events.WorkflowStepStarted{ExecutionID: "wired", Step: "reserve", Attempt: 1},
-	)
+	_ = events.EmitBus(bus, events.WorkflowStepStarted{ExecutionID: "wired", Step: "reserve", Attempt: 1})
 
 	// AttachEvents must wire the tracker, not just the ring buffer,
 	// otherwise the Events page has history but no live view.

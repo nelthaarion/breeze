@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/events"
-	"github.com/nelthaarion/breeze/v2/observability"
-	"github.com/nelthaarion/breeze/v2/workflow"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/observability"
+	"github.com/nelthaarion/breeze/workflow"
 )
 
 // These tests cover the path a workflow execution takes to reach the
@@ -83,9 +83,7 @@ func newWorkflowDashboard(t *testing.T) (*breeze.Router, *workflow.Engine, func(
 
 	col := coll.Observability()
 	if col == nil {
-		t.Fatal(
-			"Observability() = nil after AttachEvents; the engine would have nowhere to publish",
-		)
+		t.Fatal("Observability() = nil after AttachEvents; the engine would have nowhere to publish")
 	}
 
 	engine := workflow.NewEngine(workflow.Config{Bus: bus, Collector: col})
@@ -116,9 +114,7 @@ func TestWorkflowExecutionAppearsInEventsAPI(t *testing.T) {
 		t.Fatal("Attached = false, want true")
 	}
 	if len(got.Recent) == 0 {
-		t.Fatal(
-			"no workflow rows in the Events API; the engine's signals are not reaching the dashboard",
-		)
+		t.Fatal("no workflow rows in the Events API; the engine's signals are not reaching the dashboard")
 	}
 
 	row := got.Recent[0]
@@ -366,9 +362,6 @@ func TestWorkflowRowSurvivesRoundTrip(t *testing.T) {
 	}
 	span, _ := spans[0].(map[string]any)
 	if got, _ := span["phase"].(string); got != "L1" {
-		t.Errorf(
-			"span phase = %v, want \"L1\"; the frontend groups parallel steps on this",
-			span["phase"],
-		)
+		t.Errorf("span phase = %v, want \"L1\"; the frontend groups parallel steps on this", span["phase"])
 	}
 }

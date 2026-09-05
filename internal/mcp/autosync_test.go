@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2/internal/generator"
+	"github.com/nelthaarion/breeze/internal/generator"
 )
 
 // autoSyncFields are the fields whose presence is asserted end to end.
@@ -67,10 +67,7 @@ func TestNewConfigFieldsReachTheGeneratorSchemaWithoutMCPChanges(t *testing.T) {
 		// reads the properties, and a flag path with no property behind it would
 		// describe a field YAML cannot set.
 		if !schemaMentionsProperty(t, doc, field.yamlKey) {
-			t.Errorf(
-				"the models schema has no %q property, so it cannot be set from a config file",
-				field.yamlKey,
-			)
+			t.Errorf("the models schema has no %q property, so it cannot be set from a config file", field.yamlKey)
 		}
 	}
 }
@@ -106,12 +103,8 @@ func TestNewConfigFieldsReachTheMCPSchemaWithoutMCPChanges(t *testing.T) {
 
 		for _, field := range autoSyncFields {
 			if !containsString(flags, field.flagPath) {
-				t.Errorf(
-					"breeze_describe_schema(%s) does not advertise --%s, so adding a field to "+
-						"ModelConfig did not reach MCP on its own",
-					label,
-					field.flagPath,
-				)
+				t.Errorf("breeze_describe_schema(%s) does not advertise --%s, so adding a field to "+
+					"ModelConfig did not reach MCP on its own", label, field.flagPath)
 			}
 			if !strings.Contains(rendered, field.yamlKey) {
 				t.Errorf("breeze_describe_schema(%s) does not mention %q in its rendered text",

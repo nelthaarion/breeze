@@ -96,15 +96,11 @@ const (
 // Prebuilt errors for the standard codes. These are returned by value-copying
 // constructors below rather than shared by pointer, because a caller may attach
 // a Data member to what they were handed.
-func errParseError() *Error { return &Error{Code: CodeParseError, Message: msgParseError} }
-
+func errParseError() *Error     { return &Error{Code: CodeParseError, Message: msgParseError} }
 func errInvalidRequest() *Error { return &Error{Code: CodeInvalidRequest, Message: msgInvalidRequest} }
-
 func errMethodNotFound() *Error { return &Error{Code: CodeMethodNotFound, Message: msgMethodNotFound} }
-
-func errInvalidParams() *Error { return &Error{Code: CodeInvalidParams, Message: msgInvalidParams} }
-
-func errInternalError() *Error { return &Error{Code: CodeInternalError, Message: msgInternalError} }
+func errInvalidParams() *Error  { return &Error{Code: CodeInvalidParams, Message: msgInvalidParams} }
+func errInternalError() *Error  { return &Error{Code: CodeInternalError, Message: msgInternalError} }
 
 // ErrParseError returns a -32700 error.
 func ErrParseError() *Error { return errParseError() }

@@ -95,20 +95,12 @@ func InstalledFeatures() []string {
 // caller ends up believing "grpc" is available: it is a valid configuration
 // value, and generation still refuses it.
 func FleetTransports() (accepted, implemented []string) {
-	return append(
-			[]string(nil),
-			fleetTransports...), append(
-			[]string(nil),
-			fleetImplementedTransports...)
+	return append([]string(nil), fleetTransports...), append([]string(nil), fleetImplementedTransports...)
 }
 
 // FleetBackends is FleetTransports for the events transport's backends.
 func FleetBackends() (accepted, implemented []string) {
-	return append(
-			[]string(nil),
-			fleetBackends...), append(
-			[]string(nil),
-			fleetImplementedBackends...)
+	return append([]string(nil), fleetBackends...), append([]string(nil), fleetImplementedBackends...)
 }
 
 // RouteEntry is one route registration found in routes_generated.go.

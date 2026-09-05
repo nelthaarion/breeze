@@ -70,11 +70,7 @@ func (c *cachedDBInspector) Tables() ([]TableInfo, error) {
 	return tables, err
 }
 
-func (c *cachedDBInspector) TableData(
-	name string,
-	page, pageSize int,
-	search string,
-) (TableData, error) {
+func (c *cachedDBInspector) TableData(name string, page, pageSize int, search string) (TableData, error) {
 	key := dbTableDataKey{name: name, page: page, pageSize: pageSize, search: search}
 	now := time.Now()
 

@@ -33,19 +33,11 @@ func (d *googleDriver) AuthURL(cfg *Config, state, nonce, challenge string) stri
 	return buildAuthURL(d.ep.auth, cfg, state, nonce, challenge, extra)
 }
 
-func (d *googleDriver) Exchange(
-	ctx context.Context,
-	cfg *Config,
-	code, verifier string,
-) (*Token, error) {
+func (d *googleDriver) Exchange(ctx context.Context, cfg *Config, code, verifier string) (*Token, error) {
 	return postForm(ctx, cfg, d.ep.token, exchangeForm(cfg, code, verifier), ErrTokenExchange)
 }
 
-func (d *googleDriver) Refresh(
-	ctx context.Context,
-	cfg *Config,
-	refreshToken string,
-) (*Token, error) {
+func (d *googleDriver) Refresh(ctx context.Context, cfg *Config, refreshToken string) (*Token, error) {
 	return postForm(ctx, cfg, d.ep.token, refreshForm(cfg, refreshToken), ErrTokenExchange)
 }
 

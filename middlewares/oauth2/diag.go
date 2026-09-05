@@ -39,8 +39,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // diagName is the registry key, matching the `breeze add oauth2` feature name.

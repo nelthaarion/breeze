@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/events"
 )
 
 // StepFunc is the work a step performs. Returning an error fails the
@@ -335,10 +335,7 @@ func (d *Definition) validate() error {
 				return d.fail(s.name, fmt.Errorf("compensation: %w", err))
 			}
 			if s.compTimeout < 0 {
-				return d.fail(
-					s.name,
-					fmt.Errorf("%w: negative compensation timeout", ErrInvalidWorkflow),
-				)
+				return d.fail(s.name, fmt.Errorf("%w: negative compensation timeout", ErrInvalidWorkflow))
 			}
 		}
 		byName[s.name] = s
@@ -347,10 +344,7 @@ func (d *Definition) validate() error {
 	for _, s := range d.steps {
 		for _, dep := range s.dependsOn {
 			if dep == s.name {
-				return d.fail(
-					s.name,
-					fmt.Errorf("%w: %s depends on itself", ErrWorkflowCycle, s.name),
-				)
+				return d.fail(s.name, fmt.Errorf("%w: %s depends on itself", ErrWorkflowCycle, s.name))
 			}
 			if _, ok := byName[dep]; !ok {
 				return d.fail(s.name, fmt.Errorf("%w: %q", ErrUnknownDependency, dep))

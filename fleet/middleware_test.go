@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/dashboard"
 )
 
 // newRequest builds a parsed request as breeze's HTTP parser would hand one over.
@@ -40,12 +40,7 @@ func newRequest(method breeze.Method, path string, headers map[string]string) *b
 //
 // The tracer is closed before returning, so the spans are the complete set for
 // this request rather than whatever a background flush happened to have sent.
-func traced(
-	t *testing.T,
-	cfg TracerConfig,
-	req *breeze.HTTPRequest,
-	handler breeze.HandlerFunc,
-) ([]Span, *breeze.Context) {
+func traced(t *testing.T, cfg TracerConfig, req *breeze.HTTPRequest, handler breeze.HandlerFunc) ([]Span, *breeze.Context) {
 	t.Helper()
 
 	rt := newRecordingTransport()
@@ -150,10 +145,7 @@ func TestMiddlewareStartsARootTrace(t *testing.T) {
 
 	s := exactlyOne(t, spans)
 	if s.ParentSpanID != "" {
-		t.Errorf(
-			"ParentSpanID = %q, want empty — a root span with a parent sends the aggregator hunting for a span that cannot exist",
-			s.ParentSpanID,
-		)
+		t.Errorf("ParentSpanID = %q, want empty — a root span with a parent sends the aggregator hunting for a span that cannot exist", s.ParentSpanID)
 	}
 	if !s.IsRoot() {
 		t.Error("IsRoot() = false for a request that arrived without a traceparent")
@@ -172,17 +164,13 @@ func TestMiddlewareRecordsTheRequestFacts(t *testing.T) {
 	req := newRequest(breeze.POST, "/orders/42/charge", nil)
 	before := time.Now().UnixNano()
 
-	spans, _ := traced(
-		t,
-		TracerConfig{Enabled: true, SampleRate: 1.0, ServiceName: "orders-service"},
-		req,
+	spans, _ := traced(t, TracerConfig{Enabled: true, SampleRate: 1.0, ServiceName: "orders-service"}, req,
 		func(c *breeze.Context) error {
 			time.Sleep(2 * time.Millisecond) // give the duration something to measure
 			c.Status(201)
 
 			return nil
-		},
-	)
+		})
 
 	s := exactlyOne(t, spans)
 	if s.Service != "orders-service" {
@@ -232,10 +220,7 @@ func TestMiddlewareSpanCoversTheWholeChain(t *testing.T) {
 
 	s := exactlyOne(t, rt.exportedSpans())
 	if s.DurationMs < 4 {
-		t.Errorf(
-			"DurationMs = %v, want ≥ the 5ms spent downstream — the span is not timing the full chain",
-			s.DurationMs,
-		)
+		t.Errorf("DurationMs = %v, want ≥ the 5ms spent downstream — the span is not timing the full chain", s.DurationMs)
 	}
 }
 
@@ -256,16 +241,10 @@ func TestMiddlewareAdoptsInboundTrace(t *testing.T) {
 
 	s := exactlyOne(t, spans)
 	if s.TraceID != upstream.TraceIDHex() {
-		t.Errorf(
-			"TraceID = %q, want the caller's %q — the two hops would appear in separate traces",
-			s.TraceID,
-			upstream.TraceIDHex(),
-		)
+		t.Errorf("TraceID = %q, want the caller's %q — the two hops would appear in separate traces", s.TraceID, upstream.TraceIDHex())
 	}
 	if s.ParentSpanID == "" {
-		t.Fatal(
-			"ParentSpanID is empty on an inbound-traced request, so this hop looks like a second root",
-		)
+		t.Fatal("ParentSpanID is empty on an inbound-traced request, so this hop looks like a second root")
 	}
 	if s.SpanID == s.ParentSpanID {
 		t.Error("the span is its own parent")
@@ -290,10 +269,7 @@ func TestMiddlewareInheritsTheSamplingDecision(t *testing.T) {
 	spans, _ := traced(t, TracerConfig{Enabled: true, SampleRate: 0}, req, ok)
 
 	if len(spans) != 1 {
-		t.Fatalf(
-			"exported %d spans, want 1 — the local rate overrode the caller's decision",
-			len(spans),
-		)
+		t.Fatalf("exported %d spans, want 1 — the local rate overrode the caller's decision", len(spans))
 	}
 }
 
@@ -326,17 +302,13 @@ func TestMiddlewareMalformedHeaderStartsAFreshTrace(t *testing.T) {
 
 	s := exactlyOne(t, spans)
 	if s.ParentSpanID != "" {
-		t.Error(
-			"a malformed header produced a parent link, so the span points at a parent that was never parsed",
-		)
+		t.Error("a malformed header produced a parent link, so the span points at a parent that was never parsed")
 	}
 	if len(s.TraceID) != 32 {
 		t.Errorf("TraceID = %q, want a freshly minted 32-hex id", s.TraceID)
 	}
 	if ReadMetrics().MalformedHeaderTotal <= before {
-		t.Error(
-			"fleet_malformed_header_total did not move, so a broken upstream would be invisible",
-		)
+		t.Error("fleet_malformed_header_total did not move, so a broken upstream would be invisible")
 	}
 }
 
@@ -361,16 +333,11 @@ func TestMiddlewareDropsUnsampledSuccess(t *testing.T) {
 func TestMiddlewareAlwaysReportsErrors(t *testing.T) {
 	req := newRequest(breeze.GET, "/orders", nil)
 
-	spans, _ := traced(
-		t,
-		TracerConfig{Enabled: true, SampleRate: 0},
-		req,
-		func(c *breeze.Context) error {
-			c.Status(503)
+	spans, _ := traced(t, TracerConfig{Enabled: true, SampleRate: 0}, req, func(c *breeze.Context) error {
+		c.Status(503)
 
-			return nil
-		},
-	)
+		return nil
+	})
 
 	s := exactlyOne(t, spans)
 	if s.Status != 503 {
@@ -383,9 +350,7 @@ func TestMiddlewareAlwaysReportsErrors(t *testing.T) {
 		t.Error("Failed() = false for a 503")
 	}
 	if s.Timeline != nil {
-		t.Error(
-			"an unsampled error carried a timeline — the expensive capture was never authorised for this request",
-		)
+		t.Error("an unsampled error carried a timeline — the expensive capture was never authorised for this request")
 	}
 }
 
@@ -436,16 +401,11 @@ func TestMiddlewareClientErrorsAreNotFailures(t *testing.T) {
 func TestMiddlewareUnsampledClientErrorIsDropped(t *testing.T) {
 	req := newRequest(breeze.GET, "/orders/nope", nil)
 
-	spans, _ := traced(
-		t,
-		TracerConfig{Enabled: true, SampleRate: 0},
-		req,
-		func(c *breeze.Context) error {
-			c.Status(404)
+	spans, _ := traced(t, TracerConfig{Enabled: true, SampleRate: 0}, req, func(c *breeze.Context) error {
+		c.Status(404)
 
-			return nil
-		},
-	)
+		return nil
+	})
 
 	if len(spans) != 0 {
 		t.Errorf("exported %d spans for an unsampled 404, want 0", len(spans))
@@ -492,9 +452,7 @@ func TestMiddlewareAttachesTheDashboardTimeline(t *testing.T) {
 
 	s := exactlyOne(t, spans)
 	if len(s.Timeline) == 0 {
-		t.Fatal(
-			"a sampled span carries no timeline steps, so the merged waterfall would show this hop as a bare bar",
-		)
+		t.Fatal("a sampled span carries no timeline steps, so the merged waterfall would show this hop as a bare bar")
 	}
 	if s.Timeline[0].Name != "ORM Query" {
 		t.Errorf("Timeline[0].Name = %q, want ORM Query", s.Timeline[0].Name)
@@ -623,9 +581,7 @@ func TestMiddlewareExposesStateForPropagation(t *testing.T) {
 	s := exactlyOne(t, spans)
 	raw, ok := injected.Get(HeaderTraceparent)
 	if !ok {
-		t.Fatal(
-			"Inject inside the handler wrote nothing, so no downstream call from this service would be traced",
-		)
+		t.Fatal("Inject inside the handler wrote nothing, so no downstream call from this service would be traced")
 	}
 	tc, valid := ParseTraceparent(raw)
 	if !valid {
@@ -659,10 +615,7 @@ func TestMiddlewareUsesTheRoutePattern(t *testing.T) {
 
 	s := exactlyOne(t, spans)
 	if s.Route != "/orders/:id" {
-		t.Errorf(
-			"Route = %q, want the pattern /orders/:id — raw paths give every id its own topology node",
-			s.Route,
-		)
+		t.Errorf("Route = %q, want the pattern /orders/:id — raw paths give every id its own topology node", s.Route)
 	}
 }
 
@@ -799,12 +752,10 @@ func TestRequestCarrierIsReadOnly(t *testing.T) {
 // anything is known to be present, so each missing layer must return cleanly.
 func TestRequestCarrierToleratesAnEmptyContext(t *testing.T) {
 	cases := map[string]requestCarrier{
-		"nil context": {ctx: nil},
-		"no request":  {ctx: contextWithoutRequest()},
-		"nil header map": {
-			ctx: contextWithRequest(&breeze.HTTPRequest{Method: breeze.GET, Path: "/"}),
-		},
-		"empty header": {ctx: contextWithRequest(newRequest(breeze.GET, "/", nil))},
+		"nil context":    {ctx: nil},
+		"no request":     {ctx: contextWithoutRequest()},
+		"nil header map": {ctx: contextWithRequest(&breeze.HTTPRequest{Method: breeze.GET, Path: "/"})},
+		"empty header":   {ctx: contextWithRequest(newRequest(breeze.GET, "/", nil))},
 	}
 	for desc, c := range cases {
 		t.Run(desc, func(t *testing.T) {
@@ -869,17 +820,10 @@ func TestMiddlewareClonesRouteOffTheReadBuffer(t *testing.T) {
 
 	s := exactlyOne(t, rt.exportedSpans())
 	if s.Route != path {
-		t.Errorf(
-			"Route = %q, want %q — the span is holding a view into a recycled buffer rather than its own copy",
-			s.Route,
-			path,
-		)
+		t.Errorf("Route = %q, want %q — the span is holding a view into a recycled buffer rather than its own copy", s.Route, path)
 	}
 	if s.Method != "POST" {
-		t.Errorf(
-			"Method = %q, want POST — the method was read after the request was recycled",
-			s.Method,
-		)
+		t.Errorf("Method = %q, want POST — the method was read after the request was recycled", s.Method)
 	}
 }
 
@@ -913,9 +857,6 @@ func TestMiddlewareSpanTagsAreASnapshot(t *testing.T) {
 
 	s := exactlyOne(t, rt.exportedSpans())
 	if s.Tags["order_id"] != "123" {
-		t.Errorf(
-			"Tags[order_id] = %q, want 123 — the span shares its map with the recycled request state",
-			s.Tags["order_id"],
-		)
+		t.Errorf("Tags[order_id] = %q, want 123 — the span shares its map with the recycled request state", s.Tags["order_id"])
 	}
 }

@@ -5,8 +5,8 @@ and an `llms.txt` for models.
 
 ```go
 import (
-    middleware "github.com/nelthaarion/breeze/v2/middlewares"
-    "github.com/nelthaarion/breeze/v2/scalar"
+    middleware "github.com/nelthaarion/breeze/middlewares"
+    "github.com/nelthaarion/breeze/scalar"
 )
 
 router.Use(middleware.ScalarMiddleware(router, middleware.ScalarOptions{

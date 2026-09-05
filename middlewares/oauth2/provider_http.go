@@ -44,19 +44,8 @@ func (tr *tokenResponse) toToken() *Token {
 // endpoint and decodes the JSON token response. It always sends Accept: JSON
 // (required by GitHub, harmless elsewhere) and reuses the config's pooled HTTP
 // client. errWrap is the sentinel returned on failure.
-func postForm(
-	ctx context.Context,
-	cfg *Config,
-	endpoint string,
-	form url.Values,
-	errWrap error,
-) (*Token, error) {
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		endpoint,
-		strings.NewReader(form.Encode()),
-	)
+func postForm(ctx context.Context, cfg *Config, endpoint string, form url.Values, errWrap error) (*Token, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errWrap, err)
 	}
@@ -87,13 +76,7 @@ func postForm(
 // getJSON performs an authenticated GET (Bearer token) against a user-info
 // endpoint and decodes the JSON body into out. extraHeaders lets providers add
 // quirks (e.g. GitHub's API version header).
-func getJSON(
-	ctx context.Context,
-	cfg *Config,
-	endpoint, accessToken string,
-	out any,
-	extraHeaders map[string]string,
-) error {
+func getJSON(ctx context.Context, cfg *Config, endpoint, accessToken string, out any, extraHeaders map[string]string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUserInfo, err)
@@ -123,12 +106,7 @@ func getJSON(
 // buildAuthURL assembles a provider authorization URL from common OAuth2
 // parameters plus any provider-specific extras. It is used by every driver's
 // AuthURL so query encoding stays consistent.
-func buildAuthURL(
-	base string,
-	cfg *Config,
-	state, nonce, challenge string,
-	extra url.Values,
-) string {
+func buildAuthURL(base string, cfg *Config, state, nonce, challenge string, extra url.Values) string {
 	q := url.Values{}
 	q.Set("client_id", cfg.ClientID)
 	q.Set("redirect_uri", cfg.RedirectURL)

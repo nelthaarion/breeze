@@ -145,12 +145,8 @@ func schemaForType(t reflect.Type, prefix []string, defaults reflect.Value) map[
 			// A keyed section. Its elements are addressed by name in a flag
 			// path, which is where the "<name>" segment comes from.
 			return map[string]any{
-				"type": "array",
-				"items": schemaForType(
-					elem,
-					append(append([]string{}, prefix...), "<name>"),
-					reflect.Value{},
-				),
+				"type":  "array",
+				"items": schemaForType(elem, append(append([]string{}, prefix...), "<name>"), reflect.Value{}),
 			}
 		}
 		node := map[string]any{

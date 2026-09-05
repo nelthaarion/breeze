@@ -31,8 +31,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2/internal/generator"
 	"gopkg.in/yaml.v3"
+
+	"github.com/nelthaarion/breeze/internal/generator"
 )
 
 func registerPlanningTools(s *Server) {
@@ -137,17 +138,9 @@ func planProjectTool() *tool {
 				"type":        "object",
 				"description": "The project configuration, in the shape breeze_describe_schema documents.",
 			},
-			"config_yaml": stringProp(
-				"The project configuration as breeze.yaml text. Use this or config, not both.",
-			),
-			"name": stringProp(
-				"Project directory name the plan is drawn for. Defaults to app.",
-			),
-			"template": map[string]any{
-				"type":        "string",
-				"enum":        []string{"api", "views"},
-				"description": "api for a JSON service, views for server-rendered HTML. Defaults to api.",
-			},
+			"config_yaml": stringProp("The project configuration as breeze.yaml text. Use this or config, not both."),
+			"name":        stringProp("Project directory name the plan is drawn for. Defaults to app."),
+			"template":    map[string]any{"type": "string", "enum": []string{"api", "views"}, "description": "api for a JSON service, views for server-rendered HTML. Defaults to api."},
 		}),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a planProjectArgs
@@ -233,10 +226,7 @@ func planProject(a planProjectArgs) toolCallResult {
 	// and invite a caller to read it as the answer.
 	if err := cfg.Validate(); err != nil {
 		result.Errors = splitValidationError(err)
-		return structuredErrorResult(
-			"the configuration is not valid, so nothing was planned",
-			result,
-		)
+		return structuredErrorResult("the configuration is not valid, so nothing was planned", result)
 	}
 	result.Valid = true
 
@@ -249,11 +239,8 @@ func planProject(a planProjectArgs) toolCallResult {
 	result.FileCount = len(files)
 	result.Warnings = warnings
 
-	return structuredResult(
-		fmt.Sprintf("%s would create %d file(s) and wire %d feature(s); nothing was written",
-			template, len(files), len(result.Features)),
-		result,
-	)
+	return structuredResult(fmt.Sprintf("%s would create %d file(s) and wire %d feature(s); nothing was written",
+		template, len(files), len(result.Features)), result)
 }
 
 // scaffoldPlan runs the real scaffold in a temporary directory and reports the
@@ -262,10 +249,7 @@ func planProject(a planProjectArgs) toolCallResult {
 // The configuration is handed over as a file outside the watched tree rather
 // than written into it, so the plan lists what the generators produced and not
 // the input it was given.
-func scaffoldPlan(
-	cfg generator.ProjectConfig,
-	name, template string,
-) ([]planFile, []string, error) {
+func scaffoldPlan(cfg generator.ProjectConfig, name, template string) ([]planFile, []string, error) {
 	configPath, cleanup, err := writeTempConfig(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -504,21 +488,14 @@ func gatherProjectFacts(path string) (projectFacts, generator.ProjectConfig, err
 			facts.Module = module
 			cfg.Module = module
 		} else {
-			notes = append(
-				notes,
-				"no go.mod was readable here, so the module path is unknown: "+err.Error(),
-			)
+			notes = append(notes, "no go.mod was readable here, so the module path is unknown: "+err.Error())
 		}
 
 		installed := generator.InstalledFeatures()
 		facts.Generated = len(installed) > 0 || fileExists(generator.FeaturesFileName)
 
 		for _, name := range installed {
-			info, ok := generator.ReadBlock(
-				generator.FeaturesFileName,
-				generator.FeatureMarkerPrefix,
-				name,
-			)
+			info, ok := generator.ReadBlock(generator.FeaturesFileName, generator.FeatureMarkerPrefix, name)
 			if !ok {
 				continue
 			}
@@ -537,10 +514,7 @@ func gatherProjectFacts(path string) (projectFacts, generator.ProjectConfig, err
 		if routes, err := generator.ParseRoutes(generator.RegistryFileName); err == nil {
 			facts.Routes = routes
 		} else if facts.Generated {
-			notes = append(
-				notes,
-				"the route registry could not be read, so no routes are reported: "+err.Error(),
-			)
+			notes = append(notes, "the route registry could not be read, so no routes are reported: "+err.Error())
 		}
 		return nil
 	})
@@ -562,10 +536,7 @@ func gatherProjectFacts(path string) (projectFacts, generator.ProjectConfig, err
 	// Server host and port live in the scaffold's main.go, which is a template
 	// rather than a marker block, so they are not recoverable this way. Saying
 	// so is better than reporting the defaults as if they had been read.
-	notes = append(
-		notes,
-		"server.host, server.port and server.multicore are written into main.go by the scaffold, not into a feature block, so they are reported as defaults rather than read back",
-	)
+	notes = append(notes, "server.host, server.port and server.multicore are written into main.go by the scaffold, not into a feature block, so they are reported as defaults rather than read back")
 
 	facts.Notes = notes
 	if facts.Routes == nil {
@@ -580,10 +551,7 @@ func gatherProjectFacts(path string) (projectFacts, generator.ProjectConfig, err
 
 	configMap, err := configToMap(cfg)
 	if err != nil {
-		return facts, cfg, fmt.Errorf(
-			"the reconstructed configuration could not be rendered: %w",
-			err,
-		)
+		return facts, cfg, fmt.Errorf("the reconstructed configuration could not be rendered: %w", err)
 	}
 	facts.Config = configMap
 
@@ -649,14 +617,12 @@ func fileExists(name string) bool {
 // comments before anything is matched.
 
 var (
-	reFleetEnv    = regexp.MustCompile(`fleetEnv\(\s*"([A-Z_]+)"\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)`)
-	reSampleRate  = regexp.MustCompile(`SampleRate:\s*([0-9]+(?:\.[0-9]+)?)`)
-	reBackend     = regexp.MustCompile(`Backend:\s*"((?:[^"\\]|\\.)*)"`)
-	reWSPath      = regexp.MustCompile(`app\.WebSocket\(\s*"((?:[^"\\]|\\.)*)"`)
-	reRPCRun      = regexp.MustCompile(`RPCServer\.Run\(\s*(\d+)\s*,\s*(true|false)\s*\)`)
-	reRPCRegister = regexp.MustCompile(
-		`RPCServer\.(RegisterBlocking|Register)\(\s*"((?:[^"\\]|\\.)*)"`,
-	)
+	reFleetEnv     = regexp.MustCompile(`fleetEnv\(\s*"([A-Z_]+)"\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)`)
+	reSampleRate   = regexp.MustCompile(`SampleRate:\s*([0-9]+(?:\.[0-9]+)?)`)
+	reBackend      = regexp.MustCompile(`Backend:\s*"((?:[^"\\]|\\.)*)"`)
+	reWSPath       = regexp.MustCompile(`app\.WebSocket\(\s*"((?:[^"\\]|\\.)*)"`)
+	reRPCRun       = regexp.MustCompile(`RPCServer\.Run\(\s*(\d+)\s*,\s*(true|false)\s*\)`)
+	reRPCRegister  = regexp.MustCompile(`RPCServer\.(RegisterBlocking|Register)\(\s*"((?:[^"\\]|\\.)*)"`)
 	reRPCMaxBytes  = regexp.MustCompile(`RPCServer\.SetMaxMessageBytes\(\s*(\d+)\s*\)`)
 	reDocsTitle    = regexp.MustCompile(`Title:\s*"((?:[^"\\]|\\.)*)"`)
 	reDocsUIPath   = regexp.MustCompile(`UIPath:\s*"((?:[^"\\]|\\.)*)"`)
@@ -853,16 +819,12 @@ func diffConfigTool() *tool {
 			"nothing. Call this before applying a configuration to a project that " +
 			"already exists.",
 		schema: objectSchema(map[string]any{
-			"existing_path": stringProp(
-				"Root of the project to compare against. Defaults to the server's working directory.",
-			),
+			"existing_path": stringProp("Root of the project to compare against. Defaults to the server's working directory."),
 			"config": map[string]any{
 				"type":        "object",
 				"description": "The proposed configuration, in the shape breeze_describe_schema documents.",
 			},
-			"config_yaml": stringProp(
-				"The proposed configuration as breeze.yaml text. Use this or config, not both.",
-			),
+			"config_yaml": stringProp("The proposed configuration as breeze.yaml text. Use this or config, not both."),
 		}),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a diffConfigArgs
@@ -933,10 +895,7 @@ func diffConfig(a diffConfigArgs) toolCallResult {
 	}
 	if err := proposed.Validate(); err != nil {
 		result.Errors = splitValidationError(err)
-		return structuredErrorResult(
-			"the proposed configuration is not valid, so nothing was compared",
-			result,
-		)
+		return structuredErrorResult("the proposed configuration is not valid, so nothing was compared", result)
 	}
 	result.Valid = true
 
@@ -952,11 +911,7 @@ func diffConfig(a diffConfigArgs) toolCallResult {
 			current.Module = module
 		}
 		for _, name := range generator.InstalledFeatures() {
-			info, ok := generator.ReadBlock(
-				generator.FeaturesFileName,
-				generator.FeatureMarkerPrefix,
-				name,
-			)
+			info, ok := generator.ReadBlock(generator.FeaturesFileName, generator.FeatureMarkerPrefix, name)
 			if !ok {
 				continue
 			}
@@ -1000,18 +955,12 @@ func diffConfig(a diffConfigArgs) toolCallResult {
 		if info.Stamp == "" {
 			reason = "the block carries no checksum, so there is no evidence it is unmodified; regenerating it needs force"
 		}
-		result.Blocked = append(
-			result.Blocked,
-			blockedTouch{Feature: name, File: info.File, Reason: reason},
-		)
+		result.Blocked = append(result.Blocked, blockedTouch{Feature: name, File: info.File, Reason: reason})
 	}
 
 	touches, notes, err := applyPlan(a.ExistingPath, proposed, current.Module)
 	if err != nil {
-		result.Notes = append(
-			result.Notes,
-			"the file-level effect could not be measured: "+err.Error(),
-		)
+		result.Notes = append(result.Notes, "the file-level effect could not be measured: "+err.Error())
 	} else {
 		result.Touches = touches
 		result.Notes = append(result.Notes, notes...)
@@ -1023,11 +972,7 @@ func diffConfig(a diffConfigArgs) toolCallResult {
 		result.Changes = []configChange{}
 	}
 
-	summary := fmt.Sprintf(
-		"%d setting(s) change, %d file(s) would be touched",
-		len(result.Changes),
-		len(result.Touches),
-	)
+	summary := fmt.Sprintf("%d setting(s) change, %d file(s) would be touched", len(result.Changes), len(result.Touches))
 	if len(result.Blocked) > 0 {
 		summary += fmt.Sprintf("; %d block(s) would be refused", len(result.Blocked))
 	}
@@ -1036,11 +981,7 @@ func diffConfig(a diffConfigArgs) toolCallResult {
 
 // applyPlan measures what applying a configuration to a project would touch, by
 // applying it to a copy.
-func applyPlan(
-	projectPath string,
-	cfg generator.ProjectConfig,
-	modulePath string,
-) ([]fileChange, []string, error) {
+func applyPlan(projectPath string, cfg generator.ProjectConfig, modulePath string) ([]fileChange, []string, error) {
 	root, err := orWorkingDir(projectPath)
 	if err != nil {
 		return nil, nil, err

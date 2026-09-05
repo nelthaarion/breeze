@@ -58,9 +58,7 @@ const compactThreshold = 512
 var (
 	resp400 = []byte("HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nBad Request")
 	resp404 = []byte("HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found")
-	resp500 = []byte(
-		"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 21\r\n\r\nInternal Server Error",
-	)
+	resp500 = []byte("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 21\r\n\r\nInternal Server Error")
 )
 
 // New creates a Breeze server with the given router and worker pool.
@@ -264,7 +262,7 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 	for len(buf) > 0 {
 		req, consumed, err := parsePooledRequest(buf, !zeroCopy)
 		if err != nil {
-			c.Write(resp400)
+			_, _ = c.Write(resp400)
 			buf = nil
 			break
 		}
@@ -279,7 +277,7 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 			if params != nil {
 				releaseParams(params)
 			}
-			c.Write(resp404)
+			_, _ = c.Write(resp404)
 		} else {
 			// ── Promotion ────────────────────────────────────────────────
 			// A zero-copy request's strings are views into gnet's read
@@ -304,7 +302,7 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 				if err := promoteRequest(req, buf); err != nil {
 					// Unreachable: the same bytes parsed once already.
 					releaseRequest(req)
-					c.Write(resp400)
+					_, _ = c.Write(resp400)
 					buf = nil
 					break
 				}

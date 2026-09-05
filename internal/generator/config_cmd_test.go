@@ -25,12 +25,7 @@ import (
 // which is right for asking what a generator reads. Here the flags are the
 // subject: a caller needs to assert that a specific argument list is accepted,
 // so the error has to come back rather than end the test.
-func generateFeatureWithArgs(
-	t *testing.T,
-	f *feature,
-	args []string,
-	ctx featureCtx,
-) (featureOutput, error) {
+func generateFeatureWithArgs(t *testing.T, f *feature, args []string, ctx featureCtx) (featureOutput, error) {
 	t.Helper()
 
 	fs := flag.NewFlagSet("config "+f.Name, flag.ContinueOnError)
@@ -53,12 +48,7 @@ func TestExtractConfigFlag(t *testing.T) {
 		{"absent", []string{"User", "--force"}, "", []string{"User", "--force"}},
 		{"equals form", []string{"--config=a.yaml", "User"}, "a.yaml", []string{"User"}},
 		{"space form", []string{"--config", "a.yaml", "User"}, "a.yaml", []string{"User"}},
-		{
-			"among others",
-			[]string{"User", "--config=a.yaml", "--force"},
-			"a.yaml",
-			[]string{"User", "--force"},
-		},
+		{"among others", []string{"User", "--config=a.yaml", "--force"}, "a.yaml", []string{"User", "--force"}},
 		// A path that looks like a flag value but is not the flag itself must be
 		// left alone, or a command's own --config-ish flag would be eaten.
 		{"unrelated flag", []string{"--configure=x"}, "", []string{"--configure=x"}},
@@ -113,11 +103,7 @@ func TestDefaultConfigFileIsPickedUp(t *testing.T) {
 		t.Fatalf("with no file present: path = %q, err = %v; want empty and nil", path, err)
 	}
 
-	if err := os.WriteFile(
-		defaultConfigFile,
-		[]byte("server:\n  port: 3000\n"),
-		0o644,
-	); err != nil {
+	if err := os.WriteFile(defaultConfigFile, []byte("server:\n  port: 3000\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	path, err := resolveConfigPath("")
@@ -267,12 +253,7 @@ func TestConfigFlagsForAreAcceptedByTheirFeature(t *testing.T) {
 
 			out, err := generateFeatureWithArgs(t, f, args, featureCtx{ModulePath: "example.com/p"})
 			if err != nil {
-				t.Fatalf(
-					"configFlagsFor(%q) produced %q, which its own FlagSet rejects: %v",
-					name,
-					args,
-					err,
-				)
+				t.Fatalf("configFlagsFor(%q) produced %q, which its own FlagSet rejects: %v", name, args, err)
 			}
 			if strings.TrimSpace(out.Body) == "" {
 				t.Errorf("feature %q generated an empty block", name)
@@ -398,11 +379,7 @@ fleet:
 func TestNewWithFlagOverridingConfig(t *testing.T) {
 	t.Chdir(t.TempDir())
 
-	if err := os.WriteFile(
-		"breeze.yaml",
-		[]byte("module: example.com/from-file\n"),
-		0o644,
-	); err != nil {
+	if err := os.WriteFile("breeze.yaml", []byte("module: example.com/from-file\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := runNew([]string{"over", "--module=example.com/from-flag"}); err != nil {
@@ -423,11 +400,7 @@ func TestNewWithFlagOverridingConfig(t *testing.T) {
 func TestNewRejectsInvalidConfig(t *testing.T) {
 	t.Chdir(t.TempDir())
 
-	if err := os.WriteFile(
-		"breeze.yaml",
-		[]byte("fleet:\n  enabled: true\n  transport: grpc\n"),
-		0o644,
-	); err != nil {
+	if err := os.WriteFile("breeze.yaml", []byte("fleet:\n  enabled: true\n  transport: grpc\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

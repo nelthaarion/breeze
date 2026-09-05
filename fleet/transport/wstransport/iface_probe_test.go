@@ -3,7 +3,7 @@ package wstransport
 import (
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/fleet"
 )
 
 // Compile-time proof that the rewrite still satisfies the interface the Tracer

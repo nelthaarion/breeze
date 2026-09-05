@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	jsonx "github.com/goccy/go-json"
-	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/dashboard"
 )
 
 func validSpan() Span {

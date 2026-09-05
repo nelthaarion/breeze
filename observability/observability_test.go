@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/events"
 )
 
 // ─── Fixtures ────────────────────────────────────────────────────────────
@@ -63,10 +63,7 @@ func TestPublishesSignalPerDispatch(t *testing.T) {
 	bus, col, done := newTestSetup(t)
 	defer done()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 
 	if err := events.EmitBus(bus, UserCreated{UserID: 7}); err != nil {
 		t.Fatalf("emit: %v", err)
@@ -104,14 +101,8 @@ func TestSignalCarriesListenerSpans(t *testing.T) {
 	bus, col, done := newTestSetup(t)
 	defer done()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	).Named("first")
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	).Named("second")
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil }).Named("first")
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil }).Named("second")
 
 	events.EmitBus(bus, UserCreated{})
 
@@ -132,18 +123,10 @@ func TestSpansFollowPriorityOrder(t *testing.T) {
 	bus, col, done := newTestSetup(t)
 	defer done()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	).
-		Named("low").
-		Priority(10)
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	).
-		Named("high").
-		Priority(100)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil }).
+		Named("low").Priority(10)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil }).
+		Named("high").Priority(100)
 
 	events.EmitBus(bus, UserCreated{})
 
@@ -161,10 +144,7 @@ func TestFailureIsRecorded(t *testing.T) {
 	defer done()
 
 	boom := errors.New("boom")
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return boom },
-	).Named("bad")
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return boom }).Named("bad")
 
 	events.EmitBus(bus, UserCreated{})
 
@@ -296,10 +276,7 @@ func TestMetricsAccumulate(t *testing.T) {
 	defer done()
 
 	events.Name[UserCreated](bus, "user.created")
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 
 	for i := 0; i < 5; i++ {
 		events.EmitBus(bus, UserCreated{UserID: uint64(i)})
@@ -338,10 +315,7 @@ func TestStatsTotals(t *testing.T) {
 	bus, col, done := newTestSetup(t)
 	defer done()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	events.OnTypeBus[OrderPlaced](bus, func(ctx *events.Context, e OrderPlaced) error {
 		return errors.New("nope")
 	})
@@ -376,10 +350,7 @@ func TestQueryFilters(t *testing.T) {
 
 	events.Name[UserCreated](bus, "user.created")
 	events.Name[OrderPlaced](bus, "order.placed")
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	events.OnTypeBus[OrderPlaced](bus, func(ctx *events.Context, e OrderPlaced) error {
 		return errors.New("declined")
 	})
@@ -412,10 +383,7 @@ func TestRecentReturnsNewestFirst(t *testing.T) {
 	bus, col, done := newTestSetup(t)
 	defer done()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	for i := 0; i < 3; i++ {
 		events.EmitBus(bus, UserCreated{UserID: uint64(i)})
 	}
@@ -433,10 +401,7 @@ func TestByID(t *testing.T) {
 	bus, col, done := newTestSetup(t)
 	defer done()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	events.EmitBus(bus, UserCreated{})
 
 	want := col.Snapshot()[0]
@@ -457,10 +422,7 @@ func TestSlowestAndTopNames(t *testing.T) {
 	defer done()
 
 	events.Name[UserCreated](bus, "user.created")
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	events.OnTypeBus[OrderPlaced](bus, func(ctx *events.Context, e OrderPlaced) error {
 		time.Sleep(2 * time.Millisecond)
 		return nil
@@ -488,10 +450,7 @@ func TestClearAndReset(t *testing.T) {
 	bus, col, done := newTestSetup(t)
 	defer done()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	events.EmitBus(bus, UserCreated{})
 
 	col.Clear()
@@ -517,10 +476,7 @@ func TestRingBufferEvicts(t *testing.T) {
 	detach := AttachEvents(bus, col)
 	defer func() { detach(); col.Close(); bus.Close() }()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	for i := 0; i < 10; i++ {
 		events.EmitBus(bus, UserCreated{UserID: uint64(i)})
 	}
@@ -541,18 +497,10 @@ func TestGraphReflectsObservedExecution(t *testing.T) {
 	defer done()
 
 	events.Name[UserCreated](bus, "user.created")
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	).
-		Named("validate").
-		Priority(100)
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	).
-		Named("save").
-		Priority(50)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil }).
+		Named("validate").Priority(100)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil }).
+		Named("save").Priority(50)
 
 	events.EmitBus(bus, UserCreated{})
 
@@ -577,14 +525,8 @@ func TestNamesIsSortedAndDeduped(t *testing.T) {
 
 	events.Name[UserCreated](bus, "user.created")
 	events.Name[OrderPlaced](bus, "order.placed")
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
-	events.OnTypeBus[OrderPlaced](
-		bus,
-		func(ctx *events.Context, e OrderPlaced) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
+	events.OnTypeBus[OrderPlaced](bus, func(ctx *events.Context, e OrderPlaced) error { return nil })
 
 	events.EmitBus(bus, UserCreated{})
 	events.EmitBus(bus, UserCreated{})
@@ -621,10 +563,7 @@ func TestStreamDeliversLiveSignals(t *testing.T) {
 	ch, unsub := col.Stream()
 	defer unsub()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	events.EmitBus(bus, UserCreated{UserID: 42})
 
 	select {
@@ -656,10 +595,7 @@ func TestUnsubscribeStopsDelivery(t *testing.T) {
 	// Unsubscribing twice must not panic.
 	unsub()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	events.EmitBus(bus, UserCreated{})
 }
 
@@ -671,10 +607,7 @@ func TestSlowSubscriberDropsRatherThanBlocks(t *testing.T) {
 	_, unsub := col.Stream()
 	defer unsub()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 
 	// Publish well past the subscriber buffer. If publishing blocked on a
 	// full subscriber, this would hang and the test would time out.
@@ -693,10 +626,7 @@ func TestClosedCollectorStopsPublishing(t *testing.T) {
 	detach := AttachEvents(bus, col)
 	defer func() { detach(); bus.Close() }()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	col.Close()
 	col.Close() // idempotent
 
@@ -757,10 +687,7 @@ func TestPayloadCaptureMasksSecrets(t *testing.T) {
 	detach := AttachEventsWithPayload(bus, col)
 	defer func() { detach(); col.Close(); bus.Close() }()
 
-	events.OnTypeBus[Credentials](
-		bus,
-		func(ctx *events.Context, e Credentials) error { return nil },
-	)
+	events.OnTypeBus[Credentials](bus, func(ctx *events.Context, e Credentials) error { return nil })
 	events.EmitBus(bus, Credentials{
 		Username: "alice",
 		Password: "hunter2",
@@ -787,10 +714,7 @@ func TestNoPayloadCaptureByDefault(t *testing.T) {
 	bus, col, done := newTestSetup(t)
 	defer done()
 
-	events.OnTypeBus[Credentials](
-		bus,
-		func(ctx *events.Context, e Credentials) error { return nil },
-	)
+	events.OnTypeBus[Credentials](bus, func(ctx *events.Context, e Credentials) error { return nil })
 	events.EmitBus(bus, Credentials{Password: "hunter2"})
 
 	s := col.Snapshot()[0]
@@ -812,12 +736,7 @@ func TestDescribePayloadShapes(t *testing.T) {
 		t.Errorf("payload not truncated: %d chars", len(long))
 	}
 	// Slices report their length, not their contents.
-	if got := describePayload(
-		struct{ Items []int }{[]int{1, 2, 3}},
-	); !strings.Contains(
-		got,
-		"3 items",
-	) {
+	if got := describePayload(struct{ Items []int }{[]int{1, 2, 3}}); !strings.Contains(got, "3 items") {
 		t.Errorf("slice payload = %q, want an item count", got)
 	}
 	// A nil pointer must not panic.
@@ -894,10 +813,7 @@ func TestDetachRestoresCleanBus(t *testing.T) {
 		t.Error("Observer() non-nil after detach")
 	}
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	events.EmitBus(bus, UserCreated{})
 	if col.Len() != 0 {
 		t.Error("collector still receiving signals after detach")
@@ -917,10 +833,7 @@ func TestConcurrentDispatchAndRead(t *testing.T) {
 	bus, col, done := newTestSetup(t)
 	defer done()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
@@ -999,10 +912,7 @@ func TestConcurrentAttachDetach(t *testing.T) {
 	col := NewCollector(Config{Capacity: 50, Metrics: true})
 	defer func() { col.Close(); bus.Close() }()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 
 	var wg sync.WaitGroup
 
@@ -1102,10 +1012,7 @@ func TestMetricsDisabled(t *testing.T) {
 	detach := AttachEvents(bus, col)
 	defer func() { detach(); col.Close(); bus.Close() }()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	events.EmitBus(bus, UserCreated{})
 
 	if len(col.Metrics()) != 0 {
@@ -1135,10 +1042,7 @@ func TestRateWindow(t *testing.T) {
 	bus, col, done := newTestSetup(t)
 	defer done()
 
-	events.OnTypeBus[UserCreated](
-		bus,
-		func(ctx *events.Context, e UserCreated) error { return nil },
-	)
+	events.OnTypeBus[UserCreated](bus, func(ctx *events.Context, e UserCreated) error { return nil })
 	for i := 0; i < 10; i++ {
 		events.EmitBus(bus, UserCreated{})
 	}

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/fleet"
 )
 
 // receive captures what the transport actually put on the wire, so the tests
@@ -224,12 +224,7 @@ func TestExportErrorClassification(t *testing.T) {
 			continue
 		}
 		if ee.Permanent() != tc.wantPermanent {
-			t.Errorf(
-				"status %d: Permanent() = %v, want %v",
-				tc.status,
-				ee.Permanent(),
-				tc.wantPermanent,
-			)
+			t.Errorf("status %d: Permanent() = %v, want %v", tc.status, ee.Permanent(), tc.wantPermanent)
 		}
 	}
 }

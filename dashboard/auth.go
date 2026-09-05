@@ -6,7 +6,7 @@ import (
 	"crypto/subtle"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // AuthMiddleware returns a middleware that enforces dashboard authentication.
@@ -37,9 +37,7 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 	return func(ctx *breeze.Context) error {
 		// Allow the login page itself and the login POST endpoint without auth.
 		p := ctx.Req.Path
-		if p == loginPath || p == base {
-			// For base path, we'll handle redirect in the handler.
-		}
+		// For base path, redirect is handled further down in the handler.
 		// Check session cookie.
 		cookie := ctx.Req.Header["cookie"]
 		token := extractCookieValue(cookie, sessionCookieName)

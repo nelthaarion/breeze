@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/fleet"
 )
 
 // Service statuses, matching the dashboard Health page's existing

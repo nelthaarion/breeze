@@ -126,10 +126,7 @@ func generateGRPC(modulePath, name string, args []string) error {
 	}
 
 	if len(ifaces) == 0 {
-		return fmt.Errorf(
-			"no interface named %q found in any *_grpc.go file â€” define your interface in a file ending in _grpc.go (e.g. user_grpc.go)",
-			name,
-		)
+		return fmt.Errorf("no interface named %q found in any *_grpc.go file â€” define your interface in a file ending in _grpc.go (e.g. user_grpc.go)", name)
 	}
 
 	// Validate each method's signature based on its grpc_type.
@@ -223,6 +220,7 @@ func scanGRPCInterfaces(name string) ([]grpcInterface, error) {
 		}
 		return nil
 	})
+
 	if err != nil {
 		return nil, fmt.Errorf("scanning project: %w", err)
 	}
@@ -368,14 +366,10 @@ func validateGRPCMethod(ifaceName string, m *grpcMethod) error {
 
 	case grpcServerStream:
 		if len(m.Params) != 2 {
-			return fail(
-				"ServerSideStreaming requires exactly 2 parameters: (req ReqT, stream StreamT)",
-			)
+			return fail("ServerSideStreaming requires exactly 2 parameters: (req ReqT, stream StreamT)")
 		}
 		if !isNamedStruct(m.Params[0]) {
-			return fail(
-				"ServerSideStreaming: first parameter must be a named struct (the request type)",
-			)
+			return fail("ServerSideStreaming: first parameter must be a named struct (the request type)")
 		}
 		m.ReqType = stripPointerType(m.Params[0])
 		if !isStreamType(m.Params[1]) {
@@ -398,9 +392,7 @@ func validateGRPCMethod(ifaceName string, m *grpcMethod) error {
 			return fail("ClientSideStreaming requires exactly 2 results: (*RespT, error)")
 		}
 		if !isPointerToNamedStruct(m.Results[0]) {
-			return fail(
-				"ClientSideStreaming: first result must be *NamedStruct (the response type)",
-			)
+			return fail("ClientSideStreaming: first result must be *NamedStruct (the response type)")
 		}
 		m.RespType = stripPointerType(m.Results[0])
 		if m.Results[1] != "error" {
@@ -450,8 +442,7 @@ func isNamedStruct(typeStr string) bool {
 	if typeStr == "" {
 		return false
 	}
-	if strings.HasPrefix(typeStr, "*") || strings.HasPrefix(typeStr, "[]") ||
-		strings.HasPrefix(typeStr, "map[") {
+	if strings.HasPrefix(typeStr, "*") || strings.HasPrefix(typeStr, "[]") || strings.HasPrefix(typeStr, "map[") {
 		return false
 	}
 	switch typeStr {

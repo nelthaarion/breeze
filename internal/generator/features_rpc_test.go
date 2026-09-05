@@ -51,10 +51,7 @@ func TestGeneratedRunIsInAGoroutine(t *testing.T) {
 	goAt := strings.Index(body, "go func() {")
 	runAt := strings.Index(body, "RPCServer.Run(")
 	if runAt < goAt {
-		t.Errorf(
-			"RPCServer.Run is called before the goroutine starts, so it would block the dispatcher:\n%s",
-			body,
-		)
+		t.Errorf("RPCServer.Run is called before the goroutine starts, so it would block the dispatcher:\n%s", body)
 	}
 }
 
@@ -103,10 +100,7 @@ func TestPoolIsTheEventLoopConstructor(t *testing.T) {
 	}).Body
 
 	if !strings.Contains(body, "breeze.NewEventLoopWorkerPool(") {
-		t.Errorf(
-			"the pool must come from NewEventLoopWorkerPool (OverflowSpawn), or a full queue stalls the event loop:\n%s",
-			body,
-		)
+		t.Errorf("the pool must come from NewEventLoopWorkerPool (OverflowSpawn), or a full queue stalls the event loop:\n%s", body)
 	}
 }
 
@@ -185,15 +179,11 @@ func TestGeneratedSourceIsValidGo(t *testing.T) {
 	})
 
 	if _, err := format.Source([]byte(out.Files["rpc_methods.go"])); err != nil {
-		t.Errorf(
-			"the generated scaffold file is not valid Go: %v\n%s",
-			err,
-			out.Files["rpc_methods.go"],
-		)
+		t.Errorf("the generated scaffold file is not valid Go: %v\n%s", err, out.Files["rpc_methods.go"])
 	}
 
 	// The block is a fragment, so it needs a package clause to parse.
-	whole := "package main\n\nimport (\n\t\"log\"\n\t\"runtime\"\n\n\t\"github.com/nelthaarion/breeze/v2\"\n\t\"github.com/nelthaarion/breeze/v2/rpc\"\n)\n\n" + out.Body + "\n"
+	whole := "package main\n\nimport (\n\t\"log\"\n\t\"runtime\"\n\n\t\"github.com/nelthaarion/breeze\"\n\t\"github.com/nelthaarion/breeze/rpc\"\n)\n\n" + out.Body + "\n"
 	if _, err := format.Source([]byte(whole)); err != nil {
 		t.Errorf("the generated block is not valid Go: %v\n%s", err, whole)
 	}
@@ -207,11 +197,7 @@ func TestSetupFunctionNameMatchesTheDispatcher(t *testing.T) {
 	body := buildRPC(t, JSONRPCConfig{}).Body
 	want := "func " + featureSetupFunc("jsonrpc") + "(app *breeze.Breeze, router *breeze.Router)"
 	if !strings.Contains(body, want) {
-		t.Errorf(
-			"the block does not declare %q, so the dispatcher would not call it:\n%s",
-			want,
-			body,
-		)
+		t.Errorf("the block does not declare %q, so the dispatcher would not call it:\n%s", want, body)
 	}
 }
 
@@ -249,16 +235,12 @@ func TestNoMethodsStillProducesAWorkingBlock(t *testing.T) {
 
 func TestRPCFeatureValidationRejects(t *testing.T) {
 	cases := map[string]JSONRPCConfig{
-		"reserved rpc. prefix": {Port: 9090, Methods: []string{"rpc.internal"}},
-		"clashes with HTTP":    {Port: Defaults().Server.Port},
-		"blocking not declared": {
-			Port:            9090,
-			Methods:         []string{"sum"},
-			BlockingMethods: []string{"db.query"},
-		},
-		"duplicate method":   {Port: 9090, Methods: []string{"sum", "sum"}},
-		"port out of range":  {Port: 70000},
-		"negative max bytes": {Port: 9090, MaxMessageBytes: -1},
+		"reserved rpc. prefix":  {Port: 9090, Methods: []string{"rpc.internal"}},
+		"clashes with HTTP":     {Port: Defaults().Server.Port},
+		"blocking not declared": {Port: 9090, Methods: []string{"sum"}, BlockingMethods: []string{"db.query"}},
+		"duplicate method":      {Port: 9090, Methods: []string{"sum", "sum"}},
+		"port out of range":     {Port: 70000},
+		"negative max bytes":    {Port: 9090, MaxMessageBytes: -1},
 	}
 
 	for name, cfg := range cases {
@@ -277,12 +259,7 @@ func TestRPCFeatureValidationRejects(t *testing.T) {
 // generator, and a rule enforced in only one of them is a rule that can be
 // bypassed by choosing the other spelling.
 func TestBlockingSubsetRuleIsEnforcedOnBothPaths(t *testing.T) {
-	bad := JSONRPCConfig{
-		Enabled:         true,
-		Port:            9090,
-		Methods:         []string{"sum"},
-		BlockingMethods: []string{"ghost"},
-	}
+	bad := JSONRPCConfig{Enabled: true, Port: 9090, Methods: []string{"sum"}, BlockingMethods: []string{"ghost"}}
 
 	if err := validateRPCFeature(bad); err == nil {
 		t.Error("the flag path accepted a blocking method that is not declared")

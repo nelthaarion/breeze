@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/internal/mcp"
+	"github.com/nelthaarion/breeze/internal/mcp"
 )
 
 // TestLogNeverContainsAnArgumentValue is the redaction guarantee at the formatter.

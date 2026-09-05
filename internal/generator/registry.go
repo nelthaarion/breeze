@@ -24,7 +24,7 @@ const routeMarkerPrefix = "breeze:route"
 func registryTemplate() string {
 	return registryHeader + `
 import (
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 func RegisterGeneratedRoutes(router *breeze.Router) {
@@ -39,11 +39,11 @@ func RegisterGeneratedRoutes(router *breeze.Router) {
 //
 // The anchor is the plain breeze import, which every generated file's
 // template contains. Matching on the fully quoted path means
-// "github.com/nelthaarion/breeze/v2" does not match inside
-// "github.com/nelthaarion/breeze/v2/scalar", so subpackage imports are added
+// "github.com/nelthaarion/breeze" does not match inside
+// "github.com/nelthaarion/breeze/scalar", so subpackage imports are added
 // rather than mistaken for the anchor.
 func ensureImports(content string, importLines []string) string {
-	breezeImport := `"github.com/nelthaarion/breeze/v2"`
+	breezeImport := `"github.com/nelthaarion/breeze"`
 	for _, line := range importLines {
 		if strings.Contains(content, line) {
 			continue

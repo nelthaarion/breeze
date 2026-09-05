@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/events"
-	"github.com/nelthaarion/breeze/v2/video"
+	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/video"
 )
 
 // This file tracks video streaming while it is happening.
@@ -337,13 +337,10 @@ func (v *videoLive) attach(bus *events.Bus) func() {
 		return func() {}
 	}
 
-	sub := events.OnTypeBus[video.StreamServed](
-		bus,
-		func(_ *events.Context, e video.StreamServed) error {
-			v.record(e, time.Now())
-			return nil
-		},
-	)
+	sub := events.OnTypeBus[video.StreamServed](bus, func(_ *events.Context, e video.StreamServed) error {
+		v.record(e, time.Now())
+		return nil
+	})
 
 	// Idle files are swept on a timer rather than on the next event, so
 	// a server that stops serving video does not leave its last file on

@@ -51,12 +51,7 @@ type PanicError struct {
 // Error implements the error interface.
 func (e *PanicError) Error() string {
 	if e.Listener != "" {
-		return fmt.Sprintf(
-			"events: panic in listener %q for event %q: %v",
-			e.Listener,
-			e.Event,
-			e.Value,
-		)
+		return fmt.Sprintf("events: panic in listener %q for event %q: %v", e.Listener, e.Event, e.Value)
 	}
 	return fmt.Sprintf("events: panic while dispatching %q: %v", e.Event, e.Value)
 }

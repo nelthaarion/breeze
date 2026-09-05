@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/events"
 )
 
 // Defaults from §8.1 and §10.

@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // mockWriter is a minimal DBWriter used across db_writer_test.go.
@@ -200,10 +200,7 @@ func TestHandleDBTableInsert(t *testing.T) {
 	})
 
 	t.Run("writer error", func(t *testing.T) {
-		c := newCollectorWithWriter(
-			true,
-			&mockWriter{insertErr: errors.New("constraint violation")},
-		)
+		c := newCollectorWithWriter(true, &mockWriter{insertErr: errors.New("constraint violation")})
 		ctx := breeze.NewContext(breeze.POST, "/api/db/tables/users/rows")
 		ctx.SetParam("name", "users")
 		ctx.Req.Body = []byte(`{"values":{"name":"Alice"}}`)
@@ -401,11 +398,7 @@ func (w *pkCapturingWriter) InsertRow(table string, values map[string]any) (map[
 	return out, nil
 }
 
-func (w *pkCapturingWriter) UpdateRow(
-	table string,
-	pk map[string]any,
-	values map[string]any,
-) error {
+func (w *pkCapturingWriter) UpdateRow(table string, pk map[string]any, values map[string]any) error {
 	w.lastUpdatePK = pk
 	return nil
 }
@@ -486,14 +479,8 @@ func TestDBWriteRoutes_ThroughRouter(t *testing.T) {
 
 	// Sanity-check router.Find extracts the raw (still-encoded) segment
 	// verbatim, proving the router does not decode path segments itself.
-	if _, _, params := router.Find(
-		&breeze.HTTPRequest{Method: breeze.PUT, Path: updatePath},
-	); params["pk"] != pkSegment {
-		t.Fatalf(
-			"router.Find params[pk] = %q, want %q (still percent-encoded)",
-			params["pk"],
-			pkSegment,
-		)
+	if _, _, params := router.Find(&breeze.HTTPRequest{Method: breeze.PUT, Path: updatePath}); params["pk"] != pkSegment {
+		t.Fatalf("router.Find params[pk] = %q, want %q (still percent-encoded)", params["pk"], pkSegment)
 	}
 
 	updateReq := &breeze.HTTPRequest{
@@ -507,11 +494,7 @@ func TestDBWriteRoutes_ThroughRouter(t *testing.T) {
 		t.Fatalf("update: Status = %d, want 200; body=%s", ctx.Res.Status, ctx.Res.Body)
 	}
 	if want := (map[string]any{"name": pkValue}); !reflect.DeepEqual(writer.lastUpdatePK, want) {
-		t.Errorf(
-			"update: writer received pk = %#v, want %#v (pk must survive router splitting + parsePK decoding intact)",
-			writer.lastUpdatePK,
-			want,
-		)
+		t.Errorf("update: writer received pk = %#v, want %#v (pk must survive router splitting + parsePK decoding intact)", writer.lastUpdatePK, want)
 	}
 
 	// --- DELETE, same PK round-trip ---

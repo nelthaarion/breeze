@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/fleet"
 )
 
 // --- §12.5: ingest throughput ----------------------------------------------

@@ -26,7 +26,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // diagName is the registry key, matching the `breeze add workflow` feature name.
@@ -82,24 +82,17 @@ func (e *Engine) probe() diag.Report {
 			"store directly, for a pending count.",
 	}
 	if e.col == nil {
-		notes = append(
-			notes,
-			"Observability is disabled on this engine, so executions do not reach "+
-				"the dashboard's Events page. The counters above are unaffected.",
-		)
+		notes = append(notes, "Observability is disabled on this engine, so executions do not reach "+
+			"the dashboard's Events page. The counters above are unaffected.")
 	}
 	if _, memory := e.store.(*MemoryStore); memory {
-		notes = append(
-			notes,
-			"The store is the in-memory default, so execution state does not survive "+
-				"a restart and Engine.Resume will find nothing after one.",
-		)
+		notes = append(notes, "The store is the in-memory default, so execution state does not survive "+
+			"a restart and Engine.Resume will find nothing after one.")
 	}
 
 	if e.closed.Load() {
 		return diag.Off(fmt.Sprintf("the workflow engine is shut down; %d workflow(s) remain registered",
-			len(defs))).
-			WithNotes(notes...)
+			len(defs))).WithNotes(notes...)
 	}
 
 	summary := fmt.Sprintf("%d workflow(s) registered, %d execution(s): %d completed, %d failed",
@@ -145,7 +138,7 @@ func storeKind(s Store) string {
 		return "none"
 	}
 	t := reflect.TypeOf(s)
-	for t.Kind() == reflect.Pointer {
+	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
 	if pkg := t.PkgPath(); pkg != "" {

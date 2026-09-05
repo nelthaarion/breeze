@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	breeze "github.com/nelthaarion/breeze/v2"
+	breeze "github.com/nelthaarion/breeze"
 )
 
 // The body every test serves: 100 bytes of a repeating digit pattern, so an
@@ -61,14 +61,7 @@ type serveResult struct {
 // lowercases them and serve reads them only in that form. Passing "Range"
 // through verbatim would let a test pass while production silently never
 // matched — the failure serve's own comment warns about.
-func serveReqWith(
-	t *testing.T,
-	m *mount,
-	method breeze.Method,
-	target string,
-	headers map[string]string,
-	out *bufSink,
-) serveResult {
+func serveReqWith(t *testing.T, m *mount, method breeze.Method, target string, headers map[string]string, out *bufSink) serveResult {
 	t.Helper()
 
 	raw, query := target, ""
@@ -93,13 +86,7 @@ func serveReqWith(
 	return serveResult{sink: out, name: name, status: status, sent: sent, err: err}
 }
 
-func serveReq(
-	t *testing.T,
-	m *mount,
-	method breeze.Method,
-	target string,
-	headers map[string]string,
-) serveResult {
+func serveReq(t *testing.T, m *mount, method breeze.Method, target string, headers map[string]string) serveResult {
 	t.Helper()
 	return serveReqWith(t, m, method, target, headers, &bufSink{})
 }
@@ -298,12 +285,7 @@ func TestServeStatus304(t *testing.T) {
 	})
 
 	t.Run("if-none-match weak", func(t *testing.T) {
-		serveGET(
-			t,
-			m,
-			"clip.mp4",
-			map[string]string{"if-none-match": "W/" + tag},
-		).wantStatus(t, 304)
+		serveGET(t, m, "clip.mp4", map[string]string{"if-none-match": "W/" + tag}).wantStatus(t, 304)
 	})
 
 	t.Run("if-none-match star", func(t *testing.T) {
@@ -320,21 +302,11 @@ func TestServeStatus304(t *testing.T) {
 
 	t.Run("stale date still serves", func(t *testing.T) {
 		earlier := info.ModTime().Add(-time.Hour).Unix()
-		serveGET(
-			t,
-			m,
-			"clip.mp4",
-			map[string]string{"if-modified-since": httpTime(earlier)},
-		).wantStatus(t, 206)
+		serveGET(t, m, "clip.mp4", map[string]string{"if-modified-since": httpTime(earlier)}).wantStatus(t, 206)
 	})
 
 	t.Run("unparseable date is ignored not honoured", func(t *testing.T) {
-		serveGET(
-			t,
-			m,
-			"clip.mp4",
-			map[string]string{"if-modified-since": "last tuesday"},
-		).wantStatus(t, 206)
+		serveGET(t, m, "clip.mp4", map[string]string{"if-modified-since": "last tuesday"}).wantStatus(t, 206)
 	})
 
 	t.Run("etag takes precedence over date", func(t *testing.T) {
@@ -385,12 +357,7 @@ func TestServeStatus403(t *testing.T) {
 
 	t.Run("signature for another file", func(t *testing.T) {
 		// One link must not become a key to the whole library.
-		r := serveGET(
-			t,
-			signedMount(t),
-			"clip.mp4?"+SignAt(secret, "other.mp4", now.Add(time.Hour)),
-			nil,
-		)
+		r := serveGET(t, signedMount(t), "clip.mp4?"+SignAt(secret, "other.mp4", now.Add(time.Hour)), nil)
 		r.wantStatus(t, 403)
 		if !errors.Is(r.err, ErrInvalidSignature) {
 			t.Errorf("err = %v, want ErrInvalidSignature", r.err)
@@ -630,12 +597,7 @@ func TestServeIfRange(t *testing.T) {
 	})
 
 	t.Run("mismatch discards the range", func(t *testing.T) {
-		r := serveGET(
-			t,
-			m,
-			"clip.mp4",
-			map[string]string{"range": "bytes=50-59", "if-range": `"stale-1"`},
-		)
+		r := serveGET(t, m, "clip.mp4", map[string]string{"range": "bytes=50-59", "if-range": `"stale-1"`})
 		r.wantNoError(t)
 		r.wantStatus(t, 206)
 		// Back to the first chunk: the client must restart, not resume.
@@ -680,12 +642,7 @@ func TestServeCORS(t *testing.T) {
 		r.wantHeader(t, "Vary", "Origin")
 		// Without this, JavaScript can read the body but not Content-Range, so
 		// a player cannot discover the total length.
-		if got := r.sink.headerValue(
-			"Access-Control-Expose-Headers",
-		); !strings.Contains(
-			got,
-			"Content-Range",
-		) {
+		if got := r.sink.headerValue("Access-Control-Expose-Headers"); !strings.Contains(got, "Content-Range") {
 			t.Errorf("Access-Control-Expose-Headers = %q, must expose Content-Range", got)
 		}
 	})
@@ -807,10 +764,7 @@ func TestServeErrorsRevealNothing(t *testing.T) {
 				t.Fatal("no internal error, so OnError and the collector learn nothing")
 			}
 			if r.err.Error() == errText(r.status) {
-				t.Errorf(
-					"internal error is only the reason phrase (%q); the detail was lost",
-					r.err,
-				)
+				t.Errorf("internal error is only the reason phrase (%q); the detail was lost", r.err)
 			}
 		})
 	}

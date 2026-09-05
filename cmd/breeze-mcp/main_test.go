@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2/internal/mcp"
-	"github.com/nelthaarion/breeze/v2/internal/mcpcmd"
+	"github.com/nelthaarion/breeze/internal/mcp"
+	"github.com/nelthaarion/breeze/internal/mcpcmd"
 )
 
 func TestRunHandshakeListAndNotification(t *testing.T) {
@@ -29,11 +29,7 @@ func TestRunHandshakeListAndNotification(t *testing.T) {
 
 	lines := bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n"))
 	if len(lines) != 2 {
-		t.Fatalf(
-			"got %d response lines, want 2 (the notification must be silent):\n%s",
-			len(lines),
-			out.Bytes(),
-		)
+		t.Fatalf("got %d response lines, want 2 (the notification must be silent):\n%s", len(lines), out.Bytes())
 	}
 
 	for i, line := range lines {
@@ -60,8 +56,7 @@ func TestRunHandshakeListAndNotification(t *testing.T) {
 	if err := json.Unmarshal(lines[0], &initialized); err != nil {
 		t.Fatal(err)
 	}
-	if initialized.Result.ServerInfo.Name != "breeze" ||
-		initialized.Result.ServerInfo.Version != version {
+	if initialized.Result.ServerInfo.Name != "breeze" || initialized.Result.ServerInfo.Version != version {
 		t.Errorf("serverInfo = %+v", initialized.Result.ServerInfo)
 	}
 
@@ -118,12 +113,7 @@ func TestStdioIsTheDefaultTransportAndWritesNothingExtra(t *testing.T) {
 	}, "\n") + "\n"
 
 	var out, errOut bytes.Buffer
-	if err := main1(
-		[]string{"--mode", "generator"},
-		strings.NewReader(input),
-		&out,
-		&errOut,
-	); err != nil {
+	if err := main1([]string{"--mode", "generator"}, strings.NewReader(input), &out, &errOut); err != nil {
 		t.Fatalf("main1 with no --port: %v", err)
 	}
 
@@ -162,12 +152,7 @@ func TestStdioDispatchMatchesTheSharedPathByteForByte(t *testing.T) {
 	const input = `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n"
 
 	var viaMain, viaShared, errOut bytes.Buffer
-	if err := main1(
-		[]string{"--mode", "generator"},
-		strings.NewReader(input),
-		&viaMain,
-		&errOut,
-	); err != nil {
+	if err := main1([]string{"--mode", "generator"}, strings.NewReader(input), &viaMain, &errOut); err != nil {
 		t.Fatalf("main1: %v", err)
 	}
 	if err := mcpcmd.ServeStdio(version, mcp.ModeGenerator, mcp.UnscopedScope(),

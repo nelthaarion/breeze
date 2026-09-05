@@ -28,11 +28,7 @@ import (
 func projectDir(t *testing.T) {
 	t.Helper()
 	t.Chdir(t.TempDir())
-	if err := os.WriteFile(
-		"go.mod",
-		[]byte("module example.com/proj\n\ngo 1.25\n"),
-		0o644,
-	); err != nil {
+	if err := os.WriteFile("go.mod", []byte("module example.com/proj\n\ngo 1.25\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -111,13 +107,7 @@ func TestGeneratorDeclarations(t *testing.T) {
 		},
 		{
 			desc: "workflow with retry and compensation",
-			args: []string{
-				"workflow",
-				"Signup",
-				"--steps=validate,charge-card",
-				"--retry",
-				"--compensate",
-			},
+			args: []string{"workflow", "Signup", "--steps=validate,charge-card", "--retry", "--compensate"},
 			file: filepath.Join("workflows", "signup.go"),
 			pkg:  "workflows",
 			// The hyphen in charge-card must become an identifier fragment, and
@@ -263,9 +253,7 @@ func TestGenerateModelWritesMigration(t *testing.T) {
 // table that already exists.
 func TestGenerateModelNoMigration(t *testing.T) {
 	projectDir(t)
-	if err := runGenerate(
-		[]string{"model", "Product", "sku:string", "--no-migration"},
-	); err != nil {
+	if err := runGenerate([]string{"model", "Product", "sku:string", "--no-migration"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat("migrations"); !os.IsNotExist(err) {

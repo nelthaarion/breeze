@@ -62,9 +62,9 @@ import (
 	"net"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/diag"
-	internalmcp "github.com/nelthaarion/breeze/v2/internal/mcp"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/diag"
+	internalmcp "github.com/nelthaarion/breeze/internal/mcp"
 )
 
 // Version is reported in the MCP handshake as this endpoint's server version.
@@ -250,9 +250,7 @@ func ServeInProcess(app *breeze.Breeze, cfg InProcessConfig) error {
 // thing that goes in a goroutine.
 func StartInProcess(app *breeze.Breeze, cfg InProcessConfig) (*Server, string, error) {
 	if app == nil {
-		return nil, "", fmt.Errorf(
-			"breeze/mcp: an in-process endpoint needs the application it describes",
-		)
+		return nil, "", fmt.Errorf("breeze/mcp: an in-process endpoint needs the application it describes")
 	}
 	if err := checkPortConflict(app, cfg); err != nil {
 		return nil, "", err

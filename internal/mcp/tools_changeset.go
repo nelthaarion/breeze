@@ -68,9 +68,7 @@ func beginChangeSetTool(sets *changeSetStore) *tool {
 			"breeze_discard_change_set. Use this whenever a change needs more than " +
 			"one generator call.",
 		schema: objectSchema(map[string]any{
-			"project_path": stringProp(
-				"Root of the project to open the change set over. Defaults to the server's working directory.",
-			),
+			"project_path": stringProp("Root of the project to open the change set over. Defaults to the server's working directory."),
 		}),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a beginChangeSetArgs
@@ -95,11 +93,8 @@ func beginChangeSetTool(sets *changeSetStore) *tool {
 				Pending:     []fileChange{},
 				Stageable:   stageableTools,
 			}
-			return structuredResult(
-				fmt.Sprintf("change set %s is open over %s; nothing is staged yet",
-					set.ID, set.ProjectPath),
-				view,
-			)
+			return structuredResult(fmt.Sprintf("change set %s is open over %s; nothing is staged yet",
+				set.ID, set.ProjectPath), view)
 		},
 	}
 }
@@ -159,9 +154,7 @@ func stageCallTool(sets *changeSetStore) *tool {
 				return errorResult("change_set is required; open one with breeze_begin_change_set")
 			}
 			if a.Tool == "" {
-				return errorResult(
-					"tool is required; stageable tools are: " + strings.Join(stageableTools, ", "),
-				)
+				return errorResult("tool is required; stageable tools are: " + strings.Join(stageableTools, ", "))
 			}
 
 			set, err := sets.get(a.ChangeSet)
@@ -184,19 +177,13 @@ func stageCallTool(sets *changeSetStore) *tool {
 				if pendErr != nil {
 					return errorResult(err.Error())
 				}
-				return structuredErrorResult(
-					a.Tool+" was refused, so nothing was staged; the change set is still open",
+				return structuredErrorResult(a.Tool+" was refused, so nothing was staged; the change set is still open",
 					stageResult{
-						ChangeSet: set.ID,
-						Call: stagedCall{
-							Tool:      a.Tool,
-							Arguments: a.Arguments,
-							Output:    err.Error(),
-						},
+						ChangeSet:   set.ID,
+						Call:        stagedCall{Tool: a.Tool, Arguments: a.Arguments, Output: err.Error()},
 						Pending:     pending,
 						StagedCount: len(set.Calls),
-					},
-				)
+					})
 			}
 
 			pending, err := set.pendingChanges()
@@ -280,20 +267,9 @@ func commitChangeSetTool(sets *changeSetStore) *tool {
 			}
 
 			if len(applied) == 0 {
-				return structuredResult(
-					fmt.Sprintf(
-						"%s committed with nothing to apply — no staged call changed a file",
-						set.ID,
-					),
-					result,
-				)
+				return structuredResult(fmt.Sprintf("%s committed with nothing to apply — no staged call changed a file", set.ID), result)
 			}
-			summary := fmt.Sprintf(
-				"%s applied %d file(s) to %s",
-				set.ID,
-				len(applied),
-				set.ProjectPath,
-			)
+			summary := fmt.Sprintf("%s applied %d file(s) to %s", set.ID, len(applied), set.ProjectPath)
 			if warning != "" {
 				summary += "\n" + warning
 			}
@@ -354,19 +330,10 @@ func discardChangeSetTool(sets *changeSetStore) *tool {
 				result.Discarded = []fileChange{}
 			}
 			if pendErr != nil {
-				return structuredResult(
-					fmt.Sprintf("%s discarded; the project was not touched", set.ID),
-					result,
-				)
+				return structuredResult(fmt.Sprintf("%s discarded; the project was not touched", set.ID), result)
 			}
-			return structuredResult(
-				fmt.Sprintf(
-					"%s discarded, dropping %d pending file(s); the project was not touched",
-					set.ID,
-					len(pending),
-				),
-				result,
-			)
+			return structuredResult(fmt.Sprintf("%s discarded, dropping %d pending file(s); the project was not touched",
+				set.ID, len(pending)), result)
 		},
 	}
 }
@@ -435,10 +402,7 @@ func changeHistoryTool() *tool {
 				result.Note = "no history has been recorded for this project; it is written when a change set is committed"
 				return structuredResult("no recorded changes", result)
 			}
-			return structuredResult(
-				fmt.Sprintf("%d recorded change(s), newest first", len(entries)),
-				result,
-			)
+			return structuredResult(fmt.Sprintf("%d recorded change(s), newest first", len(entries)), result)
 		},
 	}
 }

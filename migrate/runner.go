@@ -62,7 +62,7 @@ func (r *Runner) Up(ctx context.Context) (err error) {
 	if err := r.acquireLock(ctx); err != nil {
 		return err
 	}
-	defer r.releaseLock(ctx)
+	defer func() { _ = r.releaseLock(ctx) }()
 
 	if err := ensureVersionTable(ctx, r.DB); err != nil {
 		return fmt.Errorf("failed to initialize migrations table: %w", err)
@@ -102,13 +102,13 @@ func (r *Runner) Up(ctx context.Context) (err error) {
 				continue
 			}
 			if _, err := tx.ExecContext(ctx, stmt); err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				return fmt.Errorf("migration %d failed: %w", m.Version, err)
 			}
 		}
 
 		if err := recordApplied(ctx, tx, m.Version, m.Name, m.UpSQL); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return err
 		}
 
@@ -136,7 +136,7 @@ func (r *Runner) Down(ctx context.Context, n int) (err error) {
 	if err := r.acquireLock(ctx); err != nil {
 		return err
 	}
-	defer r.releaseLock(ctx)
+	defer func() { _ = r.releaseLock(ctx) }()
 
 	if err := ensureVersionTable(ctx, r.DB); err != nil {
 		return fmt.Errorf("failed to initialize migrations table: %w", err)
@@ -174,11 +174,7 @@ func (r *Runner) Down(ctx context.Context, n int) (err error) {
 
 		tx, err := r.DB.BeginTx(ctx, nil)
 		if err != nil {
-			return fmt.Errorf(
-				"failed to begin transaction for rollback of %d: %w",
-				rec.Version,
-				err,
-			)
+			return fmt.Errorf("failed to begin transaction for rollback of %d: %w", rec.Version, err)
 		}
 
 		// Split SQL by semicolon and execute each statement
@@ -188,13 +184,13 @@ func (r *Runner) Down(ctx context.Context, n int) (err error) {
 				continue
 			}
 			if _, err := tx.ExecContext(ctx, stmt); err != nil {
-				tx.Rollback()
+				_ = tx.Rollback()
 				return fmt.Errorf("rollback of migration %d failed: %w", rec.Version, err)
 			}
 		}
 
 		if err := removeApplied(ctx, tx, rec.Version); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return err
 		}
 
@@ -275,14 +271,13 @@ func (r *Runner) acquireLock(ctx context.Context) error {
 		INSERT INTO breeze_migrations (version, name, checksum, applied_at)
 		VALUES (?, 'lock', 'lock', ?)
 	`, lockVersion, time.Now().UTC())
+
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		// If the insert fails (constraint violation), another runner holds the lock
 		// This is not perfect (we don't know the actual error reason), but it's the
 		// best we can do portably across SQL drivers.
-		return fmt.Errorf(
-			"another migration is running (or lock table is corrupted); wait and try again",
-		)
+		return fmt.Errorf("another migration is running (or lock table is corrupted); wait and try again")
 	}
 
 	// We successfully inserted the lock. Commit to release the transaction lock,

@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // Installation flags. Each constructor sets its own, so a probe can distinguish
@@ -262,21 +262,17 @@ func corsProbe() diag.Report {
 				// Refused by every browser, silently: the response is sent and
 				// the browser discards it, so no server-side error ever appears.
 				return diag.Degraded("installed with AllowOrigins \"*\" and AllowCredentials \"true\"",
-					detail).
-					WithNotes("A wildcard origin with credentials is refused by every " +
-						"browser — the request is made, the response is returned, and the browser " +
-						"discards it without an error a server can see. Name the origin explicitly.")
+					detail).WithNotes("A wildcard origin with credentials is refused by every " +
+					"browser — the request is made, the response is returned, and the browser " +
+					"discards it without an error a server can see. Name the origin explicitly.")
 			}
 			notes = append(notes, "AllowOrigins is \"*\", so any site can read responses from "+
 				"this service.")
 		}
 		if cfg.AllowOrigins == "" {
-			notes = append(
-				notes,
-				"AllowOrigins is empty, so no Access-Control-Allow-Origin header "+
-					"is sent and every cross-origin read is blocked by the browser. The middleware is "+
-					"installed but has nothing to permit.",
-			)
+			notes = append(notes, "AllowOrigins is empty, so no Access-Control-Allow-Origin header "+
+				"is sent and every cross-origin read is blocked by the browser. The middleware is "+
+				"installed but has nothing to permit.")
 		}
 	}
 
@@ -461,10 +457,8 @@ func recoveryProbe() diag.Report {
 	if panics == 0 {
 		report := diag.OK("installed; no handler has panicked", detail)
 		if !snap.Counting {
-			return report.WithNotes(
-				"The panic count above is exact regardless of whether counted " +
-					"diagnostics are enabled — it is not gated. The request counts are.",
-			)
+			return report.WithNotes("The panic count above is exact regardless of whether counted " +
+				"diagnostics are enabled — it is not gated. The request counts are.")
 		}
 		return report
 	}

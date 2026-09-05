@@ -27,14 +27,7 @@ func generateTestResourceFileWith(t *testing.T, args []string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeResourceHandlerFile(
-		"User",
-		"Users",
-		"/users",
-		fields,
-		actions,
-		false,
-	); err != nil {
+	if err := writeResourceHandlerFile("User", "Users", "/users", fields, actions, false); err != nil {
 		t.Fatal(err)
 	}
 	src, err := os.ReadFile(filepath.Join("handlers", "user.go"))
@@ -52,7 +45,7 @@ func generateTestResourceFileWith(t *testing.T, args []string) string {
 // binding.Bind reads those tags.
 func TestResourceHandlerBindsThroughBindingPackage(t *testing.T) {
 	src := generateTestResourceFile(t)
-	if !strings.Contains(src, `"github.com/nelthaarion/breeze/v2/binding"`) {
+	if !strings.Contains(src, `"github.com/nelthaarion/breeze/binding"`) {
 		t.Error("generated handler does not import the binding package")
 	}
 	if !strings.Contains(src, "binding.Bind(&req, binding.JSONBody(ctx.Req.Body))") {
@@ -150,11 +143,7 @@ func TestResourceStoreMarkedAsDemo(t *testing.T) {
 
 func TestNoValidateFlagSuppressesInference(t *testing.T) {
 	t.Chdir(t.TempDir())
-	if err := generateResource(
-		"example.com/x",
-		"User",
-		[]string{"name:string", "--no-validate"},
-	); err != nil {
+	if err := generateResource("example.com/x", "User", []string{"name:string", "--no-validate"}); err != nil {
 		t.Fatal(err)
 	}
 	src, err := os.ReadFile(filepath.Join("handlers", "user.go"))
@@ -233,12 +222,8 @@ func TestResourceRoutesUseScalarPackage(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(routes)
-	if !strings.Contains(src, `"github.com/nelthaarion/breeze/v2/scalar"`) ||
-		!strings.Contains(src, "scalar.RouteDoc") {
-		t.Errorf(
-			"routes must use the scalar package (middleware.Doc* takes scalar.RouteDoc), got:\n%s",
-			src,
-		)
+	if !strings.Contains(src, `"github.com/nelthaarion/breeze/scalar"`) || !strings.Contains(src, "scalar.RouteDoc") {
+		t.Errorf("routes must use the scalar package (middleware.Doc* takes scalar.RouteDoc), got:\n%s", src)
 	}
 	if strings.Contains(src, "swagger.") {
 		t.Errorf("routes still reference the old swagger package:\n%s", src)

@@ -118,7 +118,7 @@ func (v *validator) validateField(fieldName string, fp *fieldPlan) error {
 
 	// Handle pointer types: if the field is a pointer and is nil, skip validation
 	// for most rules (nil is only invalid if "required" is present).
-	isPtr := fldVal.Kind() == reflect.Pointer
+	isPtr := fldVal.Kind() == reflect.Ptr
 	if isPtr && fldVal.IsNil() {
 		// Check for required rule.
 		for _, r := range fp.rules {

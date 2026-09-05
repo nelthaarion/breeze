@@ -84,12 +84,7 @@ func TestWorkerPool_PanicDoesNotLeak(t *testing.T) {
 	after := runtime.NumGoroutine()
 	leaked := after - before
 	if leaked > 1 {
-		t.Errorf(
-			"goroutine leak after panics: before=%d, after=%d, leaked=%d",
-			before,
-			after,
-			leaked,
-		)
+		t.Errorf("goroutine leak after panics: before=%d, after=%d, leaked=%d", before, after, leaked)
 	}
 }
 
@@ -159,7 +154,7 @@ func TestContextNextNoDoubleExecution(t *testing.T) {
 		middlewares: []HandlerFunc{mw1, mw2, handler},
 		index:       -1,
 	}
-	ctx.Next()
+	_ = ctx.Next()
 
 	if execCount != 3 {
 		t.Errorf("execCount = %d, want 3 (each middleware executed exactly once)", execCount)

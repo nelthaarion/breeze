@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/rpc"
+	"github.com/nelthaarion/breeze/rpc"
 )
 
 // Server holds the tool table and the JSON-RPC registry the tools are reached
@@ -253,14 +253,8 @@ func (s *Server) handleToolsCall(ctx *rpc.Context) {
 		// ones: listing a tool the caller cannot call would be an invitation to
 		// retry something that will be refused identically.
 		s.emit(Event{Kind: EventToolUnknown, Tool: p.Name})
-		ctx.Errorf(
-			rpc.CodeInvalidParams,
-			fmt.Sprintf(
-				"unknown tool %q; available: %s",
-				p.Name,
-				strings.Join(s.visibleNames(), ", "),
-			),
-		)
+		ctx.Errorf(rpc.CodeInvalidParams,
+			fmt.Sprintf("unknown tool %q; available: %s", p.Name, strings.Join(s.visibleNames(), ", ")))
 		return
 	}
 
@@ -290,14 +284,10 @@ func (s *Server) handleToolsCall(ctx *rpc.Context) {
 			Reason: string(capability),
 		})
 		ctx.Result(structuredErrorResult(
-			fmt.Sprintf(
-				"%s is outside this token's scope; it requires the %q capability, which this "+
-					"token was not granted. A different token is needed — retrying will not help.",
-				p.Name,
-				capability,
-			),
-			detail,
-		))
+			fmt.Sprintf("%s is outside this token's scope; it requires the %q capability, which this "+
+				"token was not granted. A different token is needed — retrying will not help.",
+				p.Name, capability),
+			detail))
 		return
 	}
 

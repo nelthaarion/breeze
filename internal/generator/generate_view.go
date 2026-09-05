@@ -51,13 +51,10 @@ func generateView(modulePath, name string, args []string) error {
 	// supported, but its router.View("/", ...) shadows the scaffold's, so the
 	// message says so rather than letting the surprise happen at runtime.
 	if !hasBlock(featuresFileName, featureMarkerPrefix, "templates") {
-		return fmt.Errorf(
-			"no package-scope template engine in this project â€” run `breeze add templates` first\n"+
-				"       (it declares the `Templates` var that serving a generated view requires)\n"+
-				"       If you scaffolded with --template=views, its engine is a local in main()\n"+
-				"       and unreachable from %s; adding the block will also take over \"/\"",
-			featuresFileName,
-		)
+		return fmt.Errorf("no package-scope template engine in this project â€” run `breeze add templates` first\n"+
+			"       (it declares the `Templates` var that serving a generated view requires)\n"+
+			"       If you scaffolded with --template=views, its engine is a local in main()\n"+
+			"       and unreachable from %s; adding the block will also take over \"/\"", featuresFileName)
 	}
 
 	viewName := strings.ToLower(name)
@@ -90,13 +87,7 @@ func generateView(modulePath, name string, args []string) error {
 		h.WriteString("\n  <!-- Fields come from the data function in features_generated.go. -->\n")
 		h.WriteString("  <p>{{.Message}}</p>\n")
 	} else {
-		fmt.Fprintf(
-			&h,
-			"  <p>Rendered from %s/%s.html inside %s/layout.html.</p>\n",
-			dir,
-			viewName,
-			dir,
-		)
+		fmt.Fprintf(&h, "  <p>Rendered from %s/%s.html inside %s/layout.html.</p>\n", dir, viewName, dir)
 		h.WriteString("\n  <!-- Pass per-request data by regenerating with --data. -->\n")
 	}
 	h.WriteString("</div>\n\n")
@@ -115,28 +106,13 @@ func generateView(modulePath, name string, args []string) error {
 
 	var body strings.Builder
 	if *data {
-		fmt.Fprintf(
-			&body,
-			"// %sData builds the data %s.html renders. It runs on every request.\n",
-			lower,
-			viewName,
-		)
+		fmt.Fprintf(&body, "// %sData builds the data %s.html renders. It runs on every request.\n", lower, viewName)
 		fmt.Fprintf(&body, "func %sData(ctx *breeze.Context) any {\n", lower)
 		b := "\treturn map[string]any{\n\t\t\"Message\": \"Edit " + lower + "Data to change this.\",\n\t}\n}\n\n"
 		body.WriteString(b)
 	}
-	fmt.Fprintf(
-		&body,
-		"// %s serves %s from %s.\n",
-		featureSetupFunc("view"+name),
-		routePath,
-		htmlPath,
-	)
-	fmt.Fprintf(
-		&body,
-		"func %s(app *breeze.Breeze, router *breeze.Router) {\n",
-		featureSetupFunc("view"+name),
-	)
+	fmt.Fprintf(&body, "// %s serves %s from %s.\n", featureSetupFunc("view"+name), routePath, htmlPath)
+	fmt.Fprintf(&body, "func %s(app *breeze.Breeze, router *breeze.Router) {\n", featureSetupFunc("view"+name))
 	if *data {
 		fmt.Fprintf(&body, "\trouter.View(%q, Templates, %q, %sData)\n", routePath, viewName, lower)
 	} else {
@@ -145,7 +121,7 @@ func generateView(modulePath, name string, args []string) error {
 	body.WriteString("}\n")
 
 	if err := upsertGeneratedFeature("view"+name, body.String(), []string{
-		`"github.com/nelthaarion/breeze/v2"`,
+		`"github.com/nelthaarion/breeze"`,
 	}); err != nil {
 		return err
 	}
@@ -157,10 +133,7 @@ func generateView(modulePath, name string, args []string) error {
 	if *data {
 		notes = append(notes, fmt.Sprintf("Data:         %sData in %s", lower, featuresFileName))
 	}
-	notes = append(
-		notes,
-		"Preload parses every view at boot, so a template error is a boot failure with a line number.",
-	)
+	notes = append(notes, "Preload parses every view at boot, so a template error is a boot failure with a line number.")
 	printNotes(notes)
 	return nil
 }

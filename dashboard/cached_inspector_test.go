@@ -17,11 +17,7 @@ func (m *mockInspector) Tables() ([]TableInfo, error) {
 	return []TableInfo{{Name: "users", Rows: 1}}, nil
 }
 
-func (m *mockInspector) TableData(
-	name string,
-	page, pageSize int,
-	search string,
-) (TableData, error) {
+func (m *mockInspector) TableData(name string, page, pageSize int, search string) (TableData, error) {
 	atomic.AddInt32(&m.dataCalls, 1)
 	return TableData{Table: name, Page: page, PageSize: pageSize, Total: 1}, nil
 }
@@ -120,10 +116,7 @@ func TestCachedInspector_NoLockContention(t *testing.T) {
 
 	calls := atomic.LoadInt32(&mock.tablesCalls)
 	if calls != 1 {
-		t.Errorf(
-			"underlying Tables() called %d times, want 1 (all 1000 calls should be cached)",
-			calls,
-		)
+		t.Errorf("underlying Tables() called %d times, want 1 (all 1000 calls should be cached)", calls)
 	}
 }
 

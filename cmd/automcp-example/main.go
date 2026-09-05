@@ -64,9 +64,10 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/nelthaarion/breeze/v2"
-	middleware "github.com/nelthaarion/breeze/v2/middlewares"
-	"github.com/nelthaarion/breeze/v2/scalar"
+
+	"github.com/nelthaarion/breeze"
+	middleware "github.com/nelthaarion/breeze/middlewares"
+	"github.com/nelthaarion/breeze/scalar"
 )
 
 // ─── the model ───────────────────────────────────────────────────────────────
@@ -88,7 +89,7 @@ import (
 // generation and binding — so a field optional in one and required in the other would
 // produce a tool that advertises a call it then refuses.
 type CreateOrderRequest struct {
-	SKU      string `json:"sku"      validate:"required,min=3,max=32"  description:"Stock keeping unit to order, for example BRZ-100."`
+	SKU      string `json:"sku"      validate:"required,min=3,max=32" description:"Stock keeping unit to order, for example BRZ-100."`
 	Quantity int    `json:"quantity" validate:"required,min=1,max=100" description:"How many units to order, from 1 to 100."`
 	Customer string `json:"customer" validate:"required,email"         description:"Email address the confirmation is sent to."`
 }
@@ -423,22 +424,13 @@ func main() {
 	}
 
 	fmt.Printf("HTTP      http://127.0.0.1:%d  (docs at /scalar)\n", httpPort)
-	fmt.Printf(
-		"Auto-MCP  %s  — raw JSON-RPC 2.0 over TCP; tools: create_order, get_order\n",
-		mcpAddr,
-	)
+	fmt.Printf("Auto-MCP  %s  — raw JSON-RPC 2.0 over TCP; tools: create_order, get_order\n", mcpAddr)
 	fmt.Printf("Untagged  GET /internal/metrics — in the OpenAPI document, never a tool\n\n")
 	fmt.Printf("A one-hour token for get_order:\n  %s\n\n", demoToken)
 	fmt.Println("Try:")
-	fmt.Printf(
-		"  curl -X POST localhost:%d/orders -d '{\"sku\":\"BRZ-100\",\"quantity\":2,\"customer\":\"ada@example.com\"}'\n",
-		httpPort,
-	)
+	fmt.Printf("  curl -X POST localhost:%d/orders -d '{\"sku\":\"BRZ-100\",\"quantity\":2,\"customer\":\"ada@example.com\"}'\n", httpPort)
 	fmt.Printf("  curl localhost:%d/orders/ord-1 -H \"Authorization: Bearer $TOKEN\"\n", httpPort)
-	fmt.Printf(
-		"  printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\\n' | nc %s\n",
-		mcpAddr,
-	)
+	fmt.Printf("  printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\\n' | nc %s\n", mcpAddr)
 	fmt.Printf("  go test ./cmd/automcp-example   # the same claims, asserted\n\n")
 
 	if err := application.Run(httpPort, true); err != nil {
@@ -465,8 +457,6 @@ func jwtSecret() string {
 	}
 	secret := hex.EncodeToString(buf)
 	fmt.Println("automcp-example: generated an ephemeral JWT secret for this run;")
-	fmt.Println(
-		"                 set BREEZE_EXAMPLE_JWT_SECRET to keep tokens valid across restarts.",
-	)
+	fmt.Println("                 set BREEZE_EXAMPLE_JWT_SECRET to keep tokens valid across restarts.")
 	return secret
 }

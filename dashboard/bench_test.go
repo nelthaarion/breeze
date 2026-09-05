@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // benchCollector returns a collector with the dashboard enabled and no hub, so

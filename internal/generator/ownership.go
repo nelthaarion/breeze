@@ -66,7 +66,7 @@ func fileOwner(path string) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for i := 0; scanner.Scan() && i < 5; i++ {

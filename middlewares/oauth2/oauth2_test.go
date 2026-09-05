@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // ---- PKCE ----
@@ -185,12 +185,7 @@ func TestGitHubPickPrimaryEmail(t *testing.T) {
 
 func TestJWTSessionRoundTrip(t *testing.T) {
 	restoreGoogle()
-	cfg := Config{
-		Provider:     Google,
-		ClientID:     "id",
-		ClientSecret: "sec",
-		SessionMode:  SessionModeJWT,
-	}
+	cfg := Config{Provider: Google, ClientID: "id", ClientSecret: "sec", SessionMode: SessionModeJWT}
 	cfg.normalize()
 
 	user := &User{ID: "u1", Email: "e@x.com", Provider: Google}
@@ -211,12 +206,7 @@ func TestJWTSessionRoundTrip(t *testing.T) {
 
 func TestJWTRejectsTampered(t *testing.T) {
 	restoreGoogle()
-	cfg := Config{
-		Provider:     Google,
-		ClientID:     "id",
-		ClientSecret: "sec",
-		SessionMode:  SessionModeJWT,
-	}
+	cfg := Config{Provider: Google, ClientID: "id", ClientSecret: "sec", SessionMode: SessionModeJWT}
 	cfg.normalize()
 	user := &User{ID: "u1"}
 	jwtStr, _ := issueJWT(&cfg, user, &Token{AccessToken: "a"})

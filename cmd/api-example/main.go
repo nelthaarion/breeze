@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/nelthaarion/breeze/v2"
-	middleware "github.com/nelthaarion/breeze/v2/middlewares"
-	"github.com/nelthaarion/breeze/v2/scalar"
+	"github.com/nelthaarion/breeze"
+	middleware "github.com/nelthaarion/breeze/middlewares"
+	"github.com/nelthaarion/breeze/scalar"
 )
 
 // ─── HTTP request / response types ───────────────────────────────────────────
@@ -38,9 +38,9 @@ type UserPathParams struct {
 }
 
 type UserQueryParams struct {
-	Page  int    `json:"page"  description:"Page number (default 1)"     omitempty:"true"`
+	Page  int    `json:"page"  description:"Page number (default 1)"  omitempty:"true"`
 	Limit int    `json:"limit" description:"Items per page (default 20)" omitempty:"true"`
-	Sort  string `json:"sort"  description:"Sort field"                  omitempty:"true"`
+	Sort  string `json:"sort"  description:"Sort field"                omitempty:"true"`
 }
 
 // ─── WebSocket chat handler ───────────────────────────────────────────────────
@@ -91,6 +91,7 @@ func main() {
 	// Inline echo endpoint using WSHandlerFunc.
 	app.WebSocket("/ws/echo", &breeze.WSHandlerFunc{
 		Connect: func(conn *breeze.WSConn) {
+
 			_ = conn.SendText("echo server ready")
 		},
 		Message: func(conn *breeze.WSConn, opcode byte, payload []byte) {
@@ -211,6 +212,7 @@ func createUser(ctx *breeze.Context) error {
 }
 
 func getUser(ctx *breeze.Context) error {
+
 	return ctx.JSON(UserResponse{
 		ID:    ctx.GetParam("id"),
 		Name:  "Alice",

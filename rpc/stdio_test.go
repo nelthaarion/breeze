@@ -108,12 +108,7 @@ func TestStdioOneMessagePerLine(t *testing.T) {
 	}
 	for i, want := range []float64{1, 2, 3} {
 		if msgs[i]["id"] != want {
-			t.Errorf(
-				"line %d has id %v, want %v — responses are out of order",
-				i,
-				msgs[i]["id"],
-				want,
-			)
+			t.Errorf("line %d has id %v, want %v — responses are out of order", i, msgs[i]["id"], want)
 		}
 	}
 }
@@ -146,11 +141,7 @@ func TestStdioMalformedJSONDoesNotEndTheSession(t *testing.T) {
 
 	msgs := responseLines(t, out)
 	if len(msgs) != 2 {
-		t.Fatalf(
-			"got %d response lines, want 2 (a parse error then a result): %q",
-			len(msgs),
-			out.String(),
-		)
+		t.Fatalf("got %d response lines, want 2 (a parse error then a result): %q", len(msgs), out.String())
 	}
 
 	errObj, ok := msgs[0]["error"].(map[string]any)
@@ -241,10 +232,7 @@ func TestStdioHandlesCRLF(t *testing.T) {
 // TestStdioBlankLinesAreSkipped — stray newlines are common from hand-driven
 // peers and shells, and an unsolicited parse error in reply to one is noise.
 func TestStdioBlankLinesAreSkipped(t *testing.T) {
-	s, out := newStdioFixture(
-		t,
-		"\n\n"+`{"jsonrpc":"2.0","id":1,"method":"echo","params":["x"]}`+"\n\n",
-	)
+	s, out := newStdioFixture(t, "\n\n"+`{"jsonrpc":"2.0","id":1,"method":"echo","params":["x"]}`+"\n\n")
 
 	if err := s.Serve(); err != nil {
 		t.Fatalf("Serve: %v", err)
@@ -280,10 +268,7 @@ func TestStdioOversizedMessageDoesNotWedgeTheStream(t *testing.T) {
 	}
 	last := msgs[len(msgs)-1]
 	if last["id"] != float64(2) {
-		t.Errorf(
-			"last response has id %v, want 2 — the message after the oversized one was lost",
-			last["id"],
-		)
+		t.Errorf("last response has id %v, want 2 — the message after the oversized one was lost", last["id"])
 	}
 }
 

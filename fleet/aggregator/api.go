@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/fleet"
 )
 
 const maxIngestBody = 32 << 20 // 32 MiB compressed or plain, before JSON decode.
@@ -205,11 +205,7 @@ func (a *Aggregator) services(ctx *breeze.Context) error {
 
 func (a *Aggregator) traces(ctx *breeze.Context) error {
 	q := ctx.Req.Query
-	filter := TraceQuery{
-		Service: q.Get("service"),
-		Limit:   intValue(q.Get("limit")),
-		Cursor:  q.Get("cursor"),
-	}
+	filter := TraceQuery{Service: q.Get("service"), Limit: intValue(q.Get("limit")), Cursor: q.Get("cursor")}
 	filter.MinServices = intValue(q.Get("min_services"))
 	if filter.MinServices <= 0 {
 		filter.MinServices = 2
@@ -296,22 +292,20 @@ func (a *Aggregator) traceLogs(ctx *breeze.Context) error {
 }
 
 func (a *Aggregator) topologySnapshot(ctx *breeze.Context) error {
+
 	writeJSON(ctx, 200, a.topology.Snapshot())
 
 	return nil
 }
-
 func (a *Aggregator) incidentSnapshot(ctx *breeze.Context) error {
 	writeJSON(ctx, 200, Incidents(a.topology, a.cfg, time.Now()))
 
 	return nil
 }
-
 func (a *Aggregator) stats(ctx *breeze.Context) error {
 	writeJSON(ctx, 200, a.store.Stats())
 	return nil
 }
-
 func (a *Aggregator) violationSnapshot(ctx *breeze.Context) error {
 	writeJSON(ctx, 200, a.Violations())
 	return nil
@@ -324,9 +318,5 @@ func writeJSON(ctx *breeze.Context, status int, v any) {
 	if err != nil {
 		status, body = 500, []byte(`{"error":"internal encoding error"}`)
 	}
-	ctx.Res = &breeze.HTTPResponse{
-		Status:  status,
-		Headers: map[string]string{"Content-Type": "application/json"},
-		Body:    body,
-	}
+	ctx.Res = &breeze.HTTPResponse{Status: status, Headers: map[string]string{"Content-Type": "application/json"}, Body: body}
 }

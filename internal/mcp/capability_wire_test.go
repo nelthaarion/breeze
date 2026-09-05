@@ -18,11 +18,7 @@ import (
 
 // scopedServer builds a network server with a known token and scope, plus an httptest
 // server in front of it.
-func scopedServer(
-	t *testing.T,
-	mode ServerMode,
-	scope Scope,
-) (*NetworkServer, *httptest.Server, string) {
+func scopedServer(t *testing.T, mode ServerMode, scope Scope) (*NetworkServer, *httptest.Server, string) {
 	t.Helper()
 
 	const token = "scope-test-token"
@@ -118,11 +114,7 @@ func TestInitializeReportsGrantedAndKnownCapabilities(t *testing.T) {
 //
 // Named apart from server_test.go's in-process helpers because these go over HTTP: the
 // transport is the point here, and a shared name would hide that.
-func scopedListTools(
-	t *testing.T,
-	srv *httptest.Server,
-	token string,
-) (session string, names []string) {
+func scopedListTools(t *testing.T, srv *httptest.Server, token string) (session string, names []string) {
 	t.Helper()
 
 	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":` +
@@ -166,19 +158,11 @@ func scopedListTools(
 
 // scopedCallTool sends one tools/call over HTTP and returns either the result or the
 // JSON-RPC error, so a test can assert which of the two a refusal came back as.
-func scopedCallTool(
-	t *testing.T,
-	srv *httptest.Server,
-	token, session, name string,
-) (toolCallResult, json.RawMessage) {
+func scopedCallTool(t *testing.T, srv *httptest.Server, token, session, name string) (toolCallResult, json.RawMessage) {
 	t.Helper()
 
 	payload := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"` + name + `","arguments":{}}}`
-	req, err := http.NewRequest(
-		http.MethodPost,
-		srv.URL+DefaultEndpointPath,
-		strings.NewReader(payload),
-	)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+DefaultEndpointPath, strings.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
 	}

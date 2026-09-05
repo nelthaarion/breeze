@@ -147,10 +147,7 @@ func TestPublishDoesNotCrossTopics(t *testing.T) {
 		t.Errorf("the subscribed topic ran %d times, want 1", spans)
 	}
 	if beats != 0 {
-		t.Errorf(
-			"an unrelated topic ran %d times, want 0 — topic filtering is not isolating subscribers",
-			beats,
-		)
+		t.Errorf("an unrelated topic ran %d times, want 0 — topic filtering is not isolating subscribers", beats)
 	}
 }
 
@@ -295,10 +292,7 @@ func TestPublishAsyncCopiesPayload(t *testing.T) {
 	}
 
 	if s, _ := got.Load().(string); s != "original" {
-		t.Errorf(
-			"subscriber saw %q, want original — the async path is sharing the caller's buffer",
-			s,
-		)
+		t.Errorf("subscriber saw %q, want original — the async path is sharing the caller's buffer", s)
 	}
 }
 
@@ -327,10 +321,7 @@ func TestPublishAsyncCopiesMeta(t *testing.T) {
 	}
 
 	if s, _ := got.Load().(string); s != "abc" {
-		t.Errorf(
-			"subscriber saw trace_id=%q, want abc — the async path is sharing the caller's map",
-			s,
-		)
+		t.Errorf("subscriber saw trace_id=%q, want abc — the async path is sharing the caller's map", s)
 	}
 }
 
@@ -505,7 +496,7 @@ func TestSubscriptionPriorityIsHonoured(t *testing.T) {
 func TestInMemoryBackendRoundTrip(t *testing.T) {
 	b := New()
 	backend := NewInMemoryBackend(b)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	var got atomic.Value
 	done := make(chan struct{})
@@ -538,7 +529,7 @@ func TestInMemoryBackendRoundTrip(t *testing.T) {
 func TestInMemoryBackendCancelStopsDelivery(t *testing.T) {
 	b := New()
 	backend := NewInMemoryBackend(b)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	var n int64
 	cancel, err := backend.Subscribe("topic", func(*Context, RawMessage) error {

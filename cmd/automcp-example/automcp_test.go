@@ -37,10 +37,11 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/nelthaarion/breeze/v2"
-	middleware "github.com/nelthaarion/breeze/v2/middlewares"
-	"github.com/nelthaarion/breeze/v2/rpc"
-	"github.com/nelthaarion/breeze/v2/scalar"
+
+	"github.com/nelthaarion/breeze"
+	middleware "github.com/nelthaarion/breeze/middlewares"
+	"github.com/nelthaarion/breeze/rpc"
+	"github.com/nelthaarion/breeze/scalar"
 )
 
 // testSecret is long enough to be a legitimate HMAC key. It is a test fixture, not a
@@ -175,12 +176,7 @@ type callResult struct {
 // callTool performs tools/call. A protocol-level refusal is returned as the second
 // value: "the call was malformed" and "the service said no" are different outcomes and a
 // test should not have to guess which it got.
-func callTool(
-	t *testing.T,
-	srv *rpc.Server,
-	name string,
-	args map[string]any,
-) (callResult, *rpcReply) {
+func callTool(t *testing.T, srv *rpc.Server, name string, args map[string]any) (callResult, *rpcReply) {
 	t.Helper()
 
 	params := map[string]any{"name": name}
@@ -205,8 +201,7 @@ func callTool(
 // direct (a second fixture, a recorded expectation) would let the two drift while the
 // test still passed.
 func runHTTP(t *testing.T, router *breeze.Router, method breeze.Method, path string,
-	headers map[string]string, body []byte,
-) (int, string) {
+	headers map[string]string, body []byte) (int, string) {
 	t.Helper()
 
 	req := &breeze.HTTPRequest{Method: method, Path: path, Header: map[string]string{}, Body: body}
@@ -310,10 +305,8 @@ func TestToolSchemaMatchesTheRoutesOpenAPIShape(t *testing.T) {
 				}
 				// A path parameter has to be required: without it there is no URL.
 				if param.In == "path" && !contains(schema.Required, param.Name) {
-					t.Errorf(
-						"path parameter %q is optional in the tool, but a URL cannot be built without it",
-						param.Name,
-					)
+					t.Errorf("path parameter %q is optional in the tool, but a URL cannot be built without it",
+						param.Name)
 				}
 			}
 			if op.RequestBody != nil {
@@ -324,19 +317,11 @@ func TestToolSchemaMatchesTheRoutesOpenAPIShape(t *testing.T) {
 				for field, want := range media.Schema.Properties {
 					prop, ok := schema.Properties[field]
 					if !ok {
-						t.Errorf(
-							"OpenAPI declares body field %q, which the tool does not accept",
-							field,
-						)
+						t.Errorf("OpenAPI declares body field %q, which the tool does not accept", field)
 						continue
 					}
 					if prop.Type != want.Type {
-						t.Errorf(
-							"body field %q: tool type %q, OpenAPI type %q",
-							field,
-							prop.Type,
-							want.Type,
-						)
+						t.Errorf("body field %q: tool type %q, OpenAPI type %q", field, prop.Type, want.Type)
 					}
 					if want.Description != "" && prop.Description != want.Description {
 						t.Errorf("body field %q description: tool %q, OpenAPI %q",
@@ -345,10 +330,7 @@ func TestToolSchemaMatchesTheRoutesOpenAPIShape(t *testing.T) {
 				}
 				for _, field := range media.Schema.Required {
 					if !contains(schema.Required, field) {
-						t.Errorf(
-							"body field %q is required by OpenAPI but optional in the tool",
-							field,
-						)
+						t.Errorf("body field %q is required by OpenAPI but optional in the tool", field)
 					}
 				}
 			}
@@ -356,10 +338,7 @@ func TestToolSchemaMatchesTheRoutesOpenAPIShape(t *testing.T) {
 			// Reverse: the tool invents nothing.
 			for field := range schema.Properties {
 				if !declaredByOpenAPI(op, field) {
-					t.Errorf(
-						"the tool accepts %q, which the OpenAPI document does not declare",
-						field,
-					)
+					t.Errorf("the tool accepts %q, which the OpenAPI document does not declare", field)
 				}
 			}
 		})
@@ -432,10 +411,7 @@ func TestCallingCreateOrderRunsTheRealHandler(t *testing.T) {
 
 	body := result.StructuredContent.JSONBody
 	if id, _ := body["id"].(string); !strings.HasPrefix(id, "ord-") {
-		t.Errorf(
-			"id = %v, want a generated ord-N; an echo handler could not produce one",
-			body["id"],
-		)
+		t.Errorf("id = %v, want a generated ord-N; an echo handler could not produce one", body["id"])
 	}
 	// 1250 is BRZ-100's catalogue price. The caller never sent it.
 	if unit, _ := body["unit_cents"].(float64); unit != 1250 {
@@ -535,10 +511,7 @@ func TestTheUntaggedRouteIsNeitherListedNorCallable(t *testing.T) {
 	// uninteresting reason that the route is broken.
 	status, body := runHTTP(t, router, breeze.GET, "/internal/metrics", nil, nil)
 	if status != 200 {
-		t.Errorf(
-			"GET /internal/metrics = %d over HTTP; the exclusion must be the tag, not a broken route",
-			status,
-		)
+		t.Errorf("GET /internal/metrics = %d over HTTP; the exclusion must be the tag, not a broken route", status)
 	}
 	if !strings.Contains(body, `"internal":true`) {
 		t.Errorf("unexpected metrics body: %s", body)
@@ -666,15 +639,9 @@ func TestGetOrderIsRefusedOverMCPExactlyAsOverHTTP(t *testing.T) {
 
 		wantStatus, wantBody := runHTTP(t, router, breeze.GET, "/orders/"+orderID,
 			map[string]string{"Authorization": "Bearer " + valid}, nil)
-		if result.StructuredContent.Status != wantStatus ||
-			result.StructuredContent.Body != wantBody {
-			t.Errorf(
-				"MCP %d %q, HTTP %d %q — the two paths do not agree on a successful call",
-				result.StructuredContent.Status,
-				result.StructuredContent.Body,
-				wantStatus,
-				wantBody,
-			)
+		if result.StructuredContent.Status != wantStatus || result.StructuredContent.Body != wantBody {
+			t.Errorf("MCP %d %q, HTTP %d %q — the two paths do not agree on a successful call",
+				result.StructuredContent.Status, result.StructuredContent.Body, wantStatus, wantBody)
 		}
 	})
 

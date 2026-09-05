@@ -33,7 +33,7 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // diagName is the registry key, matching the `breeze add jsonrpc` feature name.

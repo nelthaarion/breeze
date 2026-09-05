@@ -179,11 +179,7 @@ func TestDiagnoseServiceFiltersByStatus(t *testing.T) {
 	for _, raw := range subsystems {
 		entry, _ := raw.(map[string]any)
 		if entry["status"] != "off" {
-			t.Errorf(
-				"a %v subsystem survived the off filter: %v",
-				entry["status"],
-				entry["subsystem"],
-			)
+			t.Errorf("a %v subsystem survived the off filter: %v", entry["status"], entry["subsystem"])
 		}
 	}
 

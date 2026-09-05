@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/dashboard"
 )
 
 // dashboardTimelineKey is where dashboard.Middleware stores its recorder.
@@ -76,6 +76,7 @@ func Middleware(t *Tracer) breeze.HandlerFunc {
 	resolve := t.cfg.RouteResolver
 
 	return func(ctx *breeze.Context) error {
+
 		// ── Inbound: adopt or start a trace ──────────────────────────
 		//
 		// Read straight off the request header map. breeze lowercases
@@ -142,6 +143,7 @@ func Middleware(t *Tracer) breeze.HandlerFunc {
 			// is the fact; the body belongs in logs, which §9C.2
 			// stitches back into this trace anyway.
 			errText = "HTTP " + strconv.Itoa(status)
+
 		}
 
 		// §7's policy, in one call. Unsampled successes stop here, which

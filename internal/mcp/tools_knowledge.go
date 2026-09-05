@@ -24,9 +24,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2/internal/generator"
-	"github.com/nelthaarion/breeze/v2/scalar"
 	"gopkg.in/yaml.v3"
+
+	"github.com/nelthaarion/breeze/internal/generator"
+	"github.com/nelthaarion/breeze/scalar"
 )
 
 func registerKnowledgeTools(s *Server) {
@@ -450,10 +451,8 @@ func generateLLMSTool() *tool {
 			"registry, its models and the framework's conventions. Returns the content; " +
 			"pass write=true to also write the two files into the project root.",
 		schema: objectSchema(map[string]any{
-			"path": stringProp("Project root. Defaults to the server's working directory."),
-			"write": boolProp(
-				"Write the files into the project. Defaults to false, which returns the content without touching the project.",
-			),
+			"path":  stringProp("Project root. Defaults to the server's working directory."),
+			"write": boolProp("Write the files into the project. Defaults to false, which returns the content without touching the project."),
 		}),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a generateLLMSArgs
@@ -507,18 +506,8 @@ func generateLLMS(a generateLLMSArgs) toolCallResult {
 		Models: len(doc.Models),
 		Notes:  notes,
 		Files: []llmsFile{
-			{
-				Name:    llmsShortName,
-				Bytes:   len(short),
-				Digest:  scalar.BodyDigest(string(short)),
-				Content: string(short),
-			},
-			{
-				Name:    llmsFullName,
-				Bytes:   len(full),
-				Digest:  scalar.BodyDigest(string(full)),
-				Content: string(full),
-			},
+			{Name: llmsShortName, Bytes: len(short), Digest: scalar.BodyDigest(string(short)), Content: string(short)},
+			{Name: llmsFullName, Bytes: len(full), Digest: scalar.BodyDigest(string(full)), Content: string(full)},
 		},
 	}
 
@@ -526,21 +515,14 @@ func generateLLMS(a generateLLMSArgs) toolCallResult {
 		for i := range result.Files {
 			target := filepath.Join(root, result.Files[i].Name)
 			if err := os.WriteFile(target, []byte(result.Files[i].Content), 0o644); err != nil {
-				result.Notes = append(
-					result.Notes,
-					"could not write "+result.Files[i].Name+": "+err.Error(),
-				)
+				result.Notes = append(result.Notes, "could not write "+result.Files[i].Name+": "+err.Error())
 				continue
 			}
 			result.Files[i].Written = true
 		}
 	}
 
-	summary := fmt.Sprintf(
-		"%d route(s) and %d model(s) documented",
-		len(doc.Routes),
-		len(doc.Models),
-	)
+	summary := fmt.Sprintf("%d route(s) and %d model(s) documented", len(doc.Routes), len(doc.Models))
 	if a.Write {
 		summary += "; files written"
 	} else {
@@ -795,11 +777,7 @@ func checkLLMSFreshness(path string) toolCallResult {
 	if !result.Fresh {
 		result.Regen = "breeze_generate_llms_txt with write=true"
 		result.Changes = []string{
-			fmt.Sprintf(
-				"%d route(s) and %d model(s) are in the project now",
-				len(doc.Routes),
-				len(doc.Models),
-			),
+			fmt.Sprintf("%d route(s) and %d model(s) are in the project now", len(doc.Routes), len(doc.Models)),
 		}
 	}
 
@@ -828,10 +806,7 @@ func searchLLMSTool() *tool {
 		schema: objectSchema(map[string]any{
 			"path":  stringProp("Project root. Defaults to the server's working directory."),
 			"query": stringProp("What to look for: a path, a method, a model name, a rule name."),
-			"limit": map[string]any{
-				"type":        "integer",
-				"description": "Maximum sections to return. Defaults to 10.",
-			},
+			"limit": map[string]any{"type": "integer", "description": "Maximum sections to return. Defaults to 10."},
 		}, "query"),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a searchLLMSArgs
@@ -892,10 +867,8 @@ func searchLLMS(a searchLLMSArgs) toolCallResult {
 		}
 		content = string(doc.LLMSFull())
 		result.Source = "freshly built (the project has no " + llmsFullName + ")"
-		result.Notes = append(
-			result.Notes,
-			"generate the file with breeze_generate_llms_txt so this search reads what the repository ships",
-		)
+		result.Notes = append(result.Notes,
+			"generate the file with breeze_generate_llms_txt so this search reads what the repository ships")
 	}
 
 	needle := strings.ToLower(query)
@@ -924,10 +897,7 @@ func searchLLMS(a searchLLMSArgs) toolCallResult {
 	result.Truncated = total > len(result.Matches)
 
 	if total == 0 {
-		return structuredResult(
-			fmt.Sprintf("%q is not mentioned in %s", query, result.Source),
-			result,
-		)
+		return structuredResult(fmt.Sprintf("%q is not mentioned in %s", query, result.Source), result)
 	}
 	return structuredResult(fmt.Sprintf("%d match(es) for %q", total, query), result)
 }
@@ -1011,10 +981,8 @@ func suggestNextSteps(path string) toolCallResult {
 	}
 
 	if !facts.Generated {
-		result.Notes = append(
-			result.Notes,
-			"this directory has no generated features file, so there is nothing to advise on yet; scaffold with breeze_new or breeze_plan_project first",
-		)
+		result.Notes = append(result.Notes,
+			"this directory has no generated features file, so there is nothing to advise on yet; scaffold with breeze_new or breeze_plan_project first")
 		return structuredResult("not a generated project", result)
 	}
 
@@ -1038,10 +1006,7 @@ func suggestNextSteps(path string) toolCallResult {
 			Rationale: "the model and its table exist but no route mentions it, so nothing can reach it — " +
 				"a model with no route is either unfinished or dead code. " +
 				"This is matched by name against route paths, handlers and blocks, so a handler written by hand under an unrelated path will be missed.",
-			Action: fmt.Sprintf(
-				"breeze_generate with kind=resource and name=%s, or write a handler and register it",
-				m.Name,
-			),
+			Action:   fmt.Sprintf("breeze_generate with kind=resource and name=%s, or write a handler and register it", m.Name),
 			Severity: severityWarning,
 		})
 	}
@@ -1068,12 +1033,7 @@ func suggestNextSteps(path string) toolCallResult {
 				Subject: m.Name + "." + f.Name,
 				Rationale: "the field's type is " + typeName + ", which no model in this project declares, so the " +
 					"models package does not compile — a relationship can only point at a model that exists.",
-				Action: fmt.Sprintf(
-					"breeze_generate with kind=model and name=%s, or change %s.%s to a type that exists",
-					typeName,
-					m.Name,
-					f.Name,
-				),
+				Action:   fmt.Sprintf("breeze_generate with kind=model and name=%s, or change %s.%s to a type that exists", typeName, m.Name, f.Name),
 				Severity: severityError,
 			})
 		}
@@ -1168,9 +1128,7 @@ func explainIdiomTool() *tool {
 			"to do instead of violating it. Takes a rule name from breeze_check_idioms or a " +
 			"topic phrase. Omit topic to list every rule.",
 		schema: objectSchema(map[string]any{
-			"topic": stringProp(
-				"A rule name such as fleet-before-dashboard, or a phrase such as \"middleware order\". Omit to list all rules.",
-			),
+			"topic": stringProp("A rule name such as fleet-before-dashboard, or a phrase such as \"middleware order\". Omit to list all rules."),
 		}),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a explainIdiomArgs

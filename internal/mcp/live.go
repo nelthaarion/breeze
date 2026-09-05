@@ -31,7 +31,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/client"
+	"github.com/nelthaarion/breeze/client"
 )
 
 // liveTimeout bounds one call to a service.
@@ -112,11 +112,7 @@ func normaliseBaseURL(raw string) (string, error) {
 		return "", fmt.Errorf("%q has no host, so there is nothing to connect to", raw)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf(
-			"%q uses scheme %q; only http and https can be inspected",
-			raw,
-			parsed.Scheme,
-		)
+		return "", fmt.Errorf("%q uses scheme %q; only http and https can be inspected", raw, parsed.Scheme)
 	}
 
 	return strings.TrimSuffix(parsed.Scheme+"://"+parsed.Host+parsed.Path, "/"), nil
@@ -156,12 +152,8 @@ func fetchLiveJSON(req liveRequest, dst any) *liveError {
 	if callErr != nil {
 		return &liveError{
 			Kind: "unreachable",
-			Message: fmt.Sprintf(
-				"could not reach %s: %v. Start the service, or check the host and port; "+
-					"nothing was read, so this says nothing about the service's state.",
-				target,
-				callErr,
-			),
+			Message: fmt.Sprintf("could not reach %s: %v. Start the service, or check the host and port; "+
+				"nothing was read, so this says nothing about the service's state.", target, callErr),
 		}
 	}
 
@@ -169,16 +161,12 @@ func fetchLiveJSON(req liveRequest, dst any) *liveError {
 	case resp.Status == 401 || resp.Status == 403:
 		return &liveError{
 			Kind: "unauthorized",
-			Message: fmt.Sprintf(
-				"%s returned %d. This endpoint is protected. Pass username and password: "+
-					"both the dashboard's API endpoints and the Fleet aggregator's read endpoints authenticate "+
-					"with HTTP Basic. The token argument is a different credential — it is the service token, "+
-					"which the dashboard's logs endpoint accepts and the aggregator requires for span ingestion, "+
-					"and it will not authorise a read. The feature is installed; this is a credentials answer, "+
-					"not a missing one.",
-				target,
-				resp.Status,
-			),
+			Message: fmt.Sprintf("%s returned %d. This endpoint is protected. Pass username and password: "+
+				"both the dashboard's API endpoints and the Fleet aggregator's read endpoints authenticate "+
+				"with HTTP Basic. The token argument is a different credential — it is the service token, "+
+				"which the dashboard's logs endpoint accepts and the aggregator requires for span ingestion, "+
+				"and it will not authorise a read. The feature is installed; this is a credentials answer, "+
+				"not a missing one.", target, resp.Status),
 		}
 
 	case resp.Status == 404:
@@ -187,12 +175,9 @@ func fetchLiveJSON(req liveRequest, dst any) *liveError {
 		}
 		return &liveError{
 			Kind: "missing",
-			Message: fmt.Sprintf(
-				"%s returned 404. Either the %s feature is not installed in this service "+
-					"(add it with breeze_add), or it is mounted under a different base path than the default.",
-				target,
-				req.feature,
-			),
+			Message: fmt.Sprintf("%s returned 404. Either the %s feature is not installed in this service "+
+				"(add it with breeze_add), or it is mounted under a different base path than the default.",
+				target, req.feature),
 		}
 
 	case resp.Status < 200 || resp.Status > 299:
@@ -209,16 +194,9 @@ func fetchLiveJSON(req liveRequest, dst any) *liveError {
 		// both more alarming and less often true.
 		return &liveError{
 			Kind: "malformed",
-			Message: fmt.Sprintf(
-				"%s answered with %d but the body is not the JSON this endpoint returns (%v). "+
-					"Whatever is listening on this port is probably not the %s endpoint of a Breeze service. "+
-					"First bytes: %s",
-				target,
-				resp.Status,
-				err,
-				req.feature,
-				bodyExcerpt(resp.Body),
-			),
+			Message: fmt.Sprintf("%s answered with %d but the body is not the JSON this endpoint returns (%v). "+
+				"Whatever is listening on this port is probably not the %s endpoint of a Breeze service. "+
+				"First bytes: %s", target, resp.Status, err, req.feature, bodyExcerpt(resp.Body)),
 		}
 	}
 

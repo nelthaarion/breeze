@@ -126,11 +126,7 @@ func TestDiscoverMigrations(t *testing.T) {
 
 			if tt.wantErr {
 				if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf(
-						"DiscoverMigrations() error = %v, want error containing %q",
-						err,
-						tt.errMsg,
-					)
+					t.Errorf("DiscoverMigrations() error = %v, want error containing %q", err, tt.errMsg)
 				}
 				return
 			}
@@ -142,11 +138,7 @@ func TestDiscoverMigrations(t *testing.T) {
 			// Verify sorted order
 			for i := 1; i < len(got); i++ {
 				if got[i].Version <= got[i-1].Version {
-					t.Errorf(
-						"migrations not sorted: version %d after %d",
-						got[i].Version,
-						got[i-1].Version,
-					)
+					t.Errorf("migrations not sorted: version %d after %d", got[i].Version, got[i-1].Version)
 				}
 			}
 		})

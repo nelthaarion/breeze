@@ -135,6 +135,7 @@ const (
 // Deliberately takes only the three facts it needs rather than a *requestState,
 // so the policy can be exhaustively unit-tested without constructing a request.
 func exportFor(sampled bool, status int, errText string) exportKind {
+
 	if sampled {
 		return exportFull
 	}

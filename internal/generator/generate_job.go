@@ -59,14 +59,7 @@ func generateJob(modulePath, name string, args []string) error {
 	b.WriteString("}\n\n")
 
 	fmt.Fprintf(&b, "// New%s returns the job with its default interval.\n", name)
-	fmt.Fprintf(
-		&b,
-		"func New%s() *%s {\n\treturn &%s{Interval: %sInterval}\n}\n\n",
-		name,
-		name,
-		name,
-		name,
-	)
+	fmt.Fprintf(&b, "func New%s() *%s {\n\treturn &%s{Interval: %sInterval}\n}\n\n", name, name, name, name)
 
 	fmt.Fprintf(&b, "// Run performs one unit of work. Returning an error marks the run failed\n")
 	b.WriteString("// and reports it, but does not stop the schedule.\n")
@@ -105,11 +98,7 @@ func generateJob(modulePath, name string, args []string) error {
 	// report: RegisterTask keys by Name and replaces, so it is both register
 	// and update â€” there is no separate UpdateTask to call.
 	b.WriteString("// report publishes status to the dashboard when one is attached.\n")
-	fmt.Fprintf(
-		&b,
-		"func (j *%s) report(status string, elapsed time.Duration, runErr error) {\n",
-		name,
-	)
+	fmt.Fprintf(&b, "func (j *%s) report(status string, elapsed time.Duration, runErr error) {\n", name)
 	b.WriteString("\tif j.Reporter == nil {\n\t\treturn\n\t}\n\n")
 	b.WriteString("\tnow := time.Now()\n")
 	b.WriteString("\ttask := dashboard.SchedulerTask{\n")
@@ -135,7 +124,7 @@ func generateJob(modulePath, name string, args []string) error {
 		Owner:  generateOwner("job"),
 		Imports: []string{
 			contextImport, logImport, timeImport,
-			`"github.com/nelthaarion/breeze/v2/dashboard"`,
+			`"github.com/nelthaarion/breeze/dashboard"`,
 		},
 		Body:       b.String(),
 		ModulePath: modulePath,
@@ -146,23 +135,11 @@ func generateJob(modulePath, name string, args []string) error {
 
 	// â”€â”€ the features block â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	var body strings.Builder
-	fmt.Fprintf(
-		&body,
-		"// %sJob runs every %s, started by %s.\n",
-		lower,
-		*every,
-		featureSetupFunc("job"+name),
-	)
+	fmt.Fprintf(&body, "// %sJob runs every %s, started by %s.\n", lower, *every, featureSetupFunc("job"+name))
 	fmt.Fprintf(&body, "var %sJob = %s.New%s()\n\n", lower, target.Package, name)
-	fmt.Fprintf(
-		&body,
-		"func %s(app *breeze.Breeze, router *breeze.Router) {\n",
-		featureSetupFunc("job"+name),
-	)
+	fmt.Fprintf(&body, "func %s(app *breeze.Breeze, router *breeze.Router) {\n", featureSetupFunc("job"+name))
 	if hasDashboard {
-		body.WriteString(
-			"\t// The dashboard block runs first, so the collector is already built.\n",
-		)
+		body.WriteString("\t// The dashboard block runs first, so the collector is already built.\n")
 		body.WriteString("\t")
 		body.WriteString(lower)
 		body.WriteString("Job.Reporter = DashboardCollector\n\n")
@@ -173,7 +150,7 @@ func generateJob(modulePath, name string, args []string) error {
 
 	imports := []string{
 		contextImport,
-		`"github.com/nelthaarion/breeze/v2"`,
+		`"github.com/nelthaarion/breeze"`,
 		// Aliased for the same reason `generate ws` aliases its own: the package
 		// the generated file declares is target.Package, which --package may have
 		// made something other than the directory name.
@@ -190,15 +167,10 @@ func generateJob(modulePath, name string, args []string) error {
 	if hasDashboard {
 		notes = append(notes, "Reporting to the dashboard's scheduler panel at /dashboard.")
 	} else {
-		notes = append(
-			notes,
-			"Run `breeze add dashboard` to see run counts and failures in the scheduler panel.",
-		)
+		notes = append(notes, "Run `breeze add dashboard` to see run counts and failures in the scheduler panel.")
 	}
-	notes = append(
-		notes,
-		"Started with context.Background() â€” swap in a cancellable context to stop it on shutdown.",
-	)
+	notes = append(notes,
+		"Started with context.Background() â€” swap in a cancellable context to stop it on shutdown.")
 	printNotes(notes)
 	return nil
 }

@@ -26,7 +26,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2/internal/mcpcmd"
+	"github.com/nelthaarion/breeze/internal/mcpcmd"
 )
 
 // startTargets are the things `breeze start` can start, for the error message.
@@ -40,10 +40,7 @@ var startTargets = []string{"mcp-server"}
 // JSON-RPC message.
 func runStart(args []string, in io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf(
-			"breeze start needs something to start: %s",
-			strings.Join(startTargets, ", "),
-		)
+		return fmt.Errorf("breeze start needs something to start: %s", strings.Join(startTargets, ", "))
 	}
 
 	target, rest := args[0], args[1:]
@@ -51,11 +48,7 @@ func runStart(args []string, in io.Reader, out, errOut io.Writer) error {
 	case "mcp-server":
 		return startMCPServer(rest, in, out, errOut)
 	default:
-		return fmt.Errorf(
-			"cannot start %q; known targets: %s",
-			target,
-			strings.Join(startTargets, ", "),
-		)
+		return fmt.Errorf("cannot start %q; known targets: %s", target, strings.Join(startTargets, ", "))
 	}
 }
 

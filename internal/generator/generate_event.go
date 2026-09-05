@@ -10,7 +10,7 @@ import (
 //
 // The framework's events package is imported as `evt` here, not under its own
 // name: the file lives in a package the user's project calls `events`, and
-// `import "github.com/nelthaarion/breeze/v2/events"` inside a package named
+// `import "github.com/nelthaarion/breeze/events"` inside a package named
 // `events` is legal but reads as a shadow and collides the moment the same file
 // wants to name both. The alias makes every reference unambiguous.
 //
@@ -37,7 +37,7 @@ func generateEvent(modulePath, name string, args []string) error {
 		return err
 	}
 
-	imports := []string{`evt "github.com/nelthaarion/breeze/v2/events"`}
+	imports := []string{`evt "github.com/nelthaarion/breeze/events"`}
 	if usesTime(fields) {
 		imports = append(imports, timeImport)
 	}
@@ -60,20 +60,9 @@ func generateEvent(modulePath, name string, args []string) error {
 	fmt.Fprintf(&b, "func Emit%s(bus *evt.Bus, e %s) error {\n", name, name)
 	fmt.Fprintf(&b, "\treturn evt.EmitBus(bus, e)\n}\n\n")
 
-	fmt.Fprintf(
-		&b,
-		"// On%s subscribes fn to %s. Cancel the returned subscription to\n",
-		name,
-		name,
-	)
+	fmt.Fprintf(&b, "// On%s subscribes fn to %s. Cancel the returned subscription to\n", name, name)
 	b.WriteString("// stop receiving events.\n")
-	fmt.Fprintf(
-		&b,
-		"func On%s(bus *evt.Bus, fn func(ctx *evt.Context, e %s) error) *evt.Subscription[%s] {\n",
-		name,
-		name,
-		name,
-	)
+	fmt.Fprintf(&b, "func On%s(bus *evt.Bus, fn func(ctx *evt.Context, e %s) error) *evt.Subscription[%s] {\n", name, name, name)
 	fmt.Fprintf(&b, "\treturn evt.OnTypeBus[%s](bus, fn)\n}\n", name)
 
 	if err := writeGeneratedGoFile(generatedFile{
@@ -93,10 +82,7 @@ func generateEvent(modulePath, name string, args []string) error {
 		fmt.Sprintf("Import as:    \"%s/events\"", modulePath),
 	}
 	if !hasBlock(featuresFileName, featureMarkerPrefix, "events") {
-		notes = append(
-			notes,
-			"Run `breeze add events` â€” the EventBus this needs is declared by that block.",
-		)
+		notes = append(notes, "Run `breeze add events` â€” the EventBus this needs is declared by that block.")
 	}
 	printNotes(notes)
 	return nil

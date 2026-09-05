@@ -42,21 +42,13 @@ func runAdd(args []string) error {
 	}
 
 	fs := flag.NewFlagSet("add "+name, flag.ContinueOnError)
-	force := fs.Bool(
-		"force",
-		false,
-		"overwrite an existing block or file that differs from what would be generated",
-	)
+	force := fs.Bool("force", false, "overwrite an existing block or file that differs from what would be generated")
 	generate := f.Build(fs)
 
 	flagArgs, positional := splitFlagsAndPositional(fs, args[1:])
 	if len(positional) > 0 {
-		return fmt.Errorf(
-			"`breeze add %s` takes no positional arguments, got %q â€” did you mean --%s?",
-			name,
-			positional[0],
-			positional[0],
-		)
+		return fmt.Errorf("`breeze add %s` takes no positional arguments, got %q â€” did you mean --%s?",
+			name, positional[0], positional[0])
 	}
 	if err := parseFlags(fs, flagArgs); err != nil {
 		return err
@@ -75,6 +67,7 @@ func runAdd(args []string) error {
 		HasObservability: hasBlock(featuresFileName, featureMarkerPrefix, "observability"),
 		HasDashboard:     hasBlock(featuresFileName, featureMarkerPrefix, "dashboard"),
 	})
+
 	if err != nil {
 		return err
 	}
@@ -139,13 +132,10 @@ func applyFeatureBlock(f *feature, out featureOutput, force bool) (blockResult, 
 		case blockIsPristine(stored, stamp), force:
 			result = blockUpdated
 		default:
-			return blockUnchanged, fmt.Errorf(
-				"the %s block in %s has been edited since it was generated, "+
-					"and differs from what would be generated now\n"+
-					"  re-run with --force to replace it, losing those edits",
-				f.Name,
-				featuresFileName,
-			)
+			return blockUnchanged, fmt.Errorf("the %s block in %s has been edited since it was generated, "+
+				"and differs from what would be generated now\n"+
+				"  re-run with --force to replace it, losing those edits",
+				f.Name, featuresFileName)
 		}
 	}
 
@@ -274,9 +264,7 @@ func warnStaleDependents(added *feature, result blockResult) {
 	for _, name := range stale {
 		fmt.Printf("      breeze add %s\n", name)
 	}
-	fmt.Printf(
-		"    Re-run those to pick it up â€” the blocks are untouched, so no --force is needed.\n",
-	)
+	fmt.Printf("    Re-run those to pick it up â€” the blocks are untouched, so no --force is needed.\n")
 }
 
 // warnIfDispatcherUncalled checks that something actually calls the generated
@@ -455,7 +443,7 @@ func editDistance(a, b string) int {
 }
 
 func printFeatureList(w io.Writer) {
-	fmt.Fprintf(w, "Features (%d), in the order they are wired:\n\n", len(features))
+	_, _ = fmt.Fprintf(w, "Features (%d), in the order they are wired:\n\n", len(features))
 
 	installed := map[string]bool{}
 	for _, n := range listBlocks(featuresFileName, featureMarkerPrefix) {
@@ -472,16 +460,16 @@ func printFeatureList(w io.Writer) {
 		if f.Standalone {
 			kind = " (standalone)"
 		}
-		fmt.Fprintf(w, "  %s %-14s %s%s\n", mark, name, f.Summary, kind)
+		_, _ = fmt.Fprintf(w, "  %s %-14s %s%s\n", mark, name, f.Summary, kind)
 	}
 
-	fmt.Fprintf(w, "\n  * = already added to this project\n")
-	fmt.Fprintf(w, "\nUsage: breeze add <feature> [flags]\n")
-	fmt.Fprintf(w, "Per-feature flags: breeze add <feature> --help\n")
+	_, _ = fmt.Fprintf(w, "\n  * = already added to this project\n")
+	_, _ = fmt.Fprintf(w, "\nUsage: breeze add <feature> [flags]\n")
+	_, _ = fmt.Fprintf(w, "Per-feature flags: breeze add <feature> --help\n")
 }
 
 func printAddHelp(w io.Writer) {
-	fmt.Fprint(w, `Usage: breeze add <feature> [flags]
+	_, _ = fmt.Fprint(w, `Usage: breeze add <feature> [flags]
 
 Wires a framework feature into features_generated.go, under a marker block
 named for the feature. Re-running replaces that block, so add is the way to
@@ -500,8 +488,8 @@ Examples:
 
 Ordering is by the feature's priority, not the order you add them, so
 `)
-	fmt.Fprint(w, "`add etag` before `add recovery` still leaves recovery outermost.\n")
-	fmt.Fprint(w, `
+	_, _ = fmt.Fprint(w, "`add etag` before `add recovery` still leaves recovery outermost.\n")
+	_, _ = fmt.Fprint(w, `
 A few features do read the order you added them in: dashboard, observability,
 workflow and video bridge onto the event bus and the collector when those
 blocks already exist. Add one of those later and add says which blocks to

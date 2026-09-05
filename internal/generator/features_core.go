@@ -34,19 +34,11 @@ func registerEvents() {
 		Priority: 5,
 		Imports:  []string{eventsImport},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
-			async := fs.Bool(
-				"async",
-				false,
-				"dispatch to listeners on worker goroutines instead of inline",
-			)
+			async := fs.Bool("async", false, "dispatch to listeners on worker goroutines instead of inline")
 			workers := fs.Int("workers", 0, "async worker count (0 = one per CPU)")
 			queue := fs.Int("queue-size", 1024, "async queue depth")
 			metrics := fs.Bool("metrics", true, "count emits, errors and panics per event type")
-			continueOnError := fs.Bool(
-				"continue-on-error",
-				true,
-				"keep calling remaining listeners after one fails",
-			)
+			continueOnError := fs.Bool("continue-on-error", true, "keep calling remaining listeners after one fails")
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				var cfg strings.Builder
@@ -99,10 +91,7 @@ func setupEvents(app *breeze.Breeze, router *breeze.Router) {
 					"Run `breeze generate event <Name> [field:type...]` to scaffold an event type.",
 				}
 				if *async {
-					notes = append(
-						notes,
-						"Async dispatch means Emit returns before listeners finish â€” use EmitAsyncWaitBus where you need to observe their errors.",
-					)
+					notes = append(notes, "Async dispatch means Emit returns before listeners finish â€” use EmitAsyncWaitBus where you need to observe their errors.")
 				}
 				return featureOutput{Body: body, Imports: imports, Notes: notes}, nil
 			}
@@ -131,8 +120,7 @@ func registerObservability() {
 					bus = "EventBus"
 				}
 
-				body := fmt.Sprintf(
-					`// ObsCollector holds the recent-signal ring buffers and aggregate metrics.
+				body := fmt.Sprintf(`// ObsCollector holds the recent-signal ring buffers and aggregate metrics.
 // Read from it with the accessor methods; it is safe for concurrent use.
 var ObsCollector *observability.Collector
 
@@ -146,18 +134,11 @@ func setupObservability(app *breeze.Breeze, router *breeze.Router) {
 	// rather than a hook. The returned detach func is ignored here: this
 	// collector lives as long as the process.
 	observability.AttachEvents(%s, ObsCollector)
-}`,
-					*capacity,
-					*metrics,
-					bus,
-				)
+}`, *capacity, *metrics, bus)
 
 				notes := []string{}
 				if !ctx.HasEvents {
-					notes = append(
-						notes,
-						"Attached to events.Default. Run `breeze add events` for a bus you own, then re-run `breeze add observability` to point the collector at it.",
-					)
+					notes = append(notes, "Attached to events.Default. Run `breeze add events` for a bus you own, then re-run `breeze add observability` to point the collector at it.")
 				}
 				return featureOutput{Body: body, Notes: notes}, nil
 			}
@@ -173,19 +154,11 @@ func registerDashboard() {
 		Imports:   []string{dashboardImport},
 		DependsOn: []string{"events"},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
-			basePath := fs.String(
-				"basepath",
-				"/dashboard",
-				"URL prefix the dashboard is served under",
-			)
+			basePath := fs.String("basepath", "/dashboard", "URL prefix the dashboard is served under")
 			user := fs.String("user", "admin", "basic-auth username")
 			pass := fs.String("pass", "admin", "basic-auth password")
 			noAuth := fs.Bool("no-auth", false, "serve without basic auth (local development only)")
-			allowWrites := fs.Bool(
-				"allow-writes",
-				false,
-				"allow the dashboard's query console to run writes",
-			)
+			allowWrites := fs.Bool("allow-writes", false, "allow the dashboard's query console to run writes")
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				var extra strings.Builder
@@ -206,8 +179,7 @@ func registerDashboard() {
 	DashboardCollector.AttachEvents(EventBus)`
 				}
 
-				body := fmt.Sprintf(
-					`// DashboardCollector is the dashboard's data sink. Register your own
+				body := fmt.Sprintf(`// DashboardCollector is the dashboard's data sink. Register your own
 // connections, jobs and health checks on it â€” RegisterConnection,
 // RegisterJob, RegisterTask, RegisterHealthCheck, SetDBInspector â€” and they
 // show up alongside the framework's own panels.
@@ -223,33 +195,20 @@ func setupDashboard(app *breeze.Breeze, router *breeze.Router) {
 	// measures, so it must be registered before they run â€” which is what this
 	// feature's ordering guarantees.
 	router.Use(dashboard.Middleware(DashboardCollector))%s
-}`,
-					*basePath,
-					strings.TrimRight(extra.String(), "\n"),
-					attach,
-				)
+}`, *basePath, strings.TrimRight(extra.String(), "\n"), attach)
 
 				notes := []string{fmt.Sprintf("Dashboard at %s", *basePath)}
 				switch {
 				case *noAuth:
 					notes = append(notes, "Auth is disabled â€” do not expose this build publicly.")
 				case *user == "admin" && *pass == "admin":
-					notes = append(
-						notes,
-						"Credentials are the admin/admin default. Change them before this reaches a shared environment.",
-					)
+					notes = append(notes, "Credentials are the admin/admin default. Change them before this reaches a shared environment.")
 				}
 				if *allowWrites {
-					notes = append(
-						notes,
-						"The query console can execute writes against your database.",
-					)
+					notes = append(notes, "The query console can execute writes against your database.")
 				}
 				if !ctx.HasEvents {
-					notes = append(
-						notes,
-						"No events block found, so the live Events page stays empty. Run `breeze add events`, then re-run `breeze add dashboard` to wire them together.",
-					)
+					notes = append(notes, "No events block found, so the live Events page stays empty. Run `breeze add events`, then re-run `breeze add dashboard` to wire them together.")
 				}
 				return featureOutput{Body: body, Notes: notes}, nil
 			}
@@ -266,11 +225,7 @@ func registerWorkflow() {
 		DependsOn: []string{"events", "observability"},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
 			workers := fs.Int("workers", 0, "max concurrent step workers (0 = one per CPU)")
-			shutdown := fs.Duration(
-				"shutdown-timeout",
-				0,
-				"how long Shutdown waits for in-flight runs (default 30s)",
-			)
+			shutdown := fs.Duration("shutdown-timeout", 0, "how long Shutdown waits for in-flight runs (default 30s)")
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				var imports []string
@@ -297,8 +252,7 @@ func registerWorkflow() {
 				cfg.WriteString(workersLine)
 				fmt.Fprintf(&cfg, "\t\tShutdownTimeout: %s,\n", timeout)
 
-				body := fmt.Sprintf(
-					`// WorkflowEngine runs the definitions registered below. A workflow is a
+				body := fmt.Sprintf(`// WorkflowEngine runs the definitions registered below. A workflow is a
 // named sequence of steps with per-step timeout, retry and compensation; the
 // engine persists progress so a run survives a step failure rather than
 // unwinding the whole thing in memory.
@@ -330,20 +284,14 @@ func ShutdownWorkflow() {
 	if err := WorkflowEngine.Shutdown(ctx); err != nil {
 		log.Printf("workflow: shutdown: %%v", err)
 	}
-}`,
-					cfg.String(),
-					timeout,
-				)
+}`, cfg.String(), timeout)
 
 				notes := []string{
 					"Call ShutdownWorkflow() on your shutdown path â€” in-flight runs are dropped otherwise.",
 					"Scaffold a definition with `breeze generate workflow <Name> --steps=a,b,c`.",
 				}
 				if !ctx.HasEvents {
-					notes = append(
-						notes,
-						"Without an events block the engine emits no step events, so nothing reaches the dashboard timeline. `breeze add events` then re-running `breeze add workflow` connects them.",
-					)
+					notes = append(notes, "Without an events block the engine emits no step events, so nothing reaches the dashboard timeline. `breeze add events` then re-running `breeze add workflow` connects them.")
 				}
 				return featureOutput{Body: body, Imports: imports, Notes: notes}, nil
 			}
@@ -357,16 +305,8 @@ func registerTuning() {
 		Summary:  "event-loop execution and header copying knobs",
 		Priority: 210,
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
-			inline := fs.Bool(
-				"inline",
-				false,
-				"run handlers on the event loop instead of the worker pool",
-			)
-			zeroCopy := fs.Bool(
-				"zero-copy-headers",
-				true,
-				"parse headers in place instead of copying them out of the read buffer",
-			)
+			inline := fs.Bool("inline", false, "run handlers on the event loop instead of the worker pool")
+			zeroCopy := fs.Bool("zero-copy-headers", true, "parse headers in place instead of copying them out of the read buffer")
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				body := fmt.Sprintf(`func setupTuning(app *breeze.Breeze, router *breeze.Router) {
@@ -388,16 +328,10 @@ func registerTuning() {
 					"Worker-pool size is set in main.go where NewEventLoopWorkerPool is called â€” it is passed to breeze.New, so it cannot be changed from here.",
 				}
 				if *inline {
-					notes = append(
-						notes,
-						"Inline execution is ON: a single blocking handler now stalls every connection sharing its event loop.",
-					)
+					notes = append(notes, "Inline execution is ON: a single blocking handler now stalls every connection sharing its event loop.")
 				}
 				if *zeroCopy {
-					notes = append(
-						notes,
-						"Zero-copy headers are ON: copy any header value you retain beyond the handler's return.",
-					)
+					notes = append(notes, "Zero-copy headers are ON: copy any header value you retain beyond the handler's return.")
 				}
 				return featureOutput{Body: body, Notes: notes}, nil
 			}
@@ -438,11 +372,7 @@ func registerMigrator() {
 		Standalone: true,
 		Priority:   900,
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
-			driver := fs.String(
-				"driver",
-				"postgres",
-				"SQL driver: "+strings.Join(sqlDriverNames(), ", "),
-			)
+			driver := fs.String("driver", "postgres", "SQL driver: "+strings.Join(sqlDriverNames(), ", "))
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				d, ok := sqlDrivers[*driver]
@@ -458,10 +388,7 @@ func registerMigrator() {
 					Dirs:  []string{"migrations"},
 					Notes: []string{
 						fmt.Sprintf("Wrote cmd/migrate/main.go using the %s driver.", *driver),
-						fmt.Sprintf(
-							"Run `go get %s` (or `go mod tidy`) to add the driver to go.mod.",
-							d.Import,
-						),
+						fmt.Sprintf("Run `go get %s` (or `go mod tidy`) to add the driver to go.mod.", d.Import),
 						"Set BREEZE_DATABASE_URL, then `breeze migrate up` / `breeze migrate status` / `breeze migrate down 1`.",
 						"`breeze migrate` shells out to this binary â€” it is what makes those subcommands work at all, since the CLI itself has no driver compiled in.",
 					},
@@ -504,7 +431,7 @@ import (
 
 	_ "__DRIVER_IMPORT__"
 
-	"github.com/nelthaarion/breeze/v2/migrate"
+	"github.com/nelthaarion/breeze/migrate"
 )
 
 func main() {

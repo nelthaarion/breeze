@@ -33,22 +33,14 @@ func (d *githubDriver) AuthURL(cfg *Config, state, nonce, challenge string) stri
 	return buildAuthURL(d.ep.auth, cfg, state, "", challenge, nil)
 }
 
-func (d *githubDriver) Exchange(
-	ctx context.Context,
-	cfg *Config,
-	code, verifier string,
-) (*Token, error) {
+func (d *githubDriver) Exchange(ctx context.Context, cfg *Config, code, verifier string) (*Token, error) {
 	return postForm(ctx, cfg, d.ep.token, exchangeForm(cfg, code, verifier), ErrTokenExchange)
 }
 
 // Refresh: classic GitHub OAuth tokens do not expire and have no refresh
 // token. GitHub Apps with expiring tokens do; the standard grant is attempted
 // and any provider error surfaces to the caller.
-func (d *githubDriver) Refresh(
-	ctx context.Context,
-	cfg *Config,
-	refreshToken string,
-) (*Token, error) {
+func (d *githubDriver) Refresh(ctx context.Context, cfg *Config, refreshToken string) (*Token, error) {
 	return postForm(ctx, cfg, d.ep.token, refreshForm(cfg, refreshToken), ErrTokenExchange)
 }
 

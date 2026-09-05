@@ -69,10 +69,7 @@ func TestPropagateFromHTTP(t *testing.T) {
 
 	tc, ok := ParseTraceparent(req.Header.Get(HeaderTraceparent))
 	if !ok {
-		t.Fatalf(
-			"no usable traceparent on the outgoing request: %q",
-			req.Header.Get(HeaderTraceparent),
-		)
+		t.Fatalf("no usable traceparent on the outgoing request: %q", req.Header.Get(HeaderTraceparent))
 	}
 	if tc.TraceID != st.tc.TraceID {
 		t.Error("outgoing request joined a different trace")
@@ -137,10 +134,7 @@ func TestPropagateFromHTTPOverwritesAStaleHeader(t *testing.T) {
 
 	values := req.Header.Values(HeaderTraceparent)
 	if len(values) != 1 {
-		t.Fatalf(
-			"traceparent appears %d times, want exactly 1 — a duplicated header is ambiguous",
-			len(values),
-		)
+		t.Fatalf("traceparent appears %d times, want exactly 1 — a duplicated header is ambiguous", len(values))
 	}
 	tc, ok := ParseTraceparent(values[0])
 	if !ok {
@@ -216,16 +210,8 @@ func TestClientDoAndPropagateFromHTTPAgree(t *testing.T) {
 
 	// Span ids are stable for a request, so both paths must produce the same
 	// value — not merely both produce something parseable.
-	if got, want := viaClient.Get(
-		HeaderTraceparent,
-	), manual.Header.Get(
-		HeaderTraceparent,
-	); got != want {
-		t.Errorf(
-			"Client.Do wrote %q, PropagateFromHTTP wrote %q — the two paths have diverged",
-			got,
-			want,
-		)
+	if got, want := viaClient.Get(HeaderTraceparent), manual.Header.Get(HeaderTraceparent); got != want {
+		t.Errorf("Client.Do wrote %q, PropagateFromHTTP wrote %q — the two paths have diverged", got, want)
 	}
 	if got, want := viaClient.Get(HeaderService), manual.Header.Get(HeaderService); got != want {
 		t.Errorf("%s: Client.Do wrote %q, PropagateFromHTTP wrote %q", HeaderService, got, want)

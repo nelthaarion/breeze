@@ -197,12 +197,7 @@ func (c *Collector) RegisterConnection(conn Connection) {
 //
 // Call this from a health-check goroutine (e.g. every 10 seconds) to keep
 // the Architecture page live.
-func (c *Collector) UpdateConnectionStatus(
-	id string,
-	status ConnectionStatus,
-	latencyMS float64,
-	message string,
-) {
+func (c *Collector) UpdateConnectionStatus(id string, status ConnectionStatus, latencyMS float64, message string) {
 	c.connStore.mu.Lock()
 	defer c.connStore.mu.Unlock()
 	conn, ok := c.connStore.connections[id]

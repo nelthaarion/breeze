@@ -25,29 +25,14 @@ func (d *stubDriver) Provider() Provider { return testProvider }
 func (d *stubDriver) DefaultScopes() []string { return []string{"openid", "email"} }
 
 func (d *stubDriver) AuthURL(cfg *Config, state, nonce, challenge string) string {
-	return buildAuthURL(
-		"https://provider.test/authorize",
-		cfg,
-		state,
-		nonce,
-		challenge,
-		url.Values{},
-	)
+	return buildAuthURL("https://provider.test/authorize", cfg, state, nonce, challenge, url.Values{})
 }
 
-func (d *stubDriver) Exchange(
-	ctx context.Context,
-	cfg *Config,
-	code, verifier string,
-) (*Token, error) {
+func (d *stubDriver) Exchange(ctx context.Context, cfg *Config, code, verifier string) (*Token, error) {
 	return postForm(ctx, cfg, d.tokenURL, exchangeForm(cfg, code, verifier), ErrTokenExchange)
 }
 
-func (d *stubDriver) Refresh(
-	ctx context.Context,
-	cfg *Config,
-	refreshToken string,
-) (*Token, error) {
+func (d *stubDriver) Refresh(ctx context.Context, cfg *Config, refreshToken string) (*Token, error) {
 	return postForm(ctx, cfg, d.tokenURL, refreshForm(cfg, refreshToken), ErrTokenExchange)
 }
 

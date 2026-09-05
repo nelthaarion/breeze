@@ -22,11 +22,7 @@ func withTempDir(t *testing.T) {
 func TestUpsertRouteBlockCreatesFile(t *testing.T) {
 	withTempDir(t)
 
-	err := upsertRouteBlock(
-		"myapp",
-		"User",
-		`router.Handle(breeze.GET, "/users", handlers.ListUsers)`,
-	)
+	err := upsertRouteBlock("myapp", "User", `router.Handle(breeze.GET, "/users", handlers.ListUsers)`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,18 +50,10 @@ func TestUpsertRouteBlockCreatesFile(t *testing.T) {
 func TestUpsertRouteBlockIsIdempotent(t *testing.T) {
 	withTempDir(t)
 
-	if err := upsertRouteBlock(
-		"myapp",
-		"User",
-		`router.Handle(breeze.GET, "/users", handlers.ListUsers)`,
-	); err != nil {
+	if err := upsertRouteBlock("myapp", "User", `router.Handle(breeze.GET, "/users", handlers.ListUsers)`); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
-	if err := upsertRouteBlock(
-		"myapp",
-		"User",
-		`router.Handle(breeze.GET, "/users", handlers.ListUsersV2)`,
-	); err != nil {
+	if err := upsertRouteBlock("myapp", "User", `router.Handle(breeze.GET, "/users", handlers.ListUsersV2)`); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
 
@@ -86,18 +74,10 @@ func TestUpsertRouteBlockIsIdempotent(t *testing.T) {
 func TestUpsertRouteBlockAppendsSecondResource(t *testing.T) {
 	withTempDir(t)
 
-	if err := upsertRouteBlock(
-		"myapp",
-		"User",
-		`router.Handle(breeze.GET, "/users", handlers.ListUsers)`,
-	); err != nil {
+	if err := upsertRouteBlock("myapp", "User", `router.Handle(breeze.GET, "/users", handlers.ListUsers)`); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
-	if err := upsertRouteBlock(
-		"myapp",
-		"Post",
-		`router.Handle(breeze.GET, "/posts", handlers.ListPosts)`,
-	); err != nil {
+	if err := upsertRouteBlock("myapp", "Post", `router.Handle(breeze.GET, "/posts", handlers.ListPosts)`); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
 

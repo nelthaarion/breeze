@@ -44,6 +44,7 @@ func TestGOMEMLIMIT_CausesMemoryReturnToOS(t *testing.T) {
 
 	// Step 3: Release all references.
 	allocations = nil
+	_ = allocations
 	runtime.GC()
 	debug.FreeOSMemory() // force the scavenger to run
 	time.Sleep(50 * time.Millisecond)
@@ -55,11 +56,7 @@ func TestGOMEMLIMIT_CausesMemoryReturnToOS(t *testing.T) {
 	t.Logf("after GC + FreeOSMemory with GOMEMLIMIT=64MB:")
 	t.Logf("  HeapAlloc:    %d bytes (%.1f MB)", ms.HeapAlloc, float64(ms.HeapAlloc)/1024/1024)
 	t.Logf("  HeapIdle:     %d bytes (%.1f MB)", ms.HeapIdle, float64(ms.HeapIdle)/1024/1024)
-	t.Logf(
-		"  HeapReleased: %d bytes (%.1f MB)",
-		ms.HeapReleased,
-		float64(ms.HeapReleased)/1024/1024,
-	)
+	t.Logf("  HeapReleased: %d bytes (%.1f MB)", ms.HeapReleased, float64(ms.HeapReleased)/1024/1024)
 	t.Logf("  HeapSys:      %d bytes (%.1f MB)", ms.HeapSys, float64(ms.HeapSys)/1024/1024)
 	t.Logf("  NumGC:        %d", ms.NumGC)
 
@@ -82,26 +79,17 @@ func TestGOMEMLIMIT_CausesMemoryReturnToOS(t *testing.T) {
 	// would be hundreds of MB — the "3GB RSS" problem.
 	if ms.HeapIdle > 0 {
 		releasedRatio := float64(ms.HeapReleased) / float64(ms.HeapIdle)
-		t.Logf(
-			"  Released/Idle ratio: %.1f%% (higher = more memory returned to OS)",
-			releasedRatio*100,
-		)
+		t.Logf("  Released/Idle ratio: %.1f%% (higher = more memory returned to OS)", releasedRatio*100)
 		if releasedRatio < 0.5 {
-			t.Errorf(
-				"HeapReleased/HeapIdle ratio = %.1f%% (< 50%% — scavenger is not returning idle memory to OS)",
-				releasedRatio*100,
-			)
+			t.Errorf("HeapReleased/HeapIdle ratio = %.1f%% (< 50%% — scavenger is not returning idle memory to OS)",
+				releasedRatio*100)
 		}
 	}
 
 	// The actual RSS impact: HeapSys - HeapReleased = resident heap.
 	// This should be small (the scavenger returned most of it).
 	resident := ms.HeapSys - ms.HeapReleased
-	t.Logf(
-		"  Resident heap (HeapSys - HeapReleased): %d bytes (%.1f MB)",
-		resident,
-		float64(resident)/1024/1024,
-	)
+	t.Logf("  Resident heap (HeapSys - HeapReleased): %d bytes (%.1f MB)", resident, float64(resident)/1024/1024)
 	if resident > 50*1024*1024 {
 		t.Errorf("Resident heap too high: %d bytes (> 50MB — memory not returned to OS)", resident)
 	}
@@ -165,9 +153,6 @@ func TestDefaultConfig_HasMemoryLimits(t *testing.T) {
 		t.Error("DefaultConfig().GOMEMLIMIT = 0 — should be set to prevent RSS bloat")
 	}
 	if cfg.GOMEMLIMIT < 100*1024*1024 {
-		t.Errorf(
-			"DefaultConfig().GOMEMLIMIT = %d — too low (< 100MB), will cause excessive GC",
-			cfg.GOMEMLIMIT,
-		)
+		t.Errorf("DefaultConfig().GOMEMLIMIT = %d — too low (< 100MB), will cause excessive GC", cfg.GOMEMLIMIT)
 	}
 }

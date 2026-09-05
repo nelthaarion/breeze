@@ -45,7 +45,7 @@ func BenchmarkEmit(bm *testing.B) {
 			bm.ReportAllocs()
 			bm.ResetTimer()
 			for i := 0; i < bm.N; i++ {
-				EmitBus(b, ev)
+				_ = EmitBus(b, ev)
 			}
 		})
 	}
@@ -61,7 +61,7 @@ func BenchmarkEmitNoListeners(bm *testing.B) {
 	bm.ReportAllocs()
 	bm.ResetTimer()
 	for i := 0; i < bm.N; i++ {
-		EmitBus(b, ev)
+		_ = EmitBus(b, ev)
 	}
 }
 
@@ -78,7 +78,7 @@ func BenchmarkEmitParallel(bm *testing.B) {
 			bm.ResetTimer()
 			bm.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					EmitBus(b, ev)
+					_ = EmitBus(b, ev)
 				}
 			})
 		})

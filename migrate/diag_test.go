@@ -24,7 +24,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // noDialConnector is a *sql.DB that has never been connected and must not be.
@@ -135,11 +135,7 @@ func TestProbeIsDegradedAfterAFailedMigration(t *testing.T) {
 
 	report := probe()
 	if report.Status != diag.StatusDegraded {
-		t.Fatalf(
-			"status = %q after a failed migration, want %q",
-			report.Status,
-			diag.StatusDegraded,
-		)
+		t.Fatalf("status = %q after a failed migration, want %q", report.Status, diag.StatusDegraded)
 	}
 	if !strings.Contains(report.Summary, "syntax error near FROM") {
 		t.Errorf("the summary does not carry the error: %s", report.Summary)

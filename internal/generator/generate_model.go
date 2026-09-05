@@ -95,12 +95,7 @@ func generateModel(modulePath, name string, args []string) error {
 	if *timestamps {
 		cols = append(cols, "created_at", "updated_at")
 	}
-	fmt.Fprintf(
-		&b,
-		"// %sColumns lists the columns in the order %s's fields are declared.\n",
-		name,
-		name,
-	)
+	fmt.Fprintf(&b, "// %sColumns lists the columns in the order %s's fields are declared.\n", name, name)
 	fmt.Fprintf(&b, "var %sColumns = []string{\n", name)
 	for _, c := range cols {
 		fmt.Fprintf(&b, "\t%q,\n", c)
@@ -187,10 +182,7 @@ func generateModel(modulePath, name string, args []string) error {
 			"Apply it:     breeze migrate up",
 		)
 		if !migratorPresent() {
-			notes = append(
-				notes,
-				"Run `breeze add migrator --driver=postgres` â€” migrate needs a runner with your SQL driver.",
-			)
+			notes = append(notes, "Run `breeze add migrator --driver=postgres` â€” migrate needs a runner with your SQL driver.")
 		}
 	}
 

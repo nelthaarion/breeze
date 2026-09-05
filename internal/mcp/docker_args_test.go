@@ -176,12 +176,10 @@ func TestRefuseHostAccessAllowsWhatProvisioningActuallyNeeds(t *testing.T) {
 		{"version", "--format", "{{.Server.Version}}"},
 		{"build", "-t", "breeze-provisioned/users:latest", "/tmp/breeze-provision-x/users"},
 		{"build", "-t", "img", "--build-arg", "VERSION=1.2.3", "/ctx"},
-		{
-			"run", "-d", "--name", "breeze-users",
+		{"run", "-d", "--name", "breeze-users",
 			"-e", "BREEZE_MCP_TOKEN=abc", "-e", "LOG_LEVEL=debug",
 			"-p", "127.0.0.1:40001:2000", "-p", "127.0.0.1:40002:8080",
-			"--add-host", "host.docker.internal:host-gateway", "breeze-provisioned/users:latest",
-		},
+			"--add-host", "host.docker.internal:host-gateway", "breeze-provisioned/users:latest"},
 		{"inspect", "--format", `{"running":true}`, "c0ntainer0001"},
 		{"stop", "c0ntainer0001"},
 		{"rm", "c0ntainer0001"},
@@ -226,8 +224,7 @@ func TestDockerExecIsTheOnlyWayThisPackageRunsDocker(t *testing.T) {
 				continue
 			}
 			// The one legitimate call: exec's own, which performs the check first.
-			if name == "docker.go" &&
-				strings.Contains(line, "return d.run(ctx, d.binary, args...)") {
+			if name == "docker.go" && strings.Contains(line, "return d.run(ctx, d.binary, args...)") {
 				continue
 			}
 			t.Errorf("%s:%d calls d.run directly, bypassing refuseHostAccess. Use d.exec:\n\t%s",

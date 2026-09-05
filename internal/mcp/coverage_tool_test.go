@@ -25,9 +25,7 @@ func TestCoverageToolIsIndependentlyCallableAndAgreesWithVerifyProject(t *testin
 	// Registered, and reachable by name: an unknown tool comes back as a
 	// JSON-RPC error, which callTool would fail on before returning.
 	if _, ok := srv.tools["breeze_get_test_coverage"]; !ok {
-		t.Fatal(
-			"breeze_get_test_coverage is not in the tool table, so it cannot be called on its own",
-		)
+		t.Fatal("breeze_get_test_coverage is not in the tool table, so it cannot be called on its own")
 	}
 
 	coverage := callTool(t, srv, "breeze_get_test_coverage", map[string]any{"path": root})
@@ -51,11 +49,8 @@ func TestCoverageToolIsIndependentlyCallableAndAgreesWithVerifyProject(t *testin
 	for pkg, status := range fromVerify {
 		got, ok := fromCoverage[pkg]
 		if !ok {
-			t.Errorf(
-				"verify_project reports %s but the coverage tool does not mention it; the two "+
-					"are reading the same `go test` output and should not disagree about which packages exist",
-				pkg,
-			)
+			t.Errorf("verify_project reports %s but the coverage tool does not mention it; the two "+
+				"are reading the same `go test` output and should not disagree about which packages exist", pkg)
 			continue
 		}
 		if got != status {
@@ -68,11 +63,7 @@ func TestCoverageToolIsIndependentlyCallableAndAgreesWithVerifyProject(t *testin
 	report := structOf(t, coverage)
 	for _, key := range []string{"path", "command", "packages", "tests_passed", "duration_ms"} {
 		if _, ok := report[key]; !ok {
-			t.Errorf(
-				"the standalone result has no %q field:\n%s",
-				key,
-				renderStructured("", report),
-			)
+			t.Errorf("the standalone result has no %q field:\n%s", key, renderStructured("", report))
 		}
 	}
 	if _, ok := report["total_percent"].(float64); !ok {

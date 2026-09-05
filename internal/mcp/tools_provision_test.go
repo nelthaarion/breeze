@@ -66,12 +66,8 @@ func (f *fakeDocker) client() *dockerClient {
 				f.nextID++
 				return fmt.Sprintf("c0ntainer%04d", f.nextID), nil
 			case "inspect":
-				return fmt.Sprintf(
-					`{"running":%t,"status":%q,"health":%q}`,
-					f.running,
-					map[bool]string{true: "running", false: "exited"}[f.running],
-					f.health,
-				), nil
+				return fmt.Sprintf(`{"running":%t,"status":%q,"health":%q}`,
+					f.running, map[bool]string{true: "running", false: "exited"}[f.running], f.health), nil
 			default:
 				return "", nil
 			}
@@ -188,10 +184,7 @@ func TestProvisionReturnsAllThreeAddressKindsExplicitly(t *testing.T) {
 
 	got := structuredOf[provisionedResult](t, result)
 	if got.ControlPort == got.AppPort {
-		t.Fatalf(
-			"control_port and app_port are both %d; they must never be the same",
-			got.ControlPort,
-		)
+		t.Fatalf("control_port and app_port are both %d; they must never be the same", got.ControlPort)
 	}
 	if got.ControlToken == "" {
 		t.Error("no control_token was returned, so the control plane is unreachable")
@@ -328,11 +321,7 @@ func TestProvisionFleetWiresFleetThroughApplyConfig(t *testing.T) {
 				dir := args[len(args)-1]
 				body, err := os.ReadFile(filepath.Join(dir, "features_generated.go"))
 				if err != nil {
-					t.Errorf(
-						"%s has no features_generated.go, so no feature was wired: %v",
-						dir,
-						err,
-					)
+					t.Errorf("%s has no features_generated.go, so no feature was wired: %v", dir, err)
 				} else {
 					contexts[filepath.Base(dir)] = string(body)
 				}
@@ -343,16 +332,8 @@ func TestProvisionFleetWiresFleetThroughApplyConfig(t *testing.T) {
 
 	result := orch.provisionFleet(
 		[]fleetServiceRequest{
-			{
-				Name:        "gateway",
-				Template:    "api",
-				configInput: configInput{Config: map[string]any{"module": "example.com/gateway"}},
-			},
-			{
-				Name:        "orders",
-				Template:    "api",
-				configInput: configInput{Config: map[string]any{"module": "example.com/orders"}},
-			},
+			{Name: "gateway", Template: "api", configInput: configInput{Config: map[string]any{"module": "example.com/gateway"}}},
+			{Name: "orders", Template: "api", configInput: configInput{Config: map[string]any{"module": "example.com/orders"}}},
 		},
 		fleetAggregatorConfig{HostedBy: "gateway"},
 		dockerOptions{WaitSeconds: -1},
@@ -370,12 +351,8 @@ func TestProvisionFleetWiresFleetThroughApplyConfig(t *testing.T) {
 		// writes them.
 		for _, want := range []string{"fleet.New(", "FleetTracer", "FLEET_WRITE_URL", "FLEET_SERVICE_NAME"} {
 			if !strings.Contains(body, want) {
-				t.Errorf(
-					"%s: features_generated.go does not contain %q, so Fleet was not wired by the "+
-						"generator",
-					name,
-					want,
-				)
+				t.Errorf("%s: features_generated.go does not contain %q, so Fleet was not wired by the "+
+					"generator", name, want)
 			}
 		}
 	}
@@ -418,14 +395,8 @@ func TestPortAllocatorNeverDoubleAssignsAcrossThePool(t *testing.T) {
 
 	fleet := orch.provisionFleet(
 		[]fleetServiceRequest{
-			{
-				Name:        "gateway",
-				configInput: configInput{Config: map[string]any{"module": "example.com/gateway"}},
-			},
-			{
-				Name:        "orders",
-				configInput: configInput{Config: map[string]any{"module": "example.com/orders"}},
-			},
+			{Name: "gateway", configInput: configInput{Config: map[string]any{"module": "example.com/gateway"}}},
+			{Name: "orders", configInput: configInput{Config: map[string]any{"module": "example.com/orders"}}},
 		},
 		fleetAggregatorConfig{HostedBy: "gateway"},
 		dockerOptions{WaitSeconds: -1},
@@ -466,11 +437,7 @@ func TestReleasedPortsAreReused(t *testing.T) {
 	// The ports must be free again, and specifically free — not merely "some port was
 	// available", which would pass on a machine with 11,000 spare ports regardless.
 	if purpose := orch.ports.purposeOf(first.ControlPort); purpose != "" {
-		t.Errorf(
-			"control port %d is still held as %q after deprovisioning",
-			first.ControlPort,
-			purpose,
-		)
+		t.Errorf("control port %d is still held as %q after deprovisioning", first.ControlPort, purpose)
 	}
 	if purpose := orch.ports.purposeOf(first.AppPort); purpose != "" {
 		t.Errorf("app port %d is still held as %q after deprovisioning", first.AppPort, purpose)
@@ -663,14 +630,8 @@ func TestProvisionFleetDistinguishesAllThreeAddressKinds(t *testing.T) {
 
 	result := orch.provisionFleet(
 		[]fleetServiceRequest{
-			{
-				Name:        "gateway",
-				configInput: configInput{Config: map[string]any{"module": "example.com/gateway"}},
-			},
-			{
-				Name:        "orders",
-				configInput: configInput{Config: map[string]any{"module": "example.com/orders"}},
-			},
+			{Name: "gateway", configInput: configInput{Config: map[string]any{"module": "example.com/gateway"}}},
+			{Name: "orders", configInput: configInput{Config: map[string]any{"module": "example.com/orders"}}},
 		},
 		fleetAggregatorConfig{HostedBy: "gateway"},
 		dockerOptions{WaitSeconds: -1},
@@ -708,12 +669,7 @@ func TestProvisionFleetDistinguishesAllThreeAddressKinds(t *testing.T) {
 	for a, portA := range kinds {
 		for b, portB := range kinds {
 			if a < b && portA == portB {
-				t.Errorf(
-					"the %s and %s addresses are both port %d on the same container",
-					a,
-					b,
-					portA,
-				)
+				t.Errorf("the %s and %s addresses are both port %d on the same container", a, b, portA)
 			}
 		}
 	}
@@ -725,18 +681,10 @@ func TestProvisionFleetDistinguishesAllThreeAddressKinds(t *testing.T) {
 			agg.HostServiceControlPort, host.ControlPort)
 	}
 	if agg.HostServiceAppPort != host.AppPort {
-		t.Errorf(
-			"aggregator.host_service_app_port = %d, want %d",
-			agg.HostServiceAppPort,
-			host.AppPort,
-		)
+		t.Errorf("aggregator.host_service_app_port = %d, want %d", agg.HostServiceAppPort, host.AppPort)
 	}
 	if !strings.Contains(agg.AggregatorURL, fmt.Sprint(agg.AggregatorPort)) {
-		t.Errorf(
-			"aggregator_url %q does not name aggregator_port %d",
-			agg.AggregatorURL,
-			agg.AggregatorPort,
-		)
+		t.Errorf("aggregator_url %q does not name aggregator_port %d", agg.AggregatorURL, agg.AggregatorPort)
 	}
 
 	// The non-hosting service has no aggregator address at all: it reports *to* one.
@@ -795,14 +743,8 @@ func TestProvisionFleetPublishesTheAggregatorPortOnlyOnItsHost(t *testing.T) {
 
 	result := orch.provisionFleet(
 		[]fleetServiceRequest{
-			{
-				Name:        "gateway",
-				configInput: configInput{Config: map[string]any{"module": "example.com/gateway"}},
-			},
-			{
-				Name:        "orders",
-				configInput: configInput{Config: map[string]any{"module": "example.com/orders"}},
-			},
+			{Name: "gateway", configInput: configInput{Config: map[string]any{"module": "example.com/gateway"}}},
+			{Name: "orders", configInput: configInput{Config: map[string]any{"module": "example.com/orders"}}},
 		},
 		fleetAggregatorConfig{HostedBy: "orders"},
 		dockerOptions{WaitSeconds: -1},
@@ -844,10 +786,7 @@ func TestProvisionFleetRejectsAnUnknownHost(t *testing.T) {
 
 	result := orch.provisionFleet(
 		[]fleetServiceRequest{
-			{
-				Name:        "gateway",
-				configInput: configInput{Config: map[string]any{"module": "example.com/gateway"}},
-			},
+			{Name: "gateway", configInput: configInput{Config: map[string]any{"module": "example.com/gateway"}}},
 		},
 		fleetAggregatorConfig{HostedBy: "not-in-this-fleet"},
 		dockerOptions{WaitSeconds: -1},
@@ -921,16 +860,12 @@ func TestCallerSuppliedEnvironmentCannotOverrideTheToken(t *testing.T) {
 
 	got := structuredOf[provisionedResult](t, orch.provisionService(request))
 	if got.ControlToken == "a-token-the-caller-chose" {
-		t.Fatal(
-			"the caller's token was used, so the orchestrator does not control its own credentials",
-		)
+		t.Fatal("the caller's token was used, so the orchestrator does not control its own credentials")
 	}
 
 	joined := strings.Join(fake.argvFor("run"), " ")
 	if strings.Contains(joined, "a-token-the-caller-chose") {
-		t.Error(
-			"the caller's token reached the container, so the returned token is not the one in use",
-		)
+		t.Error("the caller's token reached the container, so the returned token is not the one in use")
 	}
 	if !strings.Contains(joined, tokenEnvVar+"="+got.ControlToken) {
 		t.Error("the returned token is not the one the container was given")
@@ -967,9 +902,7 @@ func TestGeneratedImageFilesAreCoherent(t *testing.T) {
 	// The control plane binds every interface *inside* the container, which is the only
 	// way its published port is reachable.
 	if !strings.Contains(entrypoint, "--host 0.0.0.0") {
-		t.Error(
-			"the control instance binds loopback inside the container, where nothing can reach it",
-		)
+		t.Error("the control instance binds loopback inside the container, where nothing can reach it")
 	}
 	if !strings.Contains(entrypoint, fmt.Sprintf("--port %d", containerControlPort)) {
 		t.Errorf("the entrypoint does not start the control plane on %d", containerControlPort)
@@ -978,14 +911,10 @@ func TestGeneratedImageFilesAreCoherent(t *testing.T) {
 	// exits immediately — and the container still looks healthy, because the probe
 	// targets the application. This is exactly that regression.
 	if !strings.Contains(entrypoint, "--mode "+string(ModeGenerator)) {
-		t.Errorf(
-			"the entrypoint does not pass --mode, so the control plane will refuse to start:\n%s",
-			entrypoint,
-		)
+		t.Errorf("the entrypoint does not pass --mode, so the control plane will refuse to start:\n%s", entrypoint)
 	}
 	// Optional scoping, honoured when the environment carries it.
-	if !strings.Contains(entrypoint, "BREEZE_MCP_SCOPE") ||
-		!strings.Contains(entrypoint, "--scope") {
+	if !strings.Contains(entrypoint, "BREEZE_MCP_SCOPE") || !strings.Contains(entrypoint, "--scope") {
 		t.Error("the entrypoint cannot pass a token scope through to the control plane")
 	}
 	// The arguments are built as a positional list, not a string. BREEZE_MCP_SCOPE
@@ -1025,11 +954,7 @@ func TestGeneratedImageFilesAreCoherent(t *testing.T) {
 	// The health check targets the app port. Probing the control port would report a
 	// healthy container whose application had died.
 	if !strings.Contains(dockerfile, fmt.Sprintf("127.0.0.1:%d/", containerAppPort)) {
-		t.Errorf(
-			"the health check does not probe the app port %d:\n%s",
-			containerAppPort,
-			dockerfile,
-		)
+		t.Errorf("the health check does not probe the app port %d:\n%s", containerAppPort, dockerfile)
 	}
 	if strings.Contains(dockerfile, fmt.Sprintf("127.0.0.1:%d/", containerControlPort)) {
 		t.Error("the health check probes the control port rather than the application")
@@ -1063,10 +988,8 @@ func TestVendoredDockerfileBuildsEverythingFromSource(t *testing.T) {
 	}
 	// And each is copied into the runtime stage; a build stage that produces a binary
 	// nothing copies is a silent no-op.
-	for _, want := range []string{
-		"/usr/local/bin/app", "/usr/local/bin/breeze-mcp",
-		"/usr/local/bin/fleet-aggregator",
-	} {
+	for _, want := range []string{"/usr/local/bin/app", "/usr/local/bin/breeze-mcp",
+		"/usr/local/bin/fleet-aggregator"} {
 		if !strings.Contains(dockerfile, want) {
 			t.Errorf("the vendored Dockerfile does not install %s", want)
 		}
@@ -1078,9 +1001,7 @@ func TestVendoredDockerfileBuildsEverythingFromSource(t *testing.T) {
 	// tidy is required: the replace covers Breeze, not Breeze's own published
 	// dependencies, and the generated go.sum has no entries for those.
 	if !strings.Contains(dockerfile, "go mod tidy") {
-		t.Error(
-			"the vendored Dockerfile does not tidy, so Breeze's own dependencies have no go.sum entries",
-		)
+		t.Error("the vendored Dockerfile does not tidy, so Breeze's own dependencies have no go.sum entries")
 	}
 }
 
@@ -1100,12 +1021,7 @@ func TestBuildImageTagTracksTheToolchain(t *testing.T) {
 			t.Errorf("buildImageTag() = %q, want %q for %s", tag, want, runtime.Version())
 		}
 	} else if tag != fallbackBuildImage {
-		t.Errorf(
-			"buildImageTag() = %q, want the fallback %q for %s",
-			tag,
-			fallbackBuildImage,
-			runtime.Version(),
-		)
+		t.Errorf("buildImageTag() = %q, want the fallback %q for %s", tag, fallbackBuildImage, runtime.Version())
 	}
 
 	// Both variants use it, so neither can drift onto a stale pin.

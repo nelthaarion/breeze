@@ -106,15 +106,9 @@ func TestCheckedIdiomRulesMatchTheExplanations(t *testing.T) {
 	for _, i := range idiomList {
 		switch {
 		case i.Checked && !implemented[i.Rule]:
-			t.Errorf(
-				"%s is advertised as statically checked, but no check produces it, so a clean report is misleading",
-				i.Rule,
-			)
+			t.Errorf("%s is advertised as statically checked, but no check produces it, so a clean report is misleading", i.Rule)
 		case !i.Checked && implemented[i.Rule]:
-			t.Errorf(
-				"%s is checked by this file but advertised as unchecked, so callers are told to verify it by hand for no reason",
-				i.Rule,
-			)
+			t.Errorf("%s is checked by this file but advertised as unchecked, so callers are told to verify it by hand for no reason", i.Rule)
 		}
 	}
 }
@@ -128,7 +122,7 @@ func TestCheckIdiomsFindsReflectionInAHandler(t *testing.T) {
 import (
 	"reflect"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // ShowUser is a handler, so reflect here runs once per request.
@@ -153,37 +147,23 @@ func buildIndex(v any) string {
 
 	got := found[0]
 	if want := lineOf(t, source, "want:reflect-in-handler"); got.Line != want {
-		t.Errorf(
-			"the finding is reported on line %d; the reflect call is on line %d",
-			got.Line,
-			want,
-		)
+		t.Errorf("the finding is reported on line %d; the reflect call is on line %d", got.Line, want)
 	}
 	if got.File != "handlers/user.go" {
 		t.Errorf("File = %q, want the path relative to the checked root", got.File)
 	}
 	if got.Severity != severityError {
-		t.Errorf(
-			"Severity = %q, want %q, which is what idioms.go gives this rule",
-			got.Severity,
-			severityError,
-		)
+		t.Errorf("Severity = %q, want %q, which is what idioms.go gives this rule", got.Severity, severityError)
 	}
 	if !strings.Contains(got.Message, "ShowUser") {
-		t.Errorf(
-			"the message does not name the handler, so a reader cannot tell which one: %q",
-			got.Message,
-		)
+		t.Errorf("the message does not name the handler, so a reader cannot tell which one: %q", got.Message)
 	}
 
 	// The startup helper must not be reported. This is the assertion that keeps
 	// the rule usable: reflect is legitimate everywhere except the request path.
 	if report.Errors != 1 {
-		t.Errorf(
-			"the report counts %d errors; reflect outside a handler must not be one of them: %+v",
-			report.Errors,
-			report.Findings,
-		)
+		t.Errorf("the report counts %d errors; reflect outside a handler must not be one of them: %+v",
+			report.Errors, report.Findings)
 	}
 }
 
@@ -195,9 +175,9 @@ func TestCheckIdiomsFindsMiddlewareRegisteredInTheWrongOrder(t *testing.T) {
 	source := writeGo(t, root, "setup.go", `package main
 
 import (
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/dashboard"
-	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/dashboard"
+	"github.com/nelthaarion/breeze/fleet"
 )
 
 func setupObservability(router *breeze.Router, c *dashboard.Collector, tr *fleet.Tracer) {
@@ -215,11 +195,7 @@ func setupObservability(router *breeze.Router, c *dashboard.Collector, tr *fleet
 
 	got := found[0]
 	if want := lineOf(t, source, "want:fleet-after-dashboard"); got.Line != want {
-		t.Errorf(
-			"the finding is reported on line %d; the misplaced Use call is on line %d",
-			got.Line,
-			want,
-		)
+		t.Errorf("the finding is reported on line %d; the misplaced Use call is on line %d", got.Line, want)
 	}
 	if got.Severity != severityError {
 		t.Errorf("Severity = %q, want %q", got.Severity, severityError)
@@ -235,9 +211,9 @@ func TestCheckIdiomsAcceptsTheCorrectMiddlewareOrder(t *testing.T) {
 	writeGo(t, root, "setup.go", `package main
 
 import (
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/dashboard"
-	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/dashboard"
+	"github.com/nelthaarion/breeze/fleet"
 )
 
 func setupObservability(router *breeze.Router, c *dashboard.Collector, tr *fleet.Tracer) {
@@ -282,11 +258,7 @@ func setup(router *Router) {
 
 	report := checkFixture(t, root)
 	if report.Count != 0 {
-		t.Errorf(
-			"packages that merely share a name produced %d finding(s): %+v",
-			report.Count,
-			report.Findings,
-		)
+		t.Errorf("packages that merely share a name produced %d finding(s): %+v", report.Count, report.Findings)
 	}
 	if report.Files != 1 {
 		t.Errorf("the checker looked at %d files, want 1", report.Files)
@@ -301,8 +273,8 @@ func TestCheckIdiomsFindsTheDeprecatedSwaggerSpelling(t *testing.T) {
 	source := writeGo(t, root, "docs.go", `package main
 
 import (
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/middlewares"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/middlewares"
 )
 
 func setupDocs(router *breeze.Router) {
@@ -380,12 +352,7 @@ type Order struct{}
 
 const OrderTable = "orders"
 `)
-	writeGo(
-		t,
-		root,
-		"queries_generated.go",
-		"// Code generated by breeze. DO NOT EDIT.\n\npackage main\n\nconst listOrders = \"SELECT id FROM orders\"\n",
-	)
+	writeGo(t, root, "queries_generated.go", "// Code generated by breeze. DO NOT EDIT.\n\npackage main\n\nconst listOrders = \"SELECT id FROM orders\"\n")
 
 	if found := findingsFor(checkFixture(t, root), "generated-model-accessors"); len(found) != 0 {
 		t.Errorf("a generated file was reported: %+v", found)
@@ -403,7 +370,7 @@ func TestCheckIdiomsReportsUnparseableFilesWithoutAbandoningTheRest(t *testing.T
 import (
 	"reflect"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 func Show(c *breeze.Context) error {
@@ -421,10 +388,7 @@ func Show(c *breeze.Context) error {
 		t.Errorf("the skipped entry does not name the file: %q", report.Skipped[0])
 	}
 	if report.Files != 1 {
-		t.Errorf(
-			"files_checked = %d, want 1: the unparseable file must not be counted as checked",
-			report.Files,
-		)
+		t.Errorf("files_checked = %d, want 1: the unparseable file must not be counted as checked", report.Files)
 	}
 
 	found := findingsFor(report, "no-reflection-in-handlers")
@@ -470,11 +434,7 @@ func TestCheckIdiomsFindsNothingInAGeneratedProject(t *testing.T) {
 			report.Count, report.Findings)
 	}
 	if len(report.Rules) != len(checkedIdiomRules()) {
-		t.Errorf(
-			"the report says %d rules were applied, want %d",
-			len(report.Rules),
-			len(checkedIdiomRules()),
-		)
+		t.Errorf("the report says %d rules were applied, want %d", len(report.Rules), len(checkedIdiomRules()))
 	}
 }
 
@@ -488,7 +448,7 @@ func TestCheckIdiomsToolReturnsStructuredFindings(t *testing.T) {
 import (
 	"reflect"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 func Show(c *breeze.Context) error {
@@ -507,10 +467,7 @@ func Show(c *breeze.Context) error {
 	// A violation is a successful check, not a failed call. An agent that saw
 	// IsError here would retry the call instead of fixing the code.
 	if direct.IsError {
-		t.Fatalf(
-			"a project with a violation was reported as a tool failure: %s",
-			direct.Content[0].Text,
-		)
+		t.Fatalf("a project with a violation was reported as a tool failure: %s", direct.Content[0].Text)
 	}
 
 	got, ok := direct.StructuredContent.(idiomReport)
@@ -538,10 +495,7 @@ func Show(c *breeze.Context) error {
 	wire := callTool(t, srv, "breeze_check_idioms", map[string]any{"path": root})
 	report, ok := wire.StructuredContent.(map[string]any)
 	if !ok {
-		t.Fatalf(
-			"structuredContent came over the wire as %T, want a JSON object",
-			wire.StructuredContent,
-		)
+		t.Fatalf("structuredContent came over the wire as %T, want a JSON object", wire.StructuredContent)
 	}
 
 	list, ok := report["findings"].([]any)

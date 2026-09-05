@@ -3,7 +3,7 @@ package observability
 import (
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/events"
 )
 
 // The benchmarks in this file exist to defend one specific claim: that
@@ -43,7 +43,7 @@ func BenchmarkDispatch_NoObserver(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		events.EmitBus(bus, e)
+		_ = events.EmitBus(bus, e)
 	}
 }
 
@@ -60,7 +60,7 @@ func BenchmarkDispatch_Observer(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		events.EmitBus(bus, e)
+		_ = events.EmitBus(bus, e)
 	}
 }
 
@@ -76,7 +76,7 @@ func BenchmarkDispatch_ObserverNoMetrics(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		events.EmitBus(bus, e)
+		_ = events.EmitBus(bus, e)
 	}
 }
 
@@ -92,7 +92,7 @@ func BenchmarkDispatch_ObserverWithPayload(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		events.EmitBus(bus, e)
+		_ = events.EmitBus(bus, e)
 	}
 }
 
@@ -110,7 +110,7 @@ func BenchmarkDispatch_AfterDetach(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		events.EmitBus(bus, e)
+		_ = events.EmitBus(bus, e)
 	}
 }
 
@@ -131,7 +131,7 @@ func benchmarkListeners(b *testing.B, n int, observe bool) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		events.EmitBus(bus, e)
+		_ = events.EmitBus(bus, e)
 	}
 }
 
@@ -322,7 +322,7 @@ func BenchmarkDispatchParallel_NoObserver(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			events.EmitBus(bus, e)
+			_ = events.EmitBus(bus, e)
 		}
 	})
 }
@@ -338,7 +338,7 @@ func BenchmarkDispatchParallel_Observer(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			events.EmitBus(bus, e)
+			_ = events.EmitBus(bus, e)
 		}
 	})
 }

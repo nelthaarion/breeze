@@ -59,10 +59,7 @@ func verifyRoot(path string) (string, error) {
 		return "", fmt.Errorf("cannot read %s: %w", root, err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf(
-			"%s is a file; these tools need the directory a project lives in",
-			root,
-		)
+		return "", fmt.Errorf("%s is a file; these tools need the directory a project lives in", root)
 	}
 	if _, err := os.Stat(filepath.Join(abs, "go.mod")); err != nil {
 		return "", fmt.Errorf("%s has no go.mod, so it is not the root of a Go module. "+
@@ -86,9 +83,7 @@ func checkIdiomsTool() *tool {
 			"hand-written table names. Pass a rule to breeze_explain_idiom for the reasoning. " +
 			"Reads only; writes nothing.",
 		schema: objectSchema(map[string]any{
-			"path": stringProp(
-				"Project root to check. Defaults to the server's working directory.",
-			),
+			"path": stringProp("Project root to check. Defaults to the server's working directory."),
 		}),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a checkIdiomsArgs
@@ -212,9 +207,7 @@ func verifyProjectTool() *tool {
 			"output, so nothing has to be parsed out of raw toolchain text. Use this after " +
 			"generating or editing code to find out whether it actually works. Reads only.",
 		schema: objectSchema(map[string]any{
-			"path": stringProp(
-				"Project root to verify. Defaults to the server's working directory.",
-			),
+			"path": stringProp("Project root to verify. Defaults to the server's working directory."),
 			"skip_tests": boolProp("Skip the test stage. Useful for a fast compile-and-vet check " +
 				"after an edit, when the suite is slow."),
 			"test_filter": stringProp("Regular expression passed to go test -run, to verify one " +
@@ -292,12 +285,9 @@ func verifyProject(a verifyProjectArgs) toolCallResult {
 			testStep.Summary = run.StartErr.Error()
 		case run.TimedOut:
 			testStep.Status = "errored"
-			testStep.Summary = fmt.Sprintf(
-				"the test run was still going after %s and was stopped, "+
-					"so its result is unknown; a hang is usually a deadlock or a test waiting on a "+
-					"service that is not running",
-				testTimeout,
-			)
+			testStep.Summary = fmt.Sprintf("the test run was still going after %s and was stopped, "+
+				"so its result is unknown; a hang is usually a deadlock or a test waiting on a "+
+				"service that is not running", testTimeout)
 		case run.ok():
 			testStep.Status = "passed"
 			testStep.Summary = fmt.Sprintf("%d package(s) tested, all passing", len(packages))
@@ -543,10 +533,7 @@ func runBenchmarks(a runBenchmarksArgs) toolCallResult {
 	if report.Count > 0 {
 		sorted := make([]benchmarkResult, len(report.Benchmarks))
 		copy(sorted, report.Benchmarks)
-		sort.SliceStable(
-			sorted,
-			func(i, j int) bool { return sorted[i].NsPerOp < sorted[j].NsPerOp },
-		)
+		sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].NsPerOp < sorted[j].NsPerOp })
 		report.Fastest = sorted[0].Name
 		report.Slowest = sorted[len(sorted)-1].Name
 	}
@@ -683,11 +670,8 @@ func getTestCoverage(path string) toolCallResult {
 			"so these figures describe a project that is currently broken")
 	}
 	if counted > 0 {
-		report.Notes = append(
-			report.Notes,
-			"total_percent is the mean of the per-package figures, "+
-				"not a statement-weighted total; a small package counts as much as a large one",
-		)
+		report.Notes = append(report.Notes, "total_percent is the mean of the per-package figures, "+
+			"not a statement-weighted total; a small package counts as much as a large one")
 	}
 
 	summary := "coverage could not be measured for any package"

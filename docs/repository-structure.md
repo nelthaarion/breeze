@@ -22,7 +22,7 @@ A file belongs at root only if it is part of serving an HTTP request or is
 required to construct the server. Everything else is a subpackage, even when
 that means a package with three files.
 
-*Why:* the root package is what `import "github.com/nelthaarion/breeze/v2"` gets,
+*Why:* the root package is what `import "github.com/nelthaarion/breeze"` gets,
 and every symbol in it is in every user's namespace. Adding to it costs
 everyone; adding a subpackage costs only its importers.
 
@@ -126,7 +126,7 @@ Do not mix within one package.
 aliases it:
 
 ```go
-middleware "github.com/nelthaarion/breeze/v2/middlewares"
+middleware "github.com/nelthaarion/breeze/middlewares"
 ```
 
 Renaming the directory or the package breaks every existing user's import line.
@@ -185,7 +185,7 @@ contributor does not "fix" them into inconsistency with themselves.
 a comment saying why, so the decision is visible:
 
 ```go
-_ = _ = conn.Close() // response already written; a close error changes nothing
+_ = conn.Close() // response already written; a close error changes nothing
 ```
 
 Current state per package, so drift is measurable rather than argued about:

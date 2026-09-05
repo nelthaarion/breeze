@@ -25,10 +25,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/dashboard"
-	"github.com/nelthaarion/breeze/v2/fleet"
-	"github.com/nelthaarion/breeze/v2/fleet/transport/httptransport"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/dashboard"
+	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/fleet/transport/httptransport"
 )
 
 // openAPIDocument is what this service claims to return. The response handler
@@ -37,9 +37,7 @@ import (
 // additionalProperties:false is what makes the extra field an error rather than
 // a warning: the schema explicitly states the response is closed, so an
 // undeclared field is a contract breach and not merely an unrecognised addition.
-var openAPIDocument = []byte(
-	`{"openapi":"3.1.0","info":{"title":"Orders","version":"1.0.0"},"paths":{"/internal/orders/{id}":{"post":{"responses":{"200":{"description":"OK","content":{"application/json":{"schema":{"type":"object","properties":{"id":{"type":"string"},"state":{"type":"string"}},"required":["id","state"],"additionalProperties":false}}}},"500":{"description":"Failure"}}}}}}`,
-)
+var openAPIDocument = []byte(`{"openapi":"3.1.0","info":{"title":"Orders","version":"1.0.0"},"paths":{"/internal/orders/{id}":{"post":{"responses":{"200":{"description":"OK","content":{"application/json":{"schema":{"type":"object","properties":{"id":{"type":"string"},"state":{"type":"string"}},"required":["id","state"],"additionalProperties":false}}}},"500":{"description":"Failure"}}}}}}`)
 
 // fail is the chaos switch. Atomic because the toggle route and the order route
 // run on different goroutines.
@@ -78,12 +76,7 @@ func main() {
 		if fail.Load() {
 			// The error text is what the trace summary quotes verbatim, so
 			// it is written to read as a cause rather than as a status code.
-			coll.PushLogCtx(
-				ctx,
-				"error",
-				"orders-service payment provider timed out for order "+id,
-				"app",
-			)
+			coll.PushLogCtx(ctx, "error", "orders-service payment provider timed out for order "+id, "app")
 
 			ctx.Status(500)
 			return ctx.JSON(map[string]string{"error": "payment provider timeout"})
@@ -99,13 +92,7 @@ func main() {
 		// debug_note is the deliberate schema mismatch: undeclared, on a
 		// closed schema, so Contract Violations reports it as an error within
 		// seconds of this response being sampled.
-		return ctx.JSON(
-			map[string]any{
-				"id":         id,
-				"state":      "paid",
-				"debug_note": "not declared in the response schema",
-			},
-		)
+		return ctx.JSON(map[string]any{"id": id, "state": "paid", "debug_note": "not declared in the response schema"})
 	})
 
 	router.Handle(breeze.POST, "/chaos/fail", func(ctx *breeze.Context) error {
@@ -149,11 +136,7 @@ func skipUntraced(traced breeze.HandlerFunc) breeze.HandlerFunc {
 	}
 }
 
-func newTracer(
-	service string,
-	log func(string, string, string),
-	router *breeze.Router,
-) *fleet.Tracer {
+func newTracer(service string, log func(string, string, string), router *breeze.Router) *fleet.Tracer {
 	hash := sha256.Sum256(openAPIDocument)
 	return fleet.New(fleet.TracerConfig{
 		Enabled:       true,

@@ -22,7 +22,7 @@ package fleet
 import (
 	"encoding/json"
 
-	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/dashboard"
 )
 
 // Span is one service's record of handling one request.

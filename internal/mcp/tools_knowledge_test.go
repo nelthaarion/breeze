@@ -31,8 +31,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2/internal/generator"
-	"github.com/nelthaarion/breeze/v2/scalar"
+	"github.com/nelthaarion/breeze/internal/generator"
+	"github.com/nelthaarion/breeze/scalar"
 )
 
 // ─── describe_schema ─────────────────────────────────────────────────────────
@@ -79,33 +79,23 @@ func TestSchemaFlagPathsMatchGeneratorFlagPaths(t *testing.T) {
 
 	for _, p := range fromGenerator {
 		if !inSchema[p] {
-			t.Errorf(
-				"the generator accepts --%s but the schema does not mention it, so an agent reading the schema cannot discover the field",
-				p,
-			)
+			t.Errorf("the generator accepts --%s but the schema does not mention it, so an agent reading the schema cannot discover the field", p)
 		}
 	}
 	for _, p := range fromSchema {
 		if !inGenerator[p] {
-			t.Errorf(
-				"the schema advertises --%s but the generator does not accept it, so an agent following the schema would be rejected",
-				p,
-			)
+			t.Errorf("the schema advertises --%s but the generator does not accept it, so an agent following the schema would be rejected", p)
 		}
 	}
 
 	if len(fromSchema) == 0 {
-		t.Fatal(
-			"the schema carries no x-flag values at all, so this test would pass against an empty document",
-		)
+		t.Fatal("the schema carries no x-flag values at all, so this test would pass against an empty document")
 	}
 
 	// The list published alongside the schema is what most callers will read, so
 	// it has to agree with the document it accompanies.
 	if strings.Join(got.FlagPaths, "\n") != strings.Join(fromSchema, "\n") {
-		t.Error(
-			"the flag_paths in the result differ from the x-flag values in the schema it returned",
-		)
+		t.Error("the flag_paths in the result differ from the x-flag values in the schema it returned")
 	}
 
 	t.Logf("%d settable paths, identical in both walks", len(fromSchema))
@@ -147,11 +137,7 @@ func TestDescribeSchemaPerSectionIsValidAndScoped(t *testing.T) {
 
 		for _, path := range got.FlagPaths {
 			if path != section && !strings.HasPrefix(path, section+".") {
-				t.Errorf(
-					"describe_schema(%q) advertises --%s, which is outside the section that was asked for",
-					section,
-					path,
-				)
+				t.Errorf("describe_schema(%q) advertises --%s, which is outside the section that was asked for", section, path)
 			}
 		}
 	}
@@ -226,11 +212,7 @@ func TestListExamplesFilterAndMiss(t *testing.T) {
 
 	all := srv.tools["breeze_list_examples"].run(mustJSON(t, map[string]any{})).StructuredContent.(examplesResult)
 	if got.Count >= all.Count {
-		t.Errorf(
-			"the fleet filter returned %d of %d examples, so it is not filtering",
-			got.Count,
-			all.Count,
-		)
+		t.Errorf("the fleet filter returned %d of %d examples, so it is not filtering", got.Count, all.Count)
 	}
 
 	miss := srv.tools["breeze_list_examples"].run(mustJSON(t, map[string]any{
@@ -278,10 +260,7 @@ func TestGenerateLLMSDescribesTheProjectWithoutWriting(t *testing.T) {
 		t.Fatalf("re-snapshotting the project: %v", err)
 	}
 	if changes := diffSnapshots(before, after); len(changes) != 0 {
-		t.Fatalf(
-			"generate_llms_txt wrote to the project without being asked: %v",
-			changedPaths(changes),
-		)
+		t.Fatalf("generate_llms_txt wrote to the project without being asked: %v", changedPaths(changes))
 	}
 
 	if len(got.Files) != 2 {
@@ -304,10 +283,7 @@ func TestGenerateLLMSDescribesTheProjectWithoutWriting(t *testing.T) {
 	// The title comes from the configuration's docs.title, which the fixture
 	// sets, so it is recoverable and must be used rather than the module name.
 	if !strings.Contains(short, "# Scratch API") {
-		t.Errorf(
-			"the index does not carry the configured docs title; it begins:\n%s",
-			firstLines(short, 4),
-		)
+		t.Errorf("the index does not carry the configured docs title; it begins:\n%s", firstLines(short, 4))
 	}
 	if !strings.Contains(short, "> Go module: `example.com/scratch`") {
 		t.Error("the index does not record the module path")
@@ -329,11 +305,7 @@ func TestGenerateLLMSDescribesTheProjectWithoutWriting(t *testing.T) {
 		t.Fatal("the fixture's registry has no routes, so the comparison below would be vacuous")
 	}
 	if got.Routes != len(registry) {
-		t.Errorf(
-			"the document reports %d route(s) and the registry holds %d",
-			got.Routes,
-			len(registry),
-		)
+		t.Errorf("the document reports %d route(s) and the registry holds %d", got.Routes, len(registry))
 	}
 	for _, r := range registry {
 		if !strings.Contains(full, r.Path) {
@@ -419,12 +391,7 @@ func TestLLMSDocumentsModelsFromTheSourceTree(t *testing.T) {
 	// supportedFieldTypes, so a `customer:Customer` argument is rejected before
 	// any file is written. A field pointing at another model is therefore always
 	// hand-added, and that is the state the parser has to cope with.
-	addRelationshipField(
-		t,
-		project,
-		"Order",
-		"Customer *Customer `json:\"customer\" db:\"customer_id\"`",
-	)
+	addRelationshipField(t, project, "Order", "Customer *Customer `json:\"customer\" db:\"customer_id\"`")
 
 	res := srv.tools["breeze_generate_llms_txt"].run(mustJSON(t, map[string]any{
 		"path": project,
@@ -435,10 +402,7 @@ func TestLLMSDocumentsModelsFromTheSourceTree(t *testing.T) {
 	got := res.StructuredContent.(llmsResult)
 
 	if got.Models != 2 {
-		t.Fatalf(
-			"the document reports %d model(s) for a project with two; a configuration rebuilt from feature blocks would report 0",
-			got.Models,
-		)
+		t.Fatalf("the document reports %d model(s) for a project with two; a configuration rebuilt from feature blocks would report 0", got.Models)
 	}
 
 	full := contentOf(t, got, llmsFullName)
@@ -459,27 +423,18 @@ func TestLLMSDocumentsModelsFromTheSourceTree(t *testing.T) {
 	// The column is named too, because the generator's `db:"id"` differs from the
 	// field name and writeModel reports a column whenever the two differ.
 	if !strings.Contains(full, "- `ID` int64, column `id`, primary key") {
-		t.Errorf(
-			"the full reference does not mark ID as the primary key; the Customer section reads:\n%s",
-			sectionOf(full, "### `Customer`"),
-		)
+		t.Errorf("the full reference does not mark ID as the primary key; the Customer section reads:\n%s", sectionOf(full, "### `Customer`"))
 	}
 	// And the relationship is the point of the exercise. It has to be recognised
 	// through a pointer, and recognised by the generator's own ModelRefs rather
 	// than by re-deriving "the type starts with a capital" here.
 	if !strings.Contains(full, "references `Customer`") {
-		t.Errorf(
-			"the full reference does not record that Order references Customer; its Order section reads:\n%s",
-			sectionOf(full, "### `Order`"),
-		)
+		t.Errorf("the full reference does not record that Order references Customer; its Order section reads:\n%s", sectionOf(full, "### `Order`"))
 	}
 	// The column comes from the db tag on the hand-added field, which proves the
 	// tag is read rather than the name being reused.
 	if !strings.Contains(full, "column `customer_id`") {
-		t.Errorf(
-			"the relationship field's column was not read from its db tag; the Order section reads:\n%s",
-			sectionOf(full, "### `Order`"),
-		)
+		t.Errorf("the relationship field's column was not read from its db tag; the Order section reads:\n%s", sectionOf(full, "### `Order`"))
 	}
 }
 
@@ -523,12 +478,7 @@ func TestLLMSFreshnessDistinguishesMissingCurrentStaleAndUnstamped(t *testing.T)
 	}
 	for _, f := range second.Files {
 		if f.RecordedDigest != f.ExpectedDigest {
-			t.Errorf(
-				"%s is current but its digests differ (%s vs %s)",
-				f.Name,
-				f.RecordedDigest,
-				f.ExpectedDigest,
-			)
+			t.Errorf("%s is current but its digests differ (%s vs %s)", f.Name, f.RecordedDigest, f.ExpectedDigest)
 		}
 	}
 
@@ -563,10 +513,7 @@ func TestLLMSFreshnessDistinguishesMissingCurrentStaleAndUnstamped(t *testing.T)
 			continue
 		}
 		if f.Status != "unstamped" {
-			t.Errorf(
-				"a hand-written file is reported %q rather than unstamped, so regenerating it would silently discard the work",
-				f.Status,
-			)
+			t.Errorf("a hand-written file is reported %q rather than unstamped, so regenerating it would silently discard the work", f.Status)
 		}
 	}
 }
@@ -631,11 +578,7 @@ func TestSearchLLMSFindsRoutesModelsAndRules(t *testing.T) {
 	}
 	second := onDisk.StructuredContent.(searchResult)
 	if second.Source != llmsFullName {
-		t.Errorf(
-			"with the file present the source should be %s, not %q",
-			llmsFullName,
-			second.Source,
-		)
+		t.Errorf("with the file present the source should be %s, not %q", llmsFullName, second.Source)
 	}
 	if second.Count == 0 {
 		t.Error("searching for a convention rule found nothing")
@@ -655,9 +598,7 @@ func TestSearchLLMSFindsRoutesModelsAndRules(t *testing.T) {
 		t.Error("a truncated search does not report truncated=true")
 	}
 	if limited.Count <= 1 {
-		t.Error(
-			"the total count was capped by the limit, so a caller cannot tell how much was hidden",
-		)
+		t.Error("the total count was capped by the limit, so a caller cannot tell how much was hidden")
 	}
 
 	// A query is required: searching for nothing is a mistake, not a wildcard.
@@ -693,10 +634,7 @@ func TestSuggestNextStepsFindsAModelWithNoRoutes(t *testing.T) {
 
 	found := findSuggestion(got, "model-without-routes", "Warehouse")
 	if found == nil {
-		t.Fatalf(
-			"no model-without-routes finding for Warehouse; findings were %v",
-			suggestionKinds(got),
-		)
+		t.Fatalf("no model-without-routes finding for Warehouse; findings were %v", suggestionKinds(got))
 	}
 	if found.Rationale == "" {
 		t.Error("the finding carries no rationale, so it is an instruction rather than advice")
@@ -711,9 +649,7 @@ func TestSuggestNextStepsFindsAModelWithNoRoutes(t *testing.T) {
 
 	after := suggestions(t, srv, project)
 	if still := findSuggestion(after, "model-without-routes", "Warehouse"); still != nil {
-		t.Error(
-			"Warehouse is still reported as having no routes after a resource was generated for it",
-		)
+		t.Error("Warehouse is still reported as having no routes after a resource was generated for it")
 	}
 }
 
@@ -726,19 +662,13 @@ func TestSuggestNextStepsFindsWebSocketWithoutAuth(t *testing.T) {
 	got := suggestions(t, srv, project)
 
 	if findSuggestion(got, "websocket-without-auth", "websocket") == nil {
-		t.Errorf(
-			"no websocket-without-auth finding for a project with WebSocket and no JWT; findings were %v",
-			suggestionKinds(got),
-		)
+		t.Errorf("no websocket-without-auth finding for a project with WebSocket and no JWT; findings were %v", suggestionKinds(got))
 	}
 
 	// llms.txt has not been generated for this project, so that gap should be
 	// reported too — it is the finding that makes the others discoverable.
 	if findSuggestion(got, "llms-missing", llmsShortName) == nil {
-		t.Errorf(
-			"no llms-missing finding for a project without one; findings were %v",
-			suggestionKinds(got),
-		)
+		t.Errorf("no llms-missing finding for a project without one; findings were %v", suggestionKinds(got))
 	}
 
 	after := srv.tools["breeze_add"].run(mustJSON(t, map[string]any{
@@ -749,11 +679,7 @@ func TestSuggestNextStepsFindsWebSocketWithoutAuth(t *testing.T) {
 		t.Fatalf("adding jwt failed: %s", after.Content[0].Text)
 	}
 
-	if still := findSuggestion(
-		suggestions(t, srv, project),
-		"websocket-without-auth",
-		"websocket",
-	); still != nil {
+	if still := findSuggestion(suggestions(t, srv, project), "websocket-without-auth", "websocket"); still != nil {
 		t.Error("the WebSocket finding survives adding jwt")
 	}
 }
@@ -813,22 +739,14 @@ func TestExplainIdiomListsAndResolves(t *testing.T) {
 			t.Errorf("%s does not say what it forbids", r.Rule)
 		}
 		if r.Severity != severityError && r.Severity != severityWarning {
-			t.Errorf(
-				"%s has severity %q, which is neither %q nor %q",
-				r.Rule,
-				r.Severity,
-				severityError,
-				severityWarning,
-			)
+			t.Errorf("%s has severity %q, which is neither %q nor %q", r.Rule, r.Severity, severityError, severityWarning)
 		}
 		if r.StaticallyChecked {
 			checked++
 		}
 	}
 	if checked == 0 {
-		t.Error(
-			"no convention is marked as statically checked, so check_idioms could never be evidence for any of them",
-		)
+		t.Error("no convention is marked as statically checked, so check_idioms could never be evidence for any of them")
 	}
 
 	// Lookup by exact rule name.
@@ -944,11 +862,7 @@ func addRelationshipField(t *testing.T, project, model, field string) {
 		}
 
 		cut := idx + len(opening)
-		if err := os.WriteFile(
-			path,
-			[]byte(source[:cut]+"\n\t"+field+source[cut:]),
-			0o644,
-		); err != nil {
+		if err := os.WriteFile(path, []byte(source[:cut]+"\n\t"+field+source[cut:]), 0o644); err != nil {
 			t.Fatalf("writing %s: %v", entry.Name(), err)
 		}
 		return

@@ -74,11 +74,8 @@ type dockerClient struct {
 func newDockerClient() (*dockerClient, error) {
 	binary, err := exec.LookPath("docker")
 	if err != nil {
-		return nil, fmt.Errorf(
-			"docker is not on PATH, so this instance cannot provision containers. "+
-				"Only an orchestrator instance needs it: %w",
-			err,
-		)
+		return nil, fmt.Errorf("docker is not on PATH, so this instance cannot provision containers. "+
+			"Only an orchestrator instance needs it: %w", err)
 	}
 	return &dockerClient{binary: binary, run: runDockerCommand}, nil
 }
@@ -94,11 +91,8 @@ func (d *dockerClient) available() error {
 	defer cancel()
 
 	if _, err := d.exec(ctx, "version", "--format", "{{.Server.Version}}"); err != nil {
-		return fmt.Errorf(
-			"the Docker daemon is not reachable: %w. An orchestrator instance needs the "+
-				"socket mounted (-v /var/run/docker.sock:/var/run/docker.sock) or DOCKER_HOST set",
-			err,
-		)
+		return fmt.Errorf("the Docker daemon is not reachable: %w. An orchestrator instance needs the "+
+			"socket mounted (-v /var/run/docker.sock:/var/run/docker.sock) or DOCKER_HOST set", err)
 	}
 	return nil
 }
@@ -161,11 +155,7 @@ func dockerFirstLine(text string) string {
 }
 
 // buildImage builds a context directory into a tagged image.
-func (d *dockerClient) buildImage(
-	ctx context.Context,
-	dir, tag string,
-	buildArgs map[string]string,
-) (string, error) {
+func (d *dockerClient) buildImage(ctx context.Context, dir, tag string, buildArgs map[string]string) (string, error) {
 	args := []string{"build", "-t", tag}
 	for key, value := range buildArgs {
 		args = append(args, "--build-arg", key+"="+value)
@@ -277,11 +267,7 @@ func (d *dockerClient) inspectState(ctx context.Context, id string) (containerSt
 
 	var state containerState
 	if err := json.Unmarshal([]byte(dockerFirstLine(out)), &state); err != nil {
-		return containerState{}, fmt.Errorf(
-			"docker inspect returned an unreadable state for %s: %w",
-			id,
-			err,
-		)
+		return containerState{}, fmt.Errorf("docker inspect returned an unreadable state for %s: %w", id, err)
 	}
 	return state, nil
 }

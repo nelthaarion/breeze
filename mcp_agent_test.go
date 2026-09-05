@@ -23,7 +23,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2/scalar"
+	"github.com/nelthaarion/breeze/scalar"
 )
 
 const (
@@ -152,11 +152,7 @@ func TestAnAgentCanGoFromDiscoveryToASuccessfulCall(t *testing.T) {
 	}
 	for _, want := range []string{"id", "x-api-key"} {
 		if _, ok := schema.Properties[want]; !ok {
-			t.Fatalf(
-				"schema does not advertise %q; the agent could not know to send it: %v",
-				want,
-				schema.Properties,
-			)
+			t.Fatalf("schema does not advertise %q; the agent could not know to send it: %v", want, schema.Properties)
 		}
 	}
 	if !contains(schema.Required, "id") {
@@ -173,12 +169,9 @@ func TestAnAgentCanGoFromDiscoveryToASuccessfulCall(t *testing.T) {
 		"report_id": "r-1", "x-api-key": agentAPIKey,
 	})
 	if rpcErr == nil {
-		t.Fatal(
-			"an invented argument was accepted; the agent would have seen a 404 and blamed the data",
-		)
+		t.Fatal("an invented argument was accepted; the agent would have seen a 404 and blamed the data")
 	}
-	if !strings.Contains(rpcErr.Error.Message, "report_id") ||
-		!strings.Contains(rpcErr.Error.Message, "id") {
+	if !strings.Contains(rpcErr.Error.Message, "report_id") || !strings.Contains(rpcErr.Error.Message, "id") {
 		t.Errorf("error does not name the bad argument and the good ones: %q", rpcErr.Error.Message)
 	}
 
@@ -194,11 +187,7 @@ func TestAnAgentCanGoFromDiscoveryToASuccessfulCall(t *testing.T) {
 	// ── 6. The authentication wall ──────────────────────────────────────────
 	result, rpcErr := callTool(t, srv, "fetch_report", map[string]any{"id": "r-1"})
 	if rpcErr != nil {
-		t.Fatalf(
-			"a refusal arrived as a protocol error: %d %s",
-			rpcErr.Error.Code,
-			rpcErr.Error.Message,
-		)
+		t.Fatalf("a refusal arrived as a protocol error: %d %s", rpcErr.Error.Code, rpcErr.Error.Message)
 	}
 	if result.StructuredContent.Status != 401 {
 		t.Fatalf("status = %d, want 401", result.StructuredContent.Status)
@@ -207,20 +196,11 @@ func TestAnAgentCanGoFromDiscoveryToASuccessfulCall(t *testing.T) {
 		t.Error("a 401 was not flagged as an error result")
 	}
 	if !strings.Contains(result.StructuredContent.Note, "credentials") {
-		t.Errorf(
-			"note does not tell the agent the problem is credentials: %q",
-			result.StructuredContent.Note,
-		)
+		t.Errorf("note does not tell the agent the problem is credentials: %q", result.StructuredContent.Note)
 	}
 	wantStatus, wantBody := runHTTP(t, router, GET, "/agentsim/reports/r-1", nil, nil)
 	if result.StructuredContent.Status != wantStatus || result.StructuredContent.Body != wantBody {
-		t.Errorf(
-			"MCP %d %q, HTTP %d %q",
-			result.StructuredContent.Status,
-			result.StructuredContent.Body,
-			wantStatus,
-			wantBody,
-		)
+		t.Errorf("MCP %d %q, HTTP %d %q", result.StructuredContent.Status, result.StructuredContent.Body, wantStatus, wantBody)
 	}
 
 	// ── 7. The successful call ──────────────────────────────────────────────
@@ -231,11 +211,7 @@ func TestAnAgentCanGoFromDiscoveryToASuccessfulCall(t *testing.T) {
 		t.Fatalf("the corrected call failed: %d %s", rpcErr.Error.Code, rpcErr.Error.Message)
 	}
 	if result.StructuredContent.Status != 200 {
-		t.Fatalf(
-			"status = %d, want 200 (body %q)",
-			result.StructuredContent.Status,
-			result.StructuredContent.Body,
-		)
+		t.Fatalf("status = %d, want 200 (body %q)", result.StructuredContent.Status, result.StructuredContent.Body)
 	}
 	if result.IsError {
 		t.Error("a 200 was flagged as an error result")
@@ -253,13 +229,7 @@ func TestAnAgentCanGoFromDiscoveryToASuccessfulCall(t *testing.T) {
 	wantStatus, wantBody = runHTTP(t, router, GET, "/agentsim/reports/r-1",
 		map[string]string{"X-API-Key": agentAPIKey}, nil)
 	if result.StructuredContent.Status != wantStatus || result.StructuredContent.Body != wantBody {
-		t.Errorf(
-			"MCP %d %q, HTTP %d %q",
-			result.StructuredContent.Status,
-			result.StructuredContent.Body,
-			wantStatus,
-			wantBody,
-		)
+		t.Errorf("MCP %d %q, HTTP %d %q", result.StructuredContent.Status, result.StructuredContent.Body, wantStatus, wantBody)
 	}
 
 	// ── 8. A missing resource, which is not a refusal ───────────────────────
@@ -290,20 +260,11 @@ func TestAnAgentCanGoFromDiscoveryToASuccessfulCall(t *testing.T) {
 		t.Error("a 500 was not flagged as an error result")
 	}
 	if !strings.Contains(result.StructuredContent.Note, "fault in the service") {
-		t.Errorf(
-			"a 500 note should say the fault is not in the call, got %q",
-			result.StructuredContent.Note,
-		)
+		t.Errorf("a 500 note should say the fault is not in the call, got %q", result.StructuredContent.Note)
 	}
 	wantStatus, wantBody = runHTTP(t, router, GET, pathAgentBroken, nil, nil)
 	if result.StructuredContent.Status != wantStatus || result.StructuredContent.Body != wantBody {
-		t.Errorf(
-			"MCP %d %q, HTTP %d %q",
-			result.StructuredContent.Status,
-			result.StructuredContent.Body,
-			wantStatus,
-			wantBody,
-		)
+		t.Errorf("MCP %d %q, HTTP %d %q", result.StructuredContent.Status, result.StructuredContent.Body, wantStatus, wantBody)
 	}
 
 	// ── 10. Every refusal was distinguishable ───────────────────────────────
@@ -340,15 +301,7 @@ func TestTheAgentJourneyNeverReachesAnUntaggedRoute(t *testing.T) {
 	}
 
 	// It is genuinely there over HTTP.
-	if status, body := runHTTP(
-		t,
-		router,
-		GET,
-		pathAgentPrivate,
-		nil,
-		nil,
-	); status != 200 ||
-		!strings.Contains(body, "do not expose") {
+	if status, body := runHTTP(t, router, GET, pathAgentPrivate, nil, nil); status != 200 || !strings.Contains(body, "do not expose") {
 		t.Fatalf("the admin route does not serve as expected: %d %q", status, body)
 	}
 

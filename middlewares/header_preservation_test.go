@@ -27,7 +27,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // TestCORSHeadersSurviveHandlerJSON is the case that was reported as a browser CORS

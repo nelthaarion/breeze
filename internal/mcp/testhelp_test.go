@@ -139,11 +139,7 @@ func replaceFirst(t *testing.T, source, old, replacement string) string {
 	t.Helper()
 
 	if !strings.Contains(source, old) {
-		t.Fatalf(
-			"the generated source does not contain %q, so the fixture edit would be a no-op:\n%s",
-			old,
-			source,
-		)
+		t.Fatalf("the generated source does not contain %q, so the fixture edit would be a no-op:\n%s", old, source)
 	}
 	return strings.Replace(source, old, replacement, 1)
 }

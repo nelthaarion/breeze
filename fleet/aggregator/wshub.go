@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/fleet"
-	"github.com/nelthaarion/breeze/v2/fleet/transport/eventtransport"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/fleet/transport/eventtransport"
 )
 
 const wsSnapshotInterval = 2 * time.Second
@@ -130,8 +130,7 @@ func (h *wsHub) authenticate(client *fleetWSClient, env wsEnvelope) bool {
 		}
 		client.role = wsIngest
 	case "viewer", "":
-		if h.a.cfg.AuthEnabled() &&
-			(!secureEqual(env.Username, h.a.cfg.Username) || !secureEqual(env.Password, h.a.cfg.Password)) {
+		if h.a.cfg.AuthEnabled() && (!secureEqual(env.Username, h.a.cfg.Username) || !secureEqual(env.Password, h.a.cfg.Password)) {
 			return false
 		}
 		client.role = wsViewer
@@ -187,31 +186,19 @@ func (h *wsHub) loop() {
 func (h *wsHub) traceEvent(spans []fleet.Span) {
 	for _, span := range spans {
 		if span.Failed() {
-			h.broadcast(
-				"trace_event",
-				map[string]any{"trace_id": span.TraceID, "service": span.Service, "error": true},
-			)
+			h.broadcast("trace_event", map[string]any{"trace_id": span.TraceID, "service": span.Service, "error": true})
 			return
 		}
 	}
 	if len(spans) > 0 {
-		h.broadcast(
-			"trace_event",
-			map[string]any{"trace_id": spans[0].TraceID, "service": spans[0].Service},
-		)
+		h.broadcast("trace_event", map[string]any{"trace_id": spans[0].TraceID, "service": spans[0].Service})
 	}
 }
 
 func (h *wsHub) serviceEvent(hb fleet.Heartbeat) { h.broadcast("service_event", hb) }
 
 func (h *wsHub) broadcast(kind string, data any) {
-	body, err := json.Marshal(
-		map[string]any{
-			"type": kind,
-			"time": time.Now().UTC().Format(time.RFC3339Nano),
-			"data": data,
-		},
-	)
+	body, err := json.Marshal(map[string]any{"type": kind, "time": time.Now().UTC().Format(time.RFC3339Nano), "data": data})
 	if err != nil {
 		return
 	}
@@ -231,9 +218,7 @@ func (h *wsHub) broadcast(kind string, data any) {
 }
 
 func (h *wsHub) sendSnapshot(conn *breeze.WSConn) {
-	body, _ := json.Marshal(
-		map[string]any{"type": "topology_snapshot", "data": h.a.topology.Snapshot()},
-	)
+	body, _ := json.Marshal(map[string]any{"type": "topology_snapshot", "data": h.a.topology.Snapshot()})
 	_ = conn.SendText(string(body))
 }
 

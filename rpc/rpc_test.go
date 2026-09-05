@@ -196,8 +196,7 @@ func TestSingleRequestNamedParams(t *testing.T) {
 	s := testServer(t)
 
 	out := s.Handle([]byte(
-		`{"jsonrpc": "2.0", "method": "subtract", "params": {"subtrahend": 23, "minuend": 42}, "id": 3}`,
-	))
+		`{"jsonrpc": "2.0", "method": "subtract", "params": {"subtrahend": 23, "minuend": 42}, "id": 3}`))
 	m := decode(t, out)
 
 	if got := assertResult(t, m); got != float64(19) {
@@ -406,9 +405,7 @@ func TestVersionCheckAppliesToNotifications(t *testing.T) {
 
 	out := s.Handle([]byte(`{"method":"update","params":[1]}`))
 	if len(out) == 0 {
-		t.Fatal(
-			"a versionless message is an invalid Request, not a notification; it must be answered",
-		)
+		t.Fatal("a versionless message is an invalid Request, not a notification; it must be answered")
 	}
 	assertErrorCode(t, decode(t, out), CodeInvalidRequest)
 }
@@ -547,10 +544,7 @@ func TestBatchMixedIsTheSpecExample(t *testing.T) {
 
 	// Five responses, not six: the notification contributes nothing (§6).
 	if len(got) != 5 {
-		t.Fatalf(
-			"batch returned %d responses, want 5 (the notification must not produce one)",
-			len(got),
-		)
+		t.Fatalf("batch returned %d responses, want 5 (the notification must not produce one)", len(got))
 	}
 
 	if r := assertResult(t, got[0]); r != float64(7) {
@@ -741,10 +735,7 @@ func TestBatchWithNotificationInMiddleHasNoHole(t *testing.T) {
 func TestNestedBatchIsNotFlattened(t *testing.T) {
 	s := testServer(t)
 
-	got := decodeBatch(
-		t,
-		s.Handle([]byte(`[[{"jsonrpc":"2.0","method":"sum","params":[1],"id":1}]]`)),
-	)
+	got := decodeBatch(t, s.Handle([]byte(`[[{"jsonrpc":"2.0","method":"sum","params":[1],"id":1}]]`)))
 	if len(got) != 1 {
 		t.Fatalf("got %d responses, want 1", len(got))
 	}
@@ -1015,11 +1006,7 @@ func TestRegisterRejectsEmptyNameAndNilHandler(t *testing.T) {
 	}
 
 	s := NewServer(reg)
-	assertErrorCode(
-		t,
-		decode(t, s.Handle([]byte(`{"jsonrpc":"2.0","method":"nilled","id":1}`))),
-		CodeMethodNotFound,
-	)
+	assertErrorCode(t, decode(t, s.Handle([]byte(`{"jsonrpc":"2.0","method":"nilled","id":1}`))), CodeMethodNotFound)
 }
 
 // TestContextParamsAndBind covers the params surface.
@@ -1040,10 +1027,7 @@ func TestContextParamsAndBind(t *testing.T) {
 	})
 
 	s := NewServer(reg)
-	m := decode(
-		t,
-		s.Handle([]byte(`{"jsonrpc":"2.0","method":"echo","params":{"name":"x","n":3},"id":1}`)),
-	)
+	m := decode(t, s.Handle([]byte(`{"jsonrpc":"2.0","method":"echo","params":{"name":"x","n":3},"id":1}`)))
 
 	res := assertResult(t, m).(map[string]any)
 	if res["name"] != "x" || res["n"] != float64(3) {

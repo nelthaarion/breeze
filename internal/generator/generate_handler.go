@@ -24,16 +24,8 @@ func generateHandler(modulePath, name string, args []string) error {
 	fs := flag.NewFlagSet("generate handler", flag.ContinueOnError)
 	methods := parseMethodsFlag(fs)
 	force := fs.Bool("force", false, "overwrite an existing handler file")
-	pluralOverride := fs.String(
-		"plural",
-		"",
-		"override the pluralized handler name (e.g. --plural=people)",
-	)
-	pathOverride := fs.String(
-		"path",
-		"",
-		"route prefix (default /<plural>, e.g. --path=/api/v1/users)",
-	)
+	pluralOverride := fs.String("plural", "", "override the pluralized handler name (e.g. --plural=people)")
+	pathOverride := fs.String("path", "", "route prefix (default /<plural>, e.g. --path=/api/v1/users)")
 	out := registerOutputFlags(fs)
 
 	flagArgs, _ := splitFlagsAndPositional(fs, args)
@@ -64,15 +56,7 @@ func generateHandler(modulePath, name string, args []string) error {
 		return err
 	}
 
-	if err := writeHandlerFile(
-		target,
-		modulePath,
-		name,
-		actions,
-		pathBase,
-		handlerStubTemplate,
-		*force,
-	); err != nil {
+	if err := writeHandlerFile(target, modulePath, name, actions, pathBase, handlerStubTemplate, *force); err != nil {
 		return err
 	}
 
@@ -99,10 +83,7 @@ func resolveRoutePath(explicit, plural string) (string, error) {
 		return "", fmt.Errorf("invalid --path %q", explicit)
 	}
 	if strings.ContainsAny(p, " \t") {
-		return "", fmt.Errorf(
-			"invalid --path %q â€” route paths cannot contain whitespace",
-			explicit,
-		)
+		return "", fmt.Errorf("invalid --path %q â€” route paths cannot contain whitespace", explicit)
 	}
 	return p, nil
 }
@@ -113,14 +94,9 @@ type actionWithPath struct {
 	Verb string
 }
 
-func writeHandlerFile(
-	target outputTarget,
-	modulePath, name string,
-	actions []action,
-	pathBase string,
-	tmpl *template.Template,
-	force bool,
-) error {
+func writeHandlerFile(target outputTarget, modulePath, name string, actions []action, pathBase string,
+	tmpl *template.Template, force bool) error {
+
 	withPaths := make([]actionWithPath, len(actions))
 	for i, a := range actions {
 		withPaths[i] = actionWithPath{
@@ -145,7 +121,7 @@ func writeHandlerFile(
 	return writeGeneratedGoFile(generatedFile{
 		Target:     target,
 		Owner:      generateOwner("handler"),
-		Imports:    []string{`"github.com/nelthaarion/breeze/v2"`},
+		Imports:    []string{`"github.com/nelthaarion/breeze"`},
 		Body:       buf.String(),
 		ModulePath: modulePath,
 		Force:      force,
@@ -157,24 +133,12 @@ func writeHandlerFile(
 // a trailing middleware argument (used by the resource generator to attach
 // swagger.RouteDoc middleware); handler generation passes nil for plain
 // routes with no docs.
-func registerActionRoutes(
-	modulePath, name, pathBase string,
-	actions []action,
-	docArgs []string,
-	extraImports ...string,
-) error {
+func registerActionRoutes(modulePath, name, pathBase string, actions []action, docArgs []string, extraImports ...string) error {
 	var body strings.Builder
 	for i, a := range actions {
 		path := pathBase + a.PathSuffix
 		if docArgs != nil {
-			fmt.Fprintf(
-				&body,
-				"router.Handle(%s, %q, handlers.%s,\n%s,\n)\n",
-				a.Method,
-				path,
-				a.FuncName,
-				docArgs[i],
-			)
+			fmt.Fprintf(&body, "router.Handle(%s, %q, handlers.%s,\n%s,\n)\n", a.Method, path, a.FuncName, docArgs[i])
 		} else {
 			fmt.Fprintf(&body, "router.Handle(%s, %q, handlers.%s)\n", a.Method, path, a.FuncName)
 		}

@@ -30,9 +30,7 @@ type UploadedFile struct {
 // Pass maxFileSize as 0 to allow unlimited (not recommended).
 //
 // This function DOES NOT use http.Request; it operates on your HTTPRequest struct.
-func (req *HTTPRequest) ParseMultipart(
-	maxFileSize int64,
-) (map[string][]*UploadedFile, map[string][]string, error) {
+func (req *HTTPRequest) ParseMultipart(maxFileSize int64) (map[string][]*UploadedFile, map[string][]string, error) {
 	ct := req.Header["content-type"]
 	if ct == "" {
 		return nil, nil, errors.New("content-type missing")
@@ -74,11 +72,11 @@ func (req *HTTPRequest) ParseMultipart(
 			// read field value (bounded to avoid extreme memory)
 			val, readErr := io.ReadAll(part)
 			if readErr != nil {
-				part.Close()
+				_ = part.Close()
 				return nil, nil, fmt.Errorf("read form field %s: %w", formName, readErr)
 			}
 			fields[formName] = append(fields[formName], string(val))
-			part.Close()
+			_ = part.Close()
 			continue
 		}
 
@@ -89,17 +87,13 @@ func (req *HTTPRequest) ParseMultipart(
 		}
 
 		data, readErr := io.ReadAll(lr)
-		part.Close()
+		_ = part.Close()
 		if readErr != nil {
 			return nil, nil, fmt.Errorf("read file %s: %w", filename, readErr)
 		}
 
 		if maxFileSize > 0 && int64(len(data)) > maxFileSize {
-			return nil, nil, fmt.Errorf(
-				"file %s exceeds maxFileSize (%d bytes)",
-				filename,
-				maxFileSize,
-			)
+			return nil, nil, fmt.Errorf("file %s exceeds maxFileSize (%d bytes)", filename, maxFileSize)
 		}
 
 		// Determine content type: prefer part header, fallback to sniffing
@@ -125,10 +119,7 @@ func (req *HTTPRequest) ParseMultipart(
 // SaveUploadedFileFromRequest parses the multipart form and saves the first file
 // from fieldName to destPath. maxFileSize limits each file size in bytes (0 = unlimited).
 // Returns the saved filename (original) and error if any.
-func (req *HTTPRequest) SaveUploadedFileFromRequest(
-	fieldName, destPath string,
-	maxFileSize int64,
-) (string, error) {
+func (req *HTTPRequest) SaveUploadedFileFromRequest(fieldName, destPath string, maxFileSize int64) (string, error) {
 	files, _, err := req.ParseMultipart(maxFileSize)
 	if err != nil {
 		return "", err
@@ -139,10 +130,10 @@ func (req *HTTPRequest) SaveUploadedFileFromRequest(
 	}
 	uf := list[0]
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(destPath, uf.Content, 0o644); err != nil {
+	if err := os.WriteFile(destPath, uf.Content, 0644); err != nil {
 		return "", err
 	}
 	return uf.Filename, nil
@@ -154,17 +145,12 @@ func (req *HTTPRequest) SaveUploadedFileFromRequest(
 
 // ParseMultipart stores parsed files and fields into context (so handlers can reuse).
 // It returns files and fields same as req.ParseMultipart.
-func (ctx *Context) ParseMultipart(
-	maxFileSize int64,
-) (map[string][]*UploadedFile, map[string][]string, error) {
+func (ctx *Context) ParseMultipart(maxFileSize int64) (map[string][]*UploadedFile, map[string][]string, error) {
 	return ctx.Req.ParseMultipart(maxFileSize)
 }
 
 // SaveUploadedFile saves the first uploaded file from fieldName to destPath using ctx.Req.
 // Returns the original filename and error if any.
-func (ctx *Context) SaveUploadedFile(
-	fieldName, destPath string,
-	maxFileSize int64,
-) (string, error) {
+func (ctx *Context) SaveUploadedFile(fieldName, destPath string, maxFileSize int64) (string, error) {
 	return ctx.Req.SaveUploadedFileFromRequest(fieldName, destPath, maxFileSize)
 }

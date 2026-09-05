@@ -56,7 +56,7 @@ func appliedVersions(ctx context.Context, db *sql.DB) (map[int]appliedRecord, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to query migrations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[int]appliedRecord)
 	for rows.Next() {

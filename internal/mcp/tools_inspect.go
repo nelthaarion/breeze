@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2/internal/generator"
+	"github.com/nelthaarion/breeze/internal/generator"
 )
 
 func registerIntrospectionTools(s *Server) {
@@ -39,9 +39,7 @@ func featuresTool() *tool {
 			"summary each. Pass feature to get that feature's flags. " +
 			"Read this before calling breeze_add so the feature name and flags are real.",
 		schema: objectSchema(map[string]any{
-			"feature": stringProp(
-				"Optional. A single feature to describe in detail, including its flags.",
-			),
+			"feature": stringProp("Optional. A single feature to describe in detail, including its flags."),
 		}),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a featuresArgs
@@ -143,10 +141,8 @@ func routesTool() *tool {
 			"route registry. Use this to see what already exists before generating " +
 			"a handler that would collide with it.",
 		schema: objectSchema(map[string]any{
-			"dir": stringProp("Project root. Defaults to the server's working directory."),
-			"json": boolProp(
-				"Return JSON instead of a table. Prefer this when the output is going to be parsed.",
-			),
+			"dir":  stringProp("Project root. Defaults to the server's working directory."),
+			"json": boolProp("Return JSON instead of a table. Prefer this when the output is going to be parsed."),
 		}),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a routesArgs
@@ -164,8 +160,7 @@ func routesTool() *tool {
 			// A project with no registry yet is the common case for a fresh
 			// scaffold, and "no such file" is a poor answer to "what routes do I
 			// have". The generator's own message is kept, with the reason added.
-			if res.IsError &&
-				strings.Contains(strings.ToLower(res.Content[0].Text), "no such file") {
+			if res.IsError && strings.Contains(strings.ToLower(res.Content[0].Text), "no such file") {
 				return errorResult(res.Content[0].Text +
 					"\n\nThis project has no generated route registry yet. " +
 					"Generate a handler or resource first, or check that dir points at the project root.")

@@ -1,6 +1,6 @@
 package oauth2
 
-import "github.com/nelthaarion/breeze/v2"
+import "github.com/nelthaarion/breeze"
 
 // Login returns a handler that begins the OAuth2 authorization-code flow:
 //

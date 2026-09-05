@@ -86,12 +86,7 @@ func DiscoverMigrations(fsys fs.FS) ([]Migration, error) {
 		}
 
 		if existing, ok := versionsSeen[group.version]; ok {
-			return nil, fmt.Errorf(
-				"duplicate version %04d: %q and %q",
-				group.version,
-				existing,
-				key,
-			)
+			return nil, fmt.Errorf("duplicate version %04d: %q and %q", group.version, existing, key)
 		}
 		versionsSeen[group.version] = key
 

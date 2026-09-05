@@ -20,7 +20,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // diagName is the registry key, matching the `breeze add video` feature name.
@@ -89,18 +89,12 @@ func (m *mount) probe() diag.Report {
 			"every file under the root is publicly readable by anyone who can guess its name.")
 	}
 	if m.followLink {
-		notes = append(
-			notes,
-			"FollowSymlinks is on, so a symlink inside the root can serve a file "+
-				"outside it.",
-		)
+		notes = append(notes, "FollowSymlinks is on, so a symlink inside the root can serve a file "+
+			"outside it.")
 	}
 	if m.bus == nil && m.col == nil {
-		notes = append(
-			notes,
-			"No event bus or observability collector is attached, so this mount's "+
-				"activity does not reach the dashboard's Video page. The counters above are unaffected.",
-		)
+		notes = append(notes, "No event bus or observability collector is attached, so this mount's "+
+			"activity does not reach the dashboard's Video page. The counters above are unaffected.")
 	}
 
 	// A failure rate above a tenth of requests is a mount that is not working —
@@ -108,8 +102,7 @@ func (m *mount) probe() diag.Report {
 	// match what is signing the URLs.
 	if served > 0 && failed*10 > served {
 		return diag.Degraded(fmt.Sprintf("%s — %d of %d request(s) failed", summary, failed, served),
-			detail).
-			WithNotes(notes...)
+			detail).WithNotes(notes...)
 	}
 	return diag.OK(summary, detail).WithNotes(notes...)
 }

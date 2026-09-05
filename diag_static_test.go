@@ -15,7 +15,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 func TestStaticProbeReportsOffWithNoMount(t *testing.T) {
@@ -103,11 +103,7 @@ func TestStaticProbeReportsAFileAsAMissingRoot(t *testing.T) {
 	router.ServeStatic("/assets", file)
 
 	if report := app.staticProbe(); report.Status != diag.StatusDegraded {
-		t.Errorf(
-			"status = %q for a root that is a file, want %q",
-			report.Status,
-			diag.StatusDegraded,
-		)
+		t.Errorf("status = %q for a root that is a file, want %q", report.Status, diag.StatusDegraded)
 	}
 }
 

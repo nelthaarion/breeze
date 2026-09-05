@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/events"
 )
 
 // This file covers the paths the main suite leaves open: the remaining
@@ -164,6 +164,7 @@ func TestMetricsAreKeyedBySourceAndName(t *testing.T) {
 }
 
 func TestMetricForUnknownName(t *testing.T) {
+
 	col := NewCollector(Config{Capacity: 10, Metrics: true})
 	defer col.Close()
 	if m := col.MetricFor("never.published"); m != nil {
@@ -284,7 +285,7 @@ func TestAsyncListenerPublishesOrphanSignal(t *testing.T) {
 		return nil
 	}).Named("slow-async")
 
-	events.EmitAsyncBus(bus, UserCreated{})
+	_ = events.EmitAsyncBus(bus, UserCreated{})
 	wg.Wait()
 
 	// The dispatch signal plus the listener's own orphan signal.
@@ -330,7 +331,7 @@ func TestAsyncOrphanRecordsFailure(t *testing.T) {
 		return errors.New("async boom")
 	}).Named("failing-async")
 
-	events.EmitAsyncBus(bus, UserCreated{})
+	_ = events.EmitAsyncBus(bus, UserCreated{})
 	wg.Wait()
 
 	found := false

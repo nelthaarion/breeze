@@ -115,7 +115,5 @@ func buildSessionCookie(token, basePath string, maxAge int) string {
 		// Expire immediately (logout).
 		return sessionCookieName + "=" + token + "; Path=" + path + "; Max-Age=0; HttpOnly; SameSite=Lax"
 	}
-	return sessionCookieName + "=" + token + "; Path=" + path + "; Max-Age=" + strconv.Itoa(
-		maxAge,
-	) + "; HttpOnly; SameSite=Lax"
+	return sessionCookieName + "=" + token + "; Path=" + path + "; Max-Age=" + strconv.Itoa(maxAge) + "; HttpOnly; SameSite=Lax"
 }

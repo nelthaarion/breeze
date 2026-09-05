@@ -47,7 +47,7 @@ package middleware
 import (
 	"fmt"
 
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // Diagnostic registry keys, matching the `breeze add` feature names.
@@ -126,11 +126,7 @@ const notCountingNote = "Counted diagnostics are off for this process, so the nu
 // each constructor sets its flag, so a probe can report StatusOff for a
 // middleware the application never installed rather than reporting zeroes that
 // read as a broken one.
-func countedReport(
-	installed bool,
-	offReason, summaryVerb, hitLabel, missLabel string,
-	c *diag.Counter,
-) diag.Report {
+func countedReport(installed bool, offReason, summaryVerb, hitLabel, missLabel string, c *diag.Counter) diag.Report {
 	if !installed {
 		return diag.Off(offReason)
 	}

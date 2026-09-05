@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // requestTimeout bounds every outbound provider call made while handling a

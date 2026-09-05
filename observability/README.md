@@ -34,8 +34,8 @@ one atomic pointer load per dispatch and nothing more.
 
 ```go
 import (
-    "github.com/nelthaarion/breeze/v2/events"
-    "github.com/nelthaarion/breeze/v2/observability"
+    "github.com/nelthaarion/breeze/events"
+    "github.com/nelthaarion/breeze/observability"
 )
 
 col := observability.NewCollector(observability.Config{

@@ -89,11 +89,7 @@ func appendResponse(buf []byte, ctx *Context) []byte {
 			// §5.1 makes it -32603 Internal error. The partially written
 			// result member has to be rolled back first, which is why the
 			// buffer length is captured rather than assumed.
-			return appendInternalErrorResponse(
-				buf[:len(buf)-len(envPrefix)-len(envResult)],
-				ctx.ID,
-				err,
-			)
+			return appendInternalErrorResponse(buf[:len(buf)-len(envPrefix)-len(envResult)], ctx.ID, err)
 		}
 		buf = append(buf, encoded...)
 	default:

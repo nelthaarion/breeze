@@ -42,8 +42,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/client"
-	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/client"
+	"github.com/nelthaarion/breeze/fleet"
 )
 
 // Path suffixes appended to the configured aggregator URL. Kept as constants

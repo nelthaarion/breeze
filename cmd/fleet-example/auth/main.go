@@ -23,10 +23,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/dashboard"
-	"github.com/nelthaarion/breeze/v2/fleet"
-	"github.com/nelthaarion/breeze/v2/fleet/transport/httptransport"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/dashboard"
+	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/fleet/transport/httptransport"
 )
 
 func main() {
@@ -66,12 +66,7 @@ func main() {
 
 		req, err := http.NewRequest(http.MethodPost, ordersURL+"/internal/orders/"+id, nil)
 		if err != nil {
-			coll.PushLogCtx(
-				ctx,
-				"error",
-				"auth-service could not build the orders request: "+err.Error(),
-				"app",
-			)
+			coll.PushLogCtx(ctx, "error", "auth-service could not build the orders request: "+err.Error(), "app")
 
 			ctx.Status(500)
 			return ctx.JSON(map[string]string{"error": "internal error"})
@@ -79,12 +74,7 @@ func main() {
 
 		resp, err := fleet.WrapClient(http.DefaultClient, ctx).Do(req)
 		if err != nil {
-			coll.PushLogCtx(
-				ctx,
-				"error",
-				"auth-service could not reach orders-service: "+err.Error(),
-				"app",
-			)
+			coll.PushLogCtx(ctx, "error", "auth-service could not reach orders-service: "+err.Error(), "app")
 
 			ctx.Status(502)
 			return ctx.JSON(map[string]string{"error": err.Error()})
@@ -96,21 +86,11 @@ func main() {
 			// Decoded on a best-effort basis, but no longer silently: the
 			// original example discarded this error, so a malformed
 			// downstream body looked like a successful authorization.
-			coll.PushLogCtx(
-				ctx,
-				"warning",
-				"auth-service got an undecodable orders response: "+err.Error(),
-				"app",
-			)
+			coll.PushLogCtx(ctx, "warning", "auth-service got an undecodable orders response: "+err.Error(), "app")
 		}
 
 		if resp.StatusCode >= 500 {
-			coll.PushLogCtx(
-				ctx,
-				"error",
-				"auth-service saw orders-service fail with "+strconv.Itoa(resp.StatusCode),
-				"app",
-			)
+			coll.PushLogCtx(ctx, "error", "auth-service saw orders-service fail with "+strconv.Itoa(resp.StatusCode), "app")
 
 			ctx.Status(resp.StatusCode)
 		}
@@ -134,11 +114,7 @@ func skipUntraced(traced breeze.HandlerFunc) breeze.HandlerFunc {
 	}
 }
 
-func newTracer(
-	service string,
-	log func(string, string, string),
-	router *breeze.Router,
-) *fleet.Tracer {
+func newTracer(service string, log func(string, string, string), router *breeze.Router) *fleet.Tracer {
 	return fleet.New(fleet.TracerConfig{
 		Enabled:       true,
 		ServiceName:   service,

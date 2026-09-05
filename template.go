@@ -151,9 +151,7 @@ func NewTemplateEngine(cfg TemplateConfig) *TemplateEngine {
 	// Usage: {{component "card" (map "title" "Hello" "body" "World")}}
 	te.funcMap["map"] = func(pairs ...any) (map[string]any, error) {
 		if len(pairs)%2 != 0 {
-			return nil, fmt.Errorf(
-				"breeze/template: map requires an even number of arguments (key-value pairs)",
-			)
+			return nil, fmt.Errorf("breeze/template: map requires an even number of arguments (key-value pairs)")
 		}
 		m := make(map[string]any, len(pairs)/2)
 		for i := 0; i < len(pairs); i += 2 {
@@ -729,9 +727,7 @@ func (te *TemplateEngine) RenderJSON(ctx *Context) error {
 		// Component render — bare fragment, no layout.
 		if err := te.renderComponent(req.Component, locale, req.Data, buf); err != nil {
 			ctx.Status(500)
-			return ctx.WriteString(
-				fmt.Sprintf("breeze/render: component %q: %v", req.Component, err),
-			)
+			return ctx.WriteString(fmt.Sprintf("breeze/render: component %q: %v", req.Component, err))
 		}
 		// Copied: see RenderComponent for why a pooled buffer's bytes must
 		// not become a response body.
@@ -1001,9 +997,7 @@ func (te *TemplateEngine) Preload() error {
 		base := filepath.Base(vf)
 		// Skip the layout file itself.
 		if te.layoutFile != "" {
-			if abs, _ := filepath.Abs(
-				vf,
-			); abs == func() string { a, _ := filepath.Abs(te.layoutFile); return a }() {
+			if abs, _ := filepath.Abs(vf); abs == func() string { a, _ := filepath.Abs(te.layoutFile); return a }() {
 				continue
 			}
 		}

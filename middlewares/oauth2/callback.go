@@ -3,7 +3,7 @@ package oauth2
 import (
 	"crypto/subtle"
 
-	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze"
 )
 
 // Callback returns the handler for the provider's redirect_uri. It performs the

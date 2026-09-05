@@ -1,8 +1,8 @@
 package middleware
 
 import (
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/scalar"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/scalar"
 )
 
 // ScalarOptions configures the OpenAPI documentation middleware.
@@ -19,6 +19,7 @@ import (
 // option; it is a deliberate decision that it is not currently taken, and the
 // changelog entry is the place that decision lives.
 type ScalarOptions struct {
+
 	// Title is the API name shown in Scalar (default: "Breeze API").
 	Title string
 
@@ -51,7 +52,7 @@ type SwaggerOptions = ScalarOptions
 //	    Title:   "My API",
 //	    Version: "2.0.0",
 //	}))
-
+//
 // Then annotate individual routes by passing a *scalar.RouteDoc as the last
 // argument to router.Handle via the Doc() helper:
 //

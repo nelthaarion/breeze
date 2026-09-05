@@ -114,12 +114,8 @@ func upsertBlock(req blockRequest) error {
 		content = re.ReplaceAllLiteralString(content, block)
 
 	case req.Placement == placeReplaceOnly:
-		return fmt.Errorf(
-			"%s is missing its %s:%s block â€” delete the file and re-run to regenerate it",
-			req.FileName,
-			req.Prefix,
-			req.Name,
-		)
+		return fmt.Errorf("%s is missing its %s:%s block â€” delete the file and re-run to regenerate it",
+			req.FileName, req.Prefix, req.Name)
 
 	case req.Placement == placeAtEOF:
 		content = strings.TrimRight(content, "\n") + "\n\n" + block + "\n"

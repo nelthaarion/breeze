@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/events"
-	"github.com/nelthaarion/breeze/v2/observability"
+	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/observability"
 )
 
 // This file covers the paths the behavioural tests in workflow_test.go
@@ -85,10 +85,7 @@ func (f *faultyStore) PendingWorkflows(ctx context.Context) ([]WorkflowRecord, e
 	return f.MemoryStore.PendingWorkflows(ctx)
 }
 
-func (f *faultyStore) FindByIdempotencyKey(
-	ctx context.Context,
-	workflow, key string,
-) (WorkflowRecord, bool, error) {
+func (f *faultyStore) FindByIdempotencyKey(ctx context.Context, workflow, key string) (WorkflowRecord, bool, error) {
 	if err := f.shouldFail("FindByIdempotencyKey"); err != nil {
 		return WorkflowRecord{}, false, err
 	}
@@ -408,14 +405,7 @@ func TestRegisterRejectsNilAndClosedEngine(t *testing.T) {
 
 func TestRunUnknownWorkflow(t *testing.T) {
 	engine := NewEngine(Config{Bus: events.New(), DisableObservability: true})
-	if _, err := engine.Run(
-		context.Background(),
-		"nope",
-		nil,
-	); !errors.Is(
-		err,
-		ErrWorkflowNotFound,
-	) {
+	if _, err := engine.Run(context.Background(), "nope", nil); !errors.Is(err, ErrWorkflowNotFound) {
 		t.Errorf("err = %v, want ErrWorkflowNotFound", err)
 	}
 }
@@ -586,13 +576,7 @@ func TestMemoryStoreCRUD(t *testing.T) {
 	if err := s.UpdateWorkflow(ctx, rec); err != nil {
 		t.Fatalf("UpdateWorkflow: %v", err)
 	}
-	if err := s.UpdateWorkflow(
-		ctx,
-		WorkflowRecord{ExecutionID: "absent"},
-	); !errors.Is(
-		err,
-		ErrWorkflowNotFound,
-	) {
+	if err := s.UpdateWorkflow(ctx, WorkflowRecord{ExecutionID: "absent"}); !errors.Is(err, ErrWorkflowNotFound) {
 		t.Errorf("UpdateWorkflow(absent) = %v, want ErrWorkflowNotFound", err)
 	}
 
@@ -733,10 +717,7 @@ func TestValidationRejectsBadRetryPolicies(t *testing.T) {
 	}{
 		{"negative attempts", RetryPolicy{MaxAttempts: -1}},
 		{"negative delay", RetryPolicy{MaxAttempts: 2, InitialDelay: -time.Second}},
-		{
-			"max below initial",
-			RetryPolicy{MaxAttempts: 2, InitialDelay: time.Minute, MaxDelay: time.Second},
-		},
+		{"max below initial", RetryPolicy{MaxAttempts: 2, InitialDelay: time.Minute, MaxDelay: time.Second}},
 		{"negative jitter", RetryPolicy{MaxAttempts: 2, InitialDelay: time.Second, Jitter: -1}},
 		{"jitter above one", RetryPolicy{MaxAttempts: 2, InitialDelay: time.Second, Jitter: 2}},
 	}

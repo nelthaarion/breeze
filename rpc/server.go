@@ -276,14 +276,9 @@ func (s *Server) saveRemainder(
 		// One message has grown past the cap without completing. There is no
 		// way to skip past it — the framer cannot know where it ends — so the
 		// connection goes.
-		fmt.Printf(
-			"[Breeze][RPC] message exceeds %d bytes, closing connection\n",
-			s.maxMessageBytes,
-		)
+		fmt.Printf("[Breeze][RPC] message exceeds %d bytes, closing connection\n", s.maxMessageBytes)
 		c.SetContext(nil)
-		_, _ = c.Write(
-			appendErrorResponse(nil, NewError(CodeInvalidRequest, "request too large"), nullID),
-		)
+		_, _ = c.Write(appendErrorResponse(nil, NewError(CodeInvalidRequest, "request too large"), nullID))
 		return gnet.Close
 	}
 
@@ -341,6 +336,7 @@ func (s *Server) handoff(c gnet.Conn, msg []byte) {
 		if out := s.appendMessage(nil, msg, c); len(out) > 0 {
 			_ = c.AsyncWrite(out, nil)
 		}
+
 	}
 
 	if s.pool != nil {

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/events"
 )
 
 // This file tracks workflow executions while they are still running.
@@ -231,134 +231,98 @@ func (w *workflowLive) attach(bus *events.Bus) func() {
 	}
 
 	subs := []func(){
-		events.OnTypeBus[events.WorkflowStarted](
-			bus,
-			func(_ *events.Context, e events.WorkflowStarted) error {
-				w.start(e)
-				return nil
-			},
-		).Unsubscribe,
+		events.OnTypeBus[events.WorkflowStarted](bus, func(_ *events.Context, e events.WorkflowStarted) error {
+			w.start(e)
+			return nil
+		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowStepStarted](
-			bus,
-			func(_ *events.Context, e events.WorkflowStepStarted) error {
-				w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
-					s.State, s.Attempt = liveStepRunning, e.Attempt
-					s.Err = ""
-				})
-				return nil
-			},
-		).Unsubscribe,
+		events.OnTypeBus[events.WorkflowStepStarted](bus, func(_ *events.Context, e events.WorkflowStepStarted) error {
+			w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
+				s.State, s.Attempt = liveStepRunning, e.Attempt
+				s.Err = ""
+			})
+			return nil
+		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowStepCompleted](
-			bus,
-			func(_ *events.Context, e events.WorkflowStepCompleted) error {
-				w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
-					s.State, s.Attempt = liveStepDone, e.Attempt
-					s.DurationMS = float64(e.Duration) / float64(time.Millisecond)
-					s.Err = ""
-				})
-				return nil
-			},
-		).Unsubscribe,
+		events.OnTypeBus[events.WorkflowStepCompleted](bus, func(_ *events.Context, e events.WorkflowStepCompleted) error {
+			w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
+				s.State, s.Attempt = liveStepDone, e.Attempt
+				s.DurationMS = float64(e.Duration) / float64(time.Millisecond)
+				s.Err = ""
+			})
+			return nil
+		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowStepFailed](
-			bus,
-			func(_ *events.Context, e events.WorkflowStepFailed) error {
-				w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
-					// A failure that will be retried is not the step's
-					// verdict yet, so it reads as retrying rather than
-					// failed. Only the last attempt decides.
-					if e.Retryable {
-						s.State = liveStepRetrying
-					} else {
-						s.State = liveStepFailed
+		events.OnTypeBus[events.WorkflowStepFailed](bus, func(_ *events.Context, e events.WorkflowStepFailed) error {
+			w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
+				// A failure that will be retried is not the step's
+				// verdict yet, so it reads as retrying rather than
+				// failed. Only the last attempt decides.
+				if e.Retryable {
+					s.State = liveStepRetrying
+				} else {
+					s.State = liveStepFailed
+				}
+				s.Attempt, s.Err = e.Attempt, e.Err
+				s.DurationMS = float64(e.Duration) / float64(time.Millisecond)
+			})
+			return nil
+		}).Unsubscribe,
+
+		events.OnTypeBus[events.WorkflowRetrying](bus, func(_ *events.Context, e events.WorkflowRetrying) error {
+			w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
+				s.State, s.Attempt = liveStepRetrying, e.Attempt
+			})
+			return nil
+		}).Unsubscribe,
+
+		events.OnTypeBus[events.WorkflowCompensationStarted](bus, func(_ *events.Context, e events.WorkflowCompensationStarted) error {
+			w.touch(e.ExecutionID, "", func(ex *liveExecution, _ *liveStep) {
+				ex.Compensating = true
+			})
+			return nil
+		}).Unsubscribe,
+
+		events.OnTypeBus[events.WorkflowCompensationFailed](bus, func(_ *events.Context, e events.WorkflowCompensationFailed) error {
+			w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
+				s.State, s.Err = liveStepFailed, e.Err
+			})
+			return nil
+		}).Unsubscribe,
+
+		events.OnTypeBus[events.WorkflowCompensationCompleted](bus, func(_ *events.Context, e events.WorkflowCompensationCompleted) error {
+			w.touch(e.ExecutionID, "", func(ex *liveExecution, _ *liveStep) {
+				// Rollback succeeded, so the steps that had completed
+				// are no longer in effect. Showing them green would
+				// claim work that has since been undone.
+				for i := range ex.Steps {
+					if ex.Steps[i].State == liveStepDone {
+						ex.Steps[i].State = liveStepRolled
 					}
-					s.Attempt, s.Err = e.Attempt, e.Err
-					s.DurationMS = float64(e.Duration) / float64(time.Millisecond)
-				})
-				return nil
-			},
-		).Unsubscribe,
+				}
+			})
+			return nil
+		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowRetrying](
-			bus,
-			func(_ *events.Context, e events.WorkflowRetrying) error {
-				w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
-					s.State, s.Attempt = liveStepRetrying, e.Attempt
-				})
-				return nil
-			},
-		).Unsubscribe,
+		events.OnTypeBus[events.WorkflowCompleted](bus, func(_ *events.Context, e events.WorkflowCompleted) error {
+			w.finish(e.ExecutionID)
+			return nil
+		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowCompensationStarted](
-			bus,
-			func(_ *events.Context, e events.WorkflowCompensationStarted) error {
-				w.touch(e.ExecutionID, "", func(ex *liveExecution, _ *liveStep) {
-					ex.Compensating = true
-				})
-				return nil
-			},
-		).Unsubscribe,
+		events.OnTypeBus[events.WorkflowFailed](bus, func(_ *events.Context, e events.WorkflowFailed) error {
+			w.finish(e.ExecutionID)
+			return nil
+		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowCompensationFailed](
-			bus,
-			func(_ *events.Context, e events.WorkflowCompensationFailed) error {
-				w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
-					s.State, s.Err = liveStepFailed, e.Err
-				})
-				return nil
-			},
-		).Unsubscribe,
+		events.OnTypeBus[events.WorkflowTimedOut](bus, func(_ *events.Context, e events.WorkflowTimedOut) error {
+			w.finish(e.ExecutionID)
+			return nil
+		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowCompensationCompleted](
-			bus,
-			func(_ *events.Context, e events.WorkflowCompensationCompleted) error {
-				w.touch(e.ExecutionID, "", func(ex *liveExecution, _ *liveStep) {
-					// Rollback succeeded, so the steps that had completed
-					// are no longer in effect. Showing them green would
-					// claim work that has since been undone.
-					for i := range ex.Steps {
-						if ex.Steps[i].State == liveStepDone {
-							ex.Steps[i].State = liveStepRolled
-						}
-					}
-				})
-				return nil
-			},
-		).Unsubscribe,
-
-		events.OnTypeBus[events.WorkflowCompleted](
-			bus,
-			func(_ *events.Context, e events.WorkflowCompleted) error {
-				w.finish(e.ExecutionID)
-				return nil
-			},
-		).Unsubscribe,
-
-		events.OnTypeBus[events.WorkflowFailed](
-			bus,
-			func(_ *events.Context, e events.WorkflowFailed) error {
-				w.finish(e.ExecutionID)
-				return nil
-			},
-		).Unsubscribe,
-
-		events.OnTypeBus[events.WorkflowTimedOut](
-			bus,
-			func(_ *events.Context, e events.WorkflowTimedOut) error {
-				w.finish(e.ExecutionID)
-				return nil
-			},
-		).Unsubscribe,
-
-		events.OnTypeBus[events.WorkflowCancelled](
-			bus,
-			func(_ *events.Context, e events.WorkflowCancelled) error {
-				w.finish(e.ExecutionID)
-				return nil
-			},
-		).Unsubscribe,
+		events.OnTypeBus[events.WorkflowCancelled](bus, func(_ *events.Context, e events.WorkflowCancelled) error {
+			w.finish(e.ExecutionID)
+			return nil
+		}).Unsubscribe,
 	}
 
 	// Finished executions are swept on a timer rather than on the next

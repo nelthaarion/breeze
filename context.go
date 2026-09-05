@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/goccy/go-json"
-	"github.com/nelthaarion/breeze/v2/binding"
+	"github.com/nelthaarion/breeze/binding"
 	"github.com/panjf2000/gnet/v2"
 )
 
@@ -419,12 +419,12 @@ func (ctx *Context) Bind(dst any) error {
 
 	if verr, ok := err.(*binding.ValidationError); ok {
 		ctx.Status(422)
-		ctx.JSON(verr.ToProblemJSON())
+		_ = ctx.JSON(verr.ToProblemJSON())
 		return err
 	}
 
 	ctx.Status(400)
-	ctx.JSON(map[string]any{
+	_ = ctx.JSON(map[string]any{
 		"type":   "about:blank",
 		"title":  "Bad Request",
 		"status": 400,

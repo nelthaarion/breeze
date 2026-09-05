@@ -86,22 +86,9 @@ func (s State) Terminal() bool {
 // glance: a reviewer can see immediately that nothing leaves a terminal
 // state, and that compensation is reachable only from a failure.
 var transitions = map[State][]State{
-	StatePending: {StateRunning, StateCancelled, StateTimedOut, StateFailed},
-	StateRunning: {
-		StateWaiting,
-		StateCompleted,
-		StateFailed,
-		StateCancelled,
-		StateCompensating,
-		StateTimedOut,
-	},
-	StateWaiting: {
-		StateRunning,
-		StateFailed,
-		StateCancelled,
-		StateCompensating,
-		StateTimedOut,
-	},
+	StatePending:      {StateRunning, StateCancelled, StateTimedOut, StateFailed},
+	StateRunning:      {StateWaiting, StateCompleted, StateFailed, StateCancelled, StateCompensating, StateTimedOut},
+	StateWaiting:      {StateRunning, StateFailed, StateCancelled, StateCompensating, StateTimedOut},
 	StateCompensating: {StateCompensated, StateFailed, StateCancelled},
 	StateCompleted:    nil,
 	StateFailed:       nil,

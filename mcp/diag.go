@@ -42,8 +42,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nelthaarion/breeze/v2/diag"
-	internalmcp "github.com/nelthaarion/breeze/v2/internal/mcp"
+	"github.com/nelthaarion/breeze/diag"
+	internalmcp "github.com/nelthaarion/breeze/internal/mcp"
 )
 
 // diagName is the registry key.

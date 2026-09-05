@@ -68,18 +68,11 @@ func TestStampedBlockRoundTrips(t *testing.T) {
 	}
 
 	if !sameBlockBody(stored, testBlockBody) {
-		t.Errorf(
-			"a freshly written block does not compare equal to its own source:\nstored:\n%q\nsource:\n%q",
-			stored,
-			testBlockBody,
-		)
+		t.Errorf("a freshly written block does not compare equal to its own source:\nstored:\n%q\nsource:\n%q",
+			stored, testBlockBody)
 	}
 	if !blockIsPristine(stored, stamp) {
-		t.Errorf(
-			"a freshly written block is not pristine: stamp %q, recomputed %q",
-			stamp,
-			stampFor(stored),
-		)
+		t.Errorf("a freshly written block is not pristine: stamp %q, recomputed %q", stamp, stampFor(stored))
 	}
 }
 
@@ -125,10 +118,7 @@ func TestStampSurvivesGofmt(t *testing.T) {
 			t.Errorf("%s: layout-only change made the block look hand-edited", stage.desc)
 		}
 		if !sameBlockBody(stored, testBlockBody) {
-			t.Errorf(
-				"%s: layout-only change made the block compare unequal to its source",
-				stage.desc,
-			)
+			t.Errorf("%s: layout-only change made the block compare unequal to its source", stage.desc)
 		}
 	}
 }

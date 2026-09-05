@@ -2,7 +2,7 @@
 
 A native, production-grade developer dashboard for the Breeze framework — inspired by Laravel Telescope, Horizon, and Grafana, but designed specifically for Breeze.
 
-The dashboard ships as a self-contained module under `github.com/nelthaarion/breeze/v2/dashboard`. It adds **zero runtime overhead when disabled** and exposes a single function (`dashboard.Install`) for wiring.
+The dashboard ships as a self-contained module under `github.com/nelthaarion/breeze/dashboard`. It adds **zero runtime overhead when disabled** and exposes a single function (`dashboard.Install`) for wiring.
 
 ---
 
@@ -13,8 +13,8 @@ package main
 
 import (
     "runtime"
-    "github.com/nelthaarion/breeze/v2"
-    "github.com/nelthaarion/breeze/v2/dashboard"
+    "github.com/nelthaarion/breeze"
+    "github.com/nelthaarion/breeze/dashboard"
 )
 
 func main() {

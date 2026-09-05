@@ -188,11 +188,7 @@ func identFrom(s string) string {
 // requireIdent validates a name that will become part of a Go identifier.
 func requireIdent(kind, name string) error {
 	if identFrom(name) == "" || !token.IsIdentifier(identFrom(name)) {
-		return fmt.Errorf(
-			"invalid %s %q â€” it must contain at least one letter or digit",
-			kind,
-			name,
-		)
+		return fmt.Errorf("invalid %s %q â€” it must contain at least one letter or digit", kind, name)
 	}
 	return nil
 }

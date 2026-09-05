@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2/internal/mcp"
+	"github.com/nelthaarion/breeze/internal/mcp"
 )
 
 // TestAPipedStdinGetsNoGuide is the property that protects an editor.
@@ -40,14 +40,7 @@ func TestAPipedStdinGetsNoGuide(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	if err := Serve(
-		"breeze-mcp",
-		"test-version",
-		opts,
-		strings.NewReader(input),
-		&out,
-		&errOut,
-	); err != nil {
+	if err := Serve("breeze-mcp", "test-version", opts, strings.NewReader(input), &out, &errOut); err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
 

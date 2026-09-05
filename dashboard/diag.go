@@ -32,8 +32,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // diagName is the registry key, matching the `breeze add dashboard` feature name.
@@ -47,9 +47,7 @@ func (c *Collector) registerDiagnostics() {
 // probe reports the dashboard's state.
 func (c *Collector) probe() diag.Report {
 	if c == nil {
-		return diag.Off(
-			"no dashboard collector is registered; call dashboard.Install(app, router, cfg)",
-		)
+		return diag.Off("no dashboard collector is registered; call dashboard.Install(app, router, cfg)")
 	}
 	if !c.cfg.Enabled {
 		return diag.Off("the dashboard is installed but Config.Enabled is false, so nothing is "+

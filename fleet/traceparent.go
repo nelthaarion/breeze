@@ -130,8 +130,8 @@ func ParseTraceparent(header string) (TraceContext, bool) {
 	if version == 0xff {
 		return TraceContext{}, false
 	}
-	switch version {
-	case 0x00:
+	switch {
+	case version == 0x00:
 		// Version 00 is exactly this long. Trailing data means a sender that
 		// does not agree with us about the format.
 		if len(header) != traceparentLen {

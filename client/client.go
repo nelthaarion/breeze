@@ -467,10 +467,7 @@ func (c *Client) pool(addr string) *hostPool {
 // the FIN is processed by the event loop, but the connection is still sitting
 // in the idle channel. That race is unavoidable in any connection pool, and is
 // why Do retries once on a pooled connection whose write fails.
-func (c *Client) getConn(
-	addr, hostname string,
-	secure bool,
-) (gnet.Conn, *connContext, bool, error) {
+func (c *Client) getConn(addr, hostname string, secure bool) (gnet.Conn, *connContext, bool, error) {
 	p := c.pool(addr)
 
 	// Try an idle connection first.
@@ -483,7 +480,7 @@ func (c *Client) getConn(
 			// Should not happen; a connection always has its context set at
 			// dial time. Rather than risk a nil dereference on the event
 			// loop, drop this connection and dial a fresh one.
-			_ = conn.Close()
+			conn.Close()
 			break
 		}
 		// Discard any result left by a previous abandoned request so this
@@ -522,7 +519,7 @@ func (c *Client) dial(addr, hostname string, secure bool) (gnet.Conn, *connConte
 		}
 		conn, err := c.gcli.EnrollContext(nc, state)
 		if err != nil {
-			nc.Close()
+			_ = nc.Close()
 			return nil, nil, fmt.Errorf("client: enroll tls conn %s: %w", addr, err)
 		}
 		return conn, state, nil
@@ -541,7 +538,7 @@ func (c *Client) putConn(addr string, conn gnet.Conn) {
 	case p.idle <- conn:
 	default:
 		// Pool is full; close the excess connection.
-		_ = conn.Close()
+		conn.Close()
 	}
 }
 
@@ -588,7 +585,7 @@ func (c *Client) Do(req *ClientRequest) (*Response, error) {
 	// to flush. The nil callback means "fire-and-forget"; errors surface via
 	// the response channel (connection close → OnClose → error in respCh).
 	if err := conn.AsyncWrite(reqBytes, nil); err != nil {
-		_ = conn.Close()
+		conn.Close()
 		if !fromPool {
 			return nil, fmt.Errorf("client: write to %s: %w", addr, err)
 		}
@@ -599,7 +596,7 @@ func (c *Client) Do(req *ClientRequest) (*Response, error) {
 			return nil, err
 		}
 		if err := conn.AsyncWrite(reqBytes, nil); err != nil {
-			_ = conn.Close()
+			conn.Close()
 			return nil, fmt.Errorf("client: write to %s: %w", addr, err)
 		}
 	}
@@ -613,16 +610,16 @@ func (c *Client) Do(req *ClientRequest) (*Response, error) {
 	case result := <-state.respCh:
 		if result.err != nil {
 			// Do not return to pool; connection is broken.
-			_ = conn.Close()
+			conn.Close()
 			return nil, result.err
 		}
 		c.putConn(addr, conn)
 		return result.resp, nil
 	case <-ctx.Done():
-		_ = conn.Close()
+		conn.Close()
 		return nil, fmt.Errorf("client: %w", ctx.Err())
 	case <-timer.C:
-		_ = conn.Close()
+		conn.Close()
 		return nil, fmt.Errorf("client: timeout waiting for response from %s", addr)
 	}
 }
@@ -726,10 +723,7 @@ func buildHTTPRequest(req *ClientRequest, u *url.URL, userAgent string) []byte {
 // end up either hanging on a malformed response or discarding a partial one.
 //
 // buf is never mutated, so the caller can safely retain it across calls.
-func parseHTTPResponse(
-	buf []byte,
-	maxBody int64,
-) (resp *Response, consumed int, done bool, err error) {
+func parseHTTPResponse(buf []byte, maxBody int64) (resp *Response, consumed int, done bool, err error) {
 	// Wait until the whole header block has arrived.
 	headerEnd := bytes.Index(buf, crlfcrlf)
 	if headerEnd < 0 {
@@ -836,12 +830,7 @@ func parseHTTPResponse(
 		if contentLength > maxBody {
 			// Fail as soon as the declared length is known to be too large,
 			// rather than buffering the whole body first only to reject it.
-			return nil, 0, true, fmt.Errorf(
-				"%w: %d > %d",
-				ErrResponseTooLarge,
-				contentLength,
-				maxBody,
-			)
+			return nil, 0, true, fmt.Errorf("%w: %d > %d", ErrResponseTooLarge, contentLength, maxBody)
 		}
 		if int64(len(buf)-bodyStart) < contentLength {
 			return nil, 0, false, nil // partial body; keep reading
@@ -902,11 +891,7 @@ func decodeChunked(buf []byte, maxBody int64) (body []byte, consumed int, done b
 		}
 
 		if int64(len(result))+chunkSize > maxBody {
-			return nil, 0, true, fmt.Errorf(
-				"%w: chunked body exceeds %d",
-				ErrResponseTooLarge,
-				maxBody,
-			)
+			return nil, 0, true, fmt.Errorf("%w: chunked body exceeds %d", ErrResponseTooLarge, maxBody)
 		}
 
 		// Chunk data plus its trailing CRLF.

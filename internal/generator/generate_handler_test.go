@@ -9,11 +9,7 @@ import (
 
 func TestGenerateHandlerPluralOverride(t *testing.T) {
 	t.Chdir(t.TempDir())
-	if err := generateHandler(
-		"example.com/x",
-		"Person",
-		[]string{"--plural=People", "--methods=list"},
-	); err != nil {
+	if err := generateHandler("example.com/x", "Person", []string{"--plural=People", "--methods=list"}); err != nil {
 		t.Fatal(err)
 	}
 	src, err := os.ReadFile(filepath.Join("handlers", "person.go"))

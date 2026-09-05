@@ -129,10 +129,7 @@ func scanStructs(typeNames []string) (map[string]*grpcStruct, error) {
 		}
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf(
-			"struct type(s) not found: %s â€” define them in a .go file in the project root or handlers/ directory",
-			strings.Join(missing, ", "),
-		)
+		return nil, fmt.Errorf("struct type(s) not found: %s â€” define them in a .go file in the project root or handlers/ directory", strings.Join(missing, ", "))
 	}
 
 	return found, nil
@@ -140,12 +137,7 @@ func scanStructs(typeNames []string) (map[string]*grpcStruct, error) {
 
 // scanFileForStructs inspects a parsed Go file for struct type definitions
 // whose names are in `needed`. Found structs are added to `found`.
-func scanFileForStructs(
-	file *ast.File,
-	needed map[string]bool,
-	found map[string]*grpcStruct,
-	path string,
-) {
+func scanFileForStructs(file *ast.File, needed map[string]bool, found map[string]*grpcStruct, path string) {
 	for _, decl := range file.Decls {
 		genDecl, ok := decl.(*ast.GenDecl)
 		if !ok || genDecl.Tok != token.TYPE {

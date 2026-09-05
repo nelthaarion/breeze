@@ -28,7 +28,7 @@ const fallbackGoDirective = "1.25.13"
 
 // breezeModulePath is the framework's import path, needed both as a go.mod
 // require and as the anchor ensureImports keys off.
-const breezeModulePath = "github.com/nelthaarion/breeze/v2"
+const breezeModulePath = "github.com/nelthaarion/breeze"
 
 type newProjectData struct {
 	Name   string
@@ -59,9 +59,7 @@ func runNew(args []string) error {
 	}
 
 	if len(positional) != 1 {
-		return fmt.Errorf(
-			"usage: breeze new <name> [--template=api|views] [--module=<import-path>]",
-		)
+		return fmt.Errorf("usage: breeze new <name> [--template=api|views] [--module=<import-path>]")
 	}
 	name := positional[0]
 
@@ -109,7 +107,7 @@ func runNew(args []string) error {
 	// a failed scaffold can safely remove it rather than leave a partial
 	// project behind.
 	if err := populateProject(templateFS, templateRoot, name, modulePath, data); err != nil {
-		os.RemoveAll(name)
+		_ = os.RemoveAll(name)
 		return err
 	}
 
@@ -120,11 +118,7 @@ func runNew(args []string) error {
 		// The project is left in place rather than removed: the scaffold itself
 		// is sound, and deleting it would discard a correct tree because of a
 		// bad key in a config file the user can simply fix.
-		return fmt.Errorf(
-			"the project was created, but applying %s failed: %w",
-			defaultConfigFile,
-			err,
-		)
+		return fmt.Errorf("the project was created, but applying %s failed: %w", defaultConfigFile, err)
 	} else if applied > 0 {
 		fmt.Printf("Applied %d feature(s) from configuration\n", applied)
 	}
@@ -133,12 +127,7 @@ func runNew(args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: go mod tidy failed: %v\n", err)
 	}
 
-	fmt.Printf(
-		"Created %s (template: %s)\n\nNext steps:\n  cd %s\n  go run .\n\nAdd framework features with:\n  breeze add dashboard\n  breeze add --list\n",
-		name,
-		*tmplName,
-		name,
-	)
+	fmt.Printf("Created %s (template: %s)\n\nNext steps:\n  cd %s\n  go run .\n\nAdd framework features with:\n  breeze add dashboard\n  breeze add --list\n", name, *tmplName, name)
 	reportUnsupportedConfigKeys(cfg)
 	return nil
 }
@@ -162,7 +151,7 @@ func applyConfigInProject(dir string, cfg ProjectConfig, modulePath string) (int
 	if err := os.Chdir(dir); err != nil {
 		return 0, err
 	}
-	defer os.Chdir(prev)
+	defer func() { _ = os.Chdir(prev) }()
 
 	if err := applyConfigFeatures(cfg, modulePath); err != nil {
 		return 0, err
@@ -187,15 +176,9 @@ func validateProjectName(name string) error {
 	case strings.HasPrefix(name, "-"):
 		return fmt.Errorf("invalid project name %q â€” a leading dash is parsed as a flag", name)
 	case illegalNameChars.MatchString(name):
-		return fmt.Errorf(
-			"invalid project name %q â€” avoid path separators and the characters < > : \" | ? *",
-			name,
-		)
+		return fmt.Errorf("invalid project name %q â€” avoid path separators and the characters < > : \" | ? *", name)
 	case strings.HasSuffix(name, ".") || strings.HasSuffix(name, " "):
-		return fmt.Errorf(
-			"invalid project name %q â€” a trailing dot or space is not a usable directory name on Windows",
-			name,
-		)
+		return fmt.Errorf("invalid project name %q â€” a trailing dot or space is not a usable directory name on Windows", name)
 	}
 	return nil
 }
@@ -213,10 +196,7 @@ func validateModulePath(path string) error {
 	case strings.ContainsAny(path, " \t\\"):
 		return fmt.Errorf("invalid module path %q â€” no spaces or backslashes", path)
 	case strings.Contains(path, "://"):
-		return fmt.Errorf(
-			"invalid module path %q â€” drop the scheme (use example.com/user/app)",
-			path,
-		)
+		return fmt.Errorf("invalid module path %q â€” drop the scheme (use example.com/user/app)", path)
 	case strings.HasPrefix(path, "/") || strings.HasSuffix(path, "/"):
 		return fmt.Errorf("invalid module path %q â€” no leading or trailing slash", path)
 	}
@@ -226,39 +206,23 @@ func validateModulePath(path string) error {
 // renderTree is swappable in tests to exercise runNew's failure cleanup.
 var renderTree = renderTemplateTree
 
-func populateProject(
-	templateFS embed.FS,
-	templateRoot, name, modulePath string,
-	data newProjectData,
-) error {
+func populateProject(templateFS embed.FS, templateRoot, name, modulePath string, data newProjectData) error {
 	if err := renderTree(templateFS, templateRoot, name, data); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(
-		filepath.Join(name, "go.mod"),
-		[]byte(goModContent(modulePath)),
-		0o644,
-	); err != nil {
+	if err := os.WriteFile(filepath.Join(name, "go.mod"), []byte(goModContent(modulePath)), 0o644); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(
-		filepath.Join(name, registryFileName),
-		[]byte(registryTemplate()),
-		0o644,
-	); err != nil {
+	if err := os.WriteFile(filepath.Join(name, registryFileName), []byte(registryTemplate()), 0o644); err != nil {
 		return err
 	}
 
 	// The features file is written up front, with an empty call list, so the
 	// RegisterGeneratedFeatures call in main.go always resolves. `breeze add`
 	// then only has to fill in blocks rather than also patch main.go.
-	if err := os.WriteFile(
-		filepath.Join(name, featuresFileName),
-		[]byte(featuresTemplate()),
-		0o644,
-	); err != nil {
+	if err := os.WriteFile(filepath.Join(name, featuresFileName), []byte(featuresTemplate()), 0o644); err != nil {
 		return err
 	}
 
@@ -373,7 +337,7 @@ func renderTemplateTree(srcFS embed.FS, root, destDir string, data newProjectDat
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 
 		return tmpl.Execute(f, data)
 	})

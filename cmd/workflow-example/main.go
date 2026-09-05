@@ -30,10 +30,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/dashboard"
-	"github.com/nelthaarion/breeze/v2/events"
-	"github.com/nelthaarion/breeze/v2/workflow"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/dashboard"
+	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/workflow"
 )
 
 // ─── Domain ───────────────────────────────────────────────────────────────
@@ -223,31 +223,22 @@ func main() {
 	// Log every workflow event to stdout, so the terminal tells the same
 	// story as the dashboard. This is also the smallest possible example
 	// of a plugin observing workflows without touching the engine.
-	events.On(
-		events.WorkflowStepCompleted{},
-		func(_ *events.Context, e events.WorkflowStepCompleted) error {
-			fmt.Printf("  ✓ %-18s %s\n", e.Step, e.Duration.Round(time.Millisecond))
-			return nil
-		},
-	)
-	events.On(
-		events.WorkflowStepFailed{},
-		func(_ *events.Context, e events.WorkflowStepFailed) error {
-			fmt.Printf("  ✗ %-18s attempt %d: %s\n", e.Step, e.Attempt, e.Err)
-			return nil
-		},
-	)
+	events.On(events.WorkflowStepCompleted{}, func(_ *events.Context, e events.WorkflowStepCompleted) error {
+		fmt.Printf("  ✓ %-18s %s\n", e.Step, e.Duration.Round(time.Millisecond))
+		return nil
+	})
+	events.On(events.WorkflowStepFailed{}, func(_ *events.Context, e events.WorkflowStepFailed) error {
+		fmt.Printf("  ✗ %-18s attempt %d: %s\n", e.Step, e.Attempt, e.Err)
+		return nil
+	})
 	events.On(events.WorkflowRetrying{}, func(_ *events.Context, e events.WorkflowRetrying) error {
 		fmt.Printf("  ↻ %-18s retrying in %s\n", e.Step, e.Delay)
 		return nil
 	})
-	events.On(
-		events.WorkflowCompensationStarted{},
-		func(_ *events.Context, e events.WorkflowCompensationStarted) error {
-			fmt.Printf("  ⟲ rolling back %d step(s): %s\n", e.Steps, e.Cause)
-			return nil
-		},
-	)
+	events.On(events.WorkflowCompensationStarted{}, func(_ *events.Context, e events.WorkflowCompensationStarted) error {
+		fmt.Printf("  ⟲ rolling back %d step(s): %s\n", e.Steps, e.Cause)
+		return nil
+	})
 
 	// ── Demo endpoints ───────────────────────────────────────────────────
 

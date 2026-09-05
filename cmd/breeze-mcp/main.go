@@ -56,7 +56,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/nelthaarion/breeze/v2/internal/mcpcmd"
+	"github.com/nelthaarion/breeze/internal/mcpcmd"
 )
 
 // version can be set by a release build:

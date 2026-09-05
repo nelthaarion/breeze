@@ -469,7 +469,7 @@ func TestConfigDefaults(t *testing.T) {
 
 func TestDoInputValidation(t *testing.T) {
 	c := New()
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if _, err := c.Do(nil); !errors.Is(err, ErrNilRequest) {
 		t.Errorf("Do(nil) = %v, want ErrNilRequest", err)
@@ -524,7 +524,7 @@ func TestClientLiveRoundTrip(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{Timeout: 5 * time.Second})
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	t.Run("get with body", func(t *testing.T) {
 		resp, err := c.Get(srv.URL + "/teapot")
@@ -618,7 +618,7 @@ func TestClientConnectionReuseAndConcurrency(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{Timeout: 5 * time.Second})
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	t.Run("sequential requests reuse one connection", func(t *testing.T) {
 		for i := 0; i < 5; i++ {
@@ -682,7 +682,7 @@ func TestClientErrorPaths(t *testing.T) {
 		defer srv.Close()
 
 		small := New(Config{Timeout: 3 * time.Second, MaxResponseBytes: 128})
-		defer small.Close()
+		defer func() { _ = small.Close() }()
 
 		_, err := small.Get(srv.URL)
 		if !errors.Is(err, ErrResponseTooLarge) {
@@ -697,7 +697,7 @@ func TestClientErrorPaths(t *testing.T) {
 		defer srv.Close()
 
 		slow := New(Config{Timeout: 500 * time.Millisecond})
-		defer slow.Close()
+		defer func() { _ = slow.Close() }()
 
 		start := time.Now()
 		if _, err := slow.Get(srv.URL); err == nil {

@@ -17,10 +17,7 @@ func testFlagSet() *flag.FlagSet {
 }
 
 func TestSplitFlagsEqualsForm(t *testing.T) {
-	flagArgs, positional := splitFlagsAndPositional(
-		testFlagSet(),
-		[]string{"name:string", "--plural=people", "--force", "email:string"},
-	)
+	flagArgs, positional := splitFlagsAndPositional(testFlagSet(), []string{"name:string", "--plural=people", "--force", "email:string"})
 	if want := []string{"--plural=people", "--force"}; !reflect.DeepEqual(flagArgs, want) {
 		t.Errorf("flagArgs = %v, want %v", flagArgs, want)
 	}
@@ -30,10 +27,7 @@ func TestSplitFlagsEqualsForm(t *testing.T) {
 }
 
 func TestSplitFlagsSpaceSeparatedValue(t *testing.T) {
-	flagArgs, positional := splitFlagsAndPositional(
-		testFlagSet(),
-		[]string{"name:string", "--plural", "people", "email:string"},
-	)
+	flagArgs, positional := splitFlagsAndPositional(testFlagSet(), []string{"name:string", "--plural", "people", "email:string"})
 	if want := []string{"--plural", "people"}; !reflect.DeepEqual(flagArgs, want) {
 		t.Errorf("flagArgs = %v, want %v", flagArgs, want)
 	}
@@ -43,10 +37,7 @@ func TestSplitFlagsSpaceSeparatedValue(t *testing.T) {
 }
 
 func TestSplitFlagsBoolDoesNotConsumeValue(t *testing.T) {
-	flagArgs, positional := splitFlagsAndPositional(
-		testFlagSet(),
-		[]string{"--force", "name:string"},
-	)
+	flagArgs, positional := splitFlagsAndPositional(testFlagSet(), []string{"--force", "name:string"})
 	if want := []string{"--force"}; !reflect.DeepEqual(flagArgs, want) {
 		t.Errorf("flagArgs = %v, want %v", flagArgs, want)
 	}
@@ -66,11 +57,7 @@ func TestUnknownFlagReturnsError(t *testing.T) {
 	if err := runNew([]string{"--bogus", "myapp"}); err == nil {
 		t.Error("runNew with unknown flag: expected error, got nil")
 	}
-	if err := generateResource(
-		"example.com/x",
-		"User",
-		[]string{"--bogus", "name:string"},
-	); err == nil {
+	if err := generateResource("example.com/x", "User", []string{"--bogus", "name:string"}); err == nil {
 		t.Error("generateResource with unknown flag: expected error, got nil")
 	}
 	if err := generateHandler("example.com/x", "User", []string{"--bogus"}); err == nil {

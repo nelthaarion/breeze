@@ -113,9 +113,7 @@ func TestParseScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	if unscoped.IsScoped() {
-		t.Error(
-			`--scope="" produced a scoped token; not passing it and passing it empty are the same intent`,
-		)
+		t.Error(`--scope="" produced a scoped token; not passing it and passing it empty are the same intent`)
 	}
 
 	scoped, err := ParseScope("fleet, ,runtime")

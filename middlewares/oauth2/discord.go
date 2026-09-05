@@ -24,19 +24,11 @@ func (d *discordDriver) AuthURL(cfg *Config, state, nonce, challenge string) str
 	return buildAuthURL(d.ep.auth, cfg, state, "", challenge, nil)
 }
 
-func (d *discordDriver) Exchange(
-	ctx context.Context,
-	cfg *Config,
-	code, verifier string,
-) (*Token, error) {
+func (d *discordDriver) Exchange(ctx context.Context, cfg *Config, code, verifier string) (*Token, error) {
 	return postForm(ctx, cfg, d.ep.token, exchangeForm(cfg, code, verifier), ErrTokenExchange)
 }
 
-func (d *discordDriver) Refresh(
-	ctx context.Context,
-	cfg *Config,
-	refreshToken string,
-) (*Token, error) {
+func (d *discordDriver) Refresh(ctx context.Context, cfg *Config, refreshToken string) (*Token, error) {
 	return postForm(ctx, cfg, d.ep.token, refreshForm(cfg, refreshToken), ErrTokenExchange)
 }
 

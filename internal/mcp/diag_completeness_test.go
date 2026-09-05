@@ -40,24 +40,25 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2/dashboard"
-	"github.com/nelthaarion/breeze/v2/diag"
-	"github.com/nelthaarion/breeze/v2/events"
-	"github.com/nelthaarion/breeze/v2/fleet"
-	"github.com/nelthaarion/breeze/v2/internal/generator"
+	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/dashboard"
+	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/internal/generator"
+	"github.com/nelthaarion/breeze/migrate"
+	"github.com/nelthaarion/breeze/observability"
+	"github.com/nelthaarion/breeze/rpc"
+	"github.com/nelthaarion/breeze/video"
+	"github.com/nelthaarion/breeze/workflow"
+
 	// Blank imports for the packages whose probes register from init. They are
 	// the ones with no handle to construct — a middleware is a closure and the
 	// OpenAPI registry is a package global — so importing them is the whole
 	// wiring step.
-	_ "github.com/nelthaarion/breeze/v2/middlewares"
-	_ "github.com/nelthaarion/breeze/v2/middlewares/oauth2"
-	"github.com/nelthaarion/breeze/v2/migrate"
-	"github.com/nelthaarion/breeze/v2/observability"
-	"github.com/nelthaarion/breeze/v2/rpc"
-	_ "github.com/nelthaarion/breeze/v2/scalar"
-	"github.com/nelthaarion/breeze/v2/video"
-	"github.com/nelthaarion/breeze/v2/workflow"
+	_ "github.com/nelthaarion/breeze/middlewares"
+	_ "github.com/nelthaarion/breeze/middlewares/oauth2"
+	_ "github.com/nelthaarion/breeze/scalar"
 )
 
 // diagAliases maps a feature name to the registry key its probe uses.
@@ -193,11 +194,7 @@ func wireEverySubsystem(t *testing.T) {
 	// i18n only registers on a successful load, and a load needs at least one
 	// locale file — so the bundle gets a real one rather than being skipped.
 	localeDir := t.TempDir()
-	if err := os.WriteFile(
-		filepath.Join(localeDir, "en.json"),
-		[]byte(`{"hello":"hello"}`),
-		0o600,
-	); err != nil {
+	if err := os.WriteFile(filepath.Join(localeDir, "en.json"), []byte(`{"hello":"hello"}`), 0o600); err != nil {
 		t.Fatalf("write locale file: %v", err)
 	}
 	if _, err := breeze.NewI18n(breeze.I18nConfig{Dir: localeDir}); err != nil {

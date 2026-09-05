@@ -403,11 +403,7 @@ func TestSetMaxMessageBytesZeroRestoresDefault(t *testing.T) {
 	s := testServer(t)
 	s.SetMaxMessageBytes(0)
 	if s.maxMessageBytes != defaultMaxMessageBytes {
-		t.Errorf(
-			"maxMessageBytes = %d, want the default %d",
-			s.maxMessageBytes,
-			defaultMaxMessageBytes,
-		)
+		t.Errorf("maxMessageBytes = %d, want the default %d", s.maxMessageBytes, defaultMaxMessageBytes)
 	}
 	s.SetMaxMessageBytes(-5)
 	if s.maxMessageBytes != defaultMaxMessageBytes {
@@ -543,11 +539,7 @@ func TestBlockingBatchIsDeferredWhole(t *testing.T) {
 	s.SetPool(pool)
 
 	c := &fakeConn{}
-	feed(
-		s,
-		c,
-		`[{"jsonrpc":"2.0","method":"fast","id":1},{"jsonrpc":"2.0","method":"slow","id":2}]`,
-	)
+	feed(s, c, `[{"jsonrpc":"2.0","method":"fast","id":1},{"jsonrpc":"2.0","method":"slow","id":2}]`)
 
 	if pool.submitted != 1 {
 		t.Errorf("pool received %d submissions, want 1 for the whole batch", pool.submitted)

@@ -1,6 +1,6 @@
 package oauth2
 
-import "github.com/nelthaarion/breeze/v2"
+import "github.com/nelthaarion/breeze"
 
 // Optional returns a middleware that attaches the session when present but never
 // blocks the request. Handlers can branch on oauth2.CurrentUser(ctx) != nil to

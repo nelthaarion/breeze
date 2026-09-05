@@ -35,6 +35,7 @@ func newTestNetwork(t *testing.T) (*NetworkServer, *httptest.Server, string) {
 		Mode:  ModeGenerator,
 		Token: token,
 	})
+
 	if err != nil {
 		t.Fatalf("NewNetworkServer: %v", err)
 	}
@@ -63,11 +64,7 @@ func post(t *testing.T, srv *httptest.Server, token, session string, body any) *
 		payload = encoded
 	}
 
-	req, err := http.NewRequest(
-		http.MethodPost,
-		srv.URL+DefaultEndpointPath,
-		strings.NewReader(string(payload)),
-	)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+DefaultEndpointPath, strings.NewReader(string(payload)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,10 +110,7 @@ func handshake(t *testing.T, srv *httptest.Server, token string) string {
 	}
 	session := resp.Header.Get(sessionHeader)
 	if session == "" {
-		t.Fatalf(
-			"initialize returned no %s header, so no subsequent request can be made",
-			sessionHeader,
-		)
+		t.Fatalf("initialize returned no %s header, so no subsequent request can be made", sessionHeader)
 	}
 	return session
 }
@@ -186,10 +180,7 @@ func TestNetworkRejectsUnauthenticated(t *testing.T) {
 			// Fail closed *and* say why: the same discipline mcp_route.go applies
 			// to a refused Auto-MCP call. A 401 with an empty body would leave a
 			// client unable to tell a missing token from a wrong URL.
-			if message, _ := errObj["message"].(string); !strings.Contains(
-				message,
-				"bearer token",
-			) {
+			if message, _ := errObj["message"].(string); !strings.Contains(message, "bearer token") {
 				t.Errorf("error message does not say what is missing: %q", message)
 			}
 			// And it must not say what the right answer is.
@@ -242,10 +233,7 @@ func TestGeneratedTokenIsUsableAndRandom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, secondToken, err := NewNetworkServer(
-		NewServer("test"),
-		NetworkConfig{Mode: ModeGenerator},
-	)
+	second, secondToken, err := NewNetworkServer(NewServer("test"), NetworkConfig{Mode: ModeGenerator})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,22 +247,10 @@ func TestGeneratedTokenIsUsableAndRandom(t *testing.T) {
 	srv := httptest.NewServer(second.Handler())
 	defer srv.Close()
 
-	if resp := post(
-		t,
-		srv,
-		secondToken,
-		"",
-		initializeRequest(1),
-	); resp.StatusCode != http.StatusOK {
+	if resp := post(t, srv, secondToken, "", initializeRequest(1)); resp.StatusCode != http.StatusOK {
 		t.Fatalf("the reported token was rejected by its own server: status %d", resp.StatusCode)
 	}
-	if resp := post(
-		t,
-		srv,
-		first.token,
-		"",
-		initializeRequest(1),
-	); resp.StatusCode != http.StatusUnauthorized {
+	if resp := post(t, srv, first.token, "", initializeRequest(1)); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("another server's token was accepted: status %d", resp.StatusCode)
 	}
 }
@@ -292,12 +268,7 @@ func TestNetworkServesTheSameToolsAsStdio(t *testing.T) {
 	_, srv, token := newTestNetwork(t)
 	session := handshake(t, srv, token)
 
-	request := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/list",
-		"params":  map[string]any{},
-	}
+	request := map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": map[string]any{}}
 
 	// The stdio side, through the same seam rpc.NewStdioServer dispatches to.
 	encoded, err := json.Marshal(request)
@@ -356,10 +327,7 @@ func TestNetworkToolCallBehavesIdentically(t *testing.T) {
 		"jsonrpc": "2.0",
 		"id":      3,
 		"method":  "tools/call",
-		"params": map[string]any{
-			"name":      "breeze_features",
-			"arguments": map[string]any{"feature": "dashboard"},
-		},
+		"params":  map[string]any{"name": "breeze_features", "arguments": map[string]any{"feature": "dashboard"}},
 	}
 
 	encoded, err := json.Marshal(request)
@@ -372,11 +340,7 @@ func TestNetworkToolCallBehavesIdentically(t *testing.T) {
 	network := readAll(t, resp)
 
 	if string(network) != string(stdio) {
-		t.Errorf(
-			"the same tool call produced different responses\nnetwork: %s\nstdio:   %s",
-			network,
-			stdio,
-		)
+		t.Errorf("the same tool call produced different responses\nnetwork: %s\nstdio:   %s", network, stdio)
 	}
 }
 
@@ -494,11 +458,7 @@ func TestNetworkHeaderValidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			req, err := http.NewRequest(
-				http.MethodPost,
-				srv.URL+DefaultEndpointPath,
-				strings.NewReader(string(body)),
-			)
+			req, err := http.NewRequest(http.MethodPost, srv.URL+DefaultEndpointPath, strings.NewReader(string(body)))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -546,10 +506,7 @@ func TestNetworkUnknownToolIsStillAProtocolError(t *testing.T) {
 		"params":  map[string]any{"name": "breeze_guess"},
 	})
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf(
-			"status = %d, want 200: a dispatched-and-refused call is not a transport failure",
-			resp.StatusCode,
-		)
+		t.Fatalf("status = %d, want 200: a dispatched-and-refused call is not a transport failure", resp.StatusCode)
 	}
 
 	var out struct {
@@ -573,12 +530,7 @@ func TestNetworkSessionManagement(t *testing.T) {
 	_, srv, token := newTestNetwork(t)
 
 	session := handshake(t, srv, token)
-	toolsList := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/list",
-		"params":  map[string]any{},
-	}
+	toolsList := map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": map[string]any{}}
 
 	t.Run("missing-session-is-400", func(t *testing.T) {
 		resp := post(t, srv, token, "", toolsList)
@@ -667,11 +619,7 @@ func postWithOrigin(t *testing.T, srv *httptest.Server, token, origin string) *h
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, err := http.NewRequest(
-		http.MethodPost,
-		srv.URL+DefaultEndpointPath,
-		strings.NewReader(string(body)),
-	)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+DefaultEndpointPath, strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatal(err)
 	}

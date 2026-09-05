@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/internal/mcp"
+	"github.com/nelthaarion/breeze/v2/internal/mcp"
 )
 
 // TestAPipedStdinGetsNoGuide is the property that protects an editor.

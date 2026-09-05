@@ -91,7 +91,7 @@ func generateWS(modulePath, name string, args []string) error {
 	if err := writeGeneratedGoFile(generatedFile{
 		Target:     target,
 		Owner:      generateOwner("ws"),
-		Imports:    []string{logImport, `"github.com/nelthaarion/breeze"`},
+		Imports:    []string{logImport, `"github.com/nelthaarion/breeze/v2"`},
 		Body:       b.String(),
 		ModulePath: modulePath,
 		Force:      *force,
@@ -115,7 +115,7 @@ func generateWS(modulePath, name string, args []string) error {
 	body.WriteString("}\n")
 
 	if err := upsertGeneratedFeature("ws"+name, body.String(), []string{
-		`"github.com/nelthaarion/breeze"`,
+		`"github.com/nelthaarion/breeze/v2"`,
 		fmt.Sprintf("%s %q", target.Package, modulePath+"/ws"),
 	}); err != nil {
 		return err

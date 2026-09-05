@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/nelthaarion/breeze/internal/generator"
+	"github.com/nelthaarion/breeze/v2/internal/generator"
 )
 
 // TestUsageAdvertisesEveryFeature keeps the hand-written feature list in

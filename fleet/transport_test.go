@@ -16,7 +16,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // newTestContext returns a bare request context, as breeze hands one to a

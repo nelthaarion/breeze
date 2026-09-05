@@ -15,7 +15,7 @@ migrations/
 ```go
 import (
     "embed"
-    "github.com/nelthaarion/breeze/migrate"
+    "github.com/nelthaarion/breeze/v2/migrate"
 )
 
 //go:embed migrations/*.sql

@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/internal/generator"
+	"github.com/nelthaarion/breeze/v2/internal/generator"
 )
 
 // stateDirName is the per-project directory the history lives in.

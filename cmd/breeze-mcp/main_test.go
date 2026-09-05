@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/internal/mcp"
-	"github.com/nelthaarion/breeze/internal/mcpcmd"
+	"github.com/nelthaarion/breeze/v2/internal/mcp"
+	"github.com/nelthaarion/breeze/v2/internal/mcpcmd"
 )
 
 func TestRunHandshakeListAndNotification(t *testing.T) {

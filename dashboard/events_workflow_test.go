@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/events"
-	"github.com/nelthaarion/breeze/observability"
-	"github.com/nelthaarion/breeze/workflow"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/v2/observability"
+	"github.com/nelthaarion/breeze/v2/workflow"
 )
 
 // These tests cover the path a workflow execution takes to reach the

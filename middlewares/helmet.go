@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // SecurityOptions defines configurable HTTP security headers

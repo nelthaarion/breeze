@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/dashboard"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/dashboard"
 )
 
 // dashboardTimelineKey is where dashboard.Middleware stores its recorder.

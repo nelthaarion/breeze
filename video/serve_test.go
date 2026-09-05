@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	breeze "github.com/nelthaarion/breeze"
+	breeze "github.com/nelthaarion/breeze/v2"
 )
 
 // The body every test serves: 100 bytes of a repeating digit pattern, so an

@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // CORSOptions defines configuration for CORS.

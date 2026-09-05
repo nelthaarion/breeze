@@ -23,7 +23,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 const (

@@ -121,7 +121,7 @@ func generateView(modulePath, name string, args []string) error {
 	body.WriteString("}\n")
 
 	if err := upsertGeneratedFeature("view"+name, body.String(), []string{
-		`"github.com/nelthaarion/breeze"`,
+		`"github.com/nelthaarion/breeze/v2"`,
 	}); err != nil {
 		return err
 	}

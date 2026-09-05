@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // ETagCache stores cached responses per route or URL.

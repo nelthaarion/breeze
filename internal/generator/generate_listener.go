@@ -44,7 +44,7 @@ func generateListener(modulePath, name string, args []string) error {
 
 	imports := []string{
 		logImport,
-		`evt "github.com/nelthaarion/breeze/events"`,
+		`evt "github.com/nelthaarion/breeze/v2/events"`,
 		fmt.Sprintf("%q", modulePath+"/events"),
 	}
 

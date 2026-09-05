@@ -1,8 +1,8 @@
 package middleware
 
 import (
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 // ScalarOptions configures the OpenAPI documentation middleware.

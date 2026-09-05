@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/events"
-	"github.com/nelthaarion/breeze/fleet/contracts"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/v2/fleet/contracts"
 )
 
 // Aggregator owns the bounded store, service registry, topology projection, and

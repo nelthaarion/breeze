@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	breeze "github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/events"
-	"github.com/nelthaarion/breeze/observability"
+	breeze "github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/v2/observability"
 )
 
 // Default tuning values. They are exported so callers can reason about

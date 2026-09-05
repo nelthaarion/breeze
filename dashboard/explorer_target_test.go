@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 const explorerTestPort = 3000

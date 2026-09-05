@@ -38,10 +38,10 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/nelthaarion/breeze"
-	middleware "github.com/nelthaarion/breeze/middlewares"
-	"github.com/nelthaarion/breeze/rpc"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2"
+	middleware "github.com/nelthaarion/breeze/v2/middlewares"
+	"github.com/nelthaarion/breeze/v2/rpc"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 // testSecret is long enough to be a legitimate HMAC key. It is a test fixture, not a
@@ -74,6 +74,7 @@ func fixture(t *testing.T) (*breeze.Breeze, *breeze.Router, *rpc.Server) {
 		application := breeze.New(router, breeze.NewEventLoopWorkerPool(2))
 		fixtureApp, fixtureRouter = application, router
 		fixtureSrv, fixtureErr = application.MCPServer()
+
 	})
 	if fixtureErr != nil {
 		t.Fatalf("building the MCP server for the example's routes: %v", fixtureErr)

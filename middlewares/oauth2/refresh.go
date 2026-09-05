@@ -1,6 +1,6 @@
 package oauth2
 
-import "github.com/nelthaarion/breeze"
+import "github.com/nelthaarion/breeze/v2"
 
 // Refresh returns a middleware that transparently refreshes an access token
 // that is expired (or within ClockSkew of expiring) using the stored refresh

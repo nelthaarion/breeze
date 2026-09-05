@@ -3,7 +3,7 @@ package observability
 import (
 	"testing"
 
-	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 // The benchmarks in this file exist to defend one specific claim: that

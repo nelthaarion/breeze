@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nelthaarion/breeze/internal/generator"
+	"github.com/nelthaarion/breeze/v2/internal/generator"
 )
 
 func registerIntrospectionTools(s *Server) {

@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/fleet"
-	"github.com/nelthaarion/breeze/fleet/aggregator"
-	"github.com/nelthaarion/breeze/fleet/transport/wstransport"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet/aggregator"
+	"github.com/nelthaarion/breeze/v2/fleet/transport/wstransport"
 )
 
 // End-to-end coverage for the WebSocket export transport against the real

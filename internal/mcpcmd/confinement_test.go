@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/internal/mcp"
+	"github.com/nelthaarion/breeze/v2/internal/mcp"
 )
 
 // restoreConfinement puts the previous policy back after one test.

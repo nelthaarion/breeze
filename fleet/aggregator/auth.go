@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"strings"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // readAuth is intentionally Basic Auth rather than the dashboard's cookie

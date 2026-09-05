@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/internal/mcp"
+	"github.com/nelthaarion/breeze/v2/internal/mcp"
 )
 
 // bothNames are the two command names, exactly as each entrypoint passes them.

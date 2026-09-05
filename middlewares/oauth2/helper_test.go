@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // newCtx builds a Breeze context for a GET request with the given query string

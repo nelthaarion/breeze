@@ -31,7 +31,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze/client"
+	"github.com/nelthaarion/breeze/v2/client"
 )
 
 // liveTimeout bounds one call to a service.

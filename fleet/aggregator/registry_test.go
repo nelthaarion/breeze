@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 func hb(service, instance string, rps, errRate float64) fleet.Heartbeat {

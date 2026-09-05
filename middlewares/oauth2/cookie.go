@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // sign returns BASE64URL(HMAC-SHA256(secret, msg)). Used to authenticate cookie

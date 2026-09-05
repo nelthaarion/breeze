@@ -121,7 +121,7 @@ func writeHandlerFile(target outputTarget, modulePath, name string, actions []ac
 	return writeGeneratedGoFile(generatedFile{
 		Target:     target,
 		Owner:      generateOwner("handler"),
-		Imports:    []string{`"github.com/nelthaarion/breeze"`},
+		Imports:    []string{`"github.com/nelthaarion/breeze/v2"`},
 		Body:       buf.String(),
 		ModulePath: modulePath,
 		Force:      force,

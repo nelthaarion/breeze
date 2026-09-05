@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 func main() {

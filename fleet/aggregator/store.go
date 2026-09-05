@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 // SpanStore is the storage seam (§17.2).

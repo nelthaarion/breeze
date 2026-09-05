@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // diagName is the registry key. It matches the `breeze add events` feature name

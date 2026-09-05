@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/fleet"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 func testOperation(additional *bool) scalar.Operation {

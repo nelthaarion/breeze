@@ -3,7 +3,7 @@ package middleware
 import (
 	"strings"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // LocaleCookieName is the cookie used to persist an explicit language choice.

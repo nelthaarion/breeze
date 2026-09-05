@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/dashboard"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/dashboard"
 )
 
 // newRequest builds a parsed request as breeze's HTTP parser would hand one over.

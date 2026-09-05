@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 func LoggingMiddleware() breeze.HandlerFunc {

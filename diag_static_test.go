@@ -15,7 +15,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 func TestStaticProbeReportsOffWithNoMount(t *testing.T) {

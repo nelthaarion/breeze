@@ -48,8 +48,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/nelthaarion/breeze/rpc"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2/rpc"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 // mcpProtocolVersion is the MCP revision this endpoint implements. It is the

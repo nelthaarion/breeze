@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/dashboard"
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 // logStub stands in for one service's dashboard log endpoint.

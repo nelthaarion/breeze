@@ -12,8 +12,8 @@ package fleet
 import (
 	"testing"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/dashboard"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/dashboard"
 )
 
 // newTestCollector builds a Collector the way an application does. Install is

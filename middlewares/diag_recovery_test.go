@@ -15,8 +15,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 func TestRecoveryProbeReportsOffBeforeInstallation(t *testing.T) {

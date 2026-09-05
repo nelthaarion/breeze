@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // tracedContext returns a context with fleet state attached, as the middleware

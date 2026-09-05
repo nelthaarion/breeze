@@ -15,7 +15,7 @@ Every contribution is appreciated, whether it's a bug fix, documentation improve
 Fork the repository.
 
 ```bash
-git clone https://github.com/nelthaarion/breeze.git
+git clone https:// github.com/nelthaarion/breeze/v2.git
 
 cd breeze
 

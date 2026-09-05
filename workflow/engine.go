@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nelthaarion/breeze/diag"
-	"github.com/nelthaarion/breeze/events"
-	"github.com/nelthaarion/breeze/observability"
+	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/v2/observability"
 )
 
 // Config configures an [Engine]. The zero value is valid and yields the

@@ -31,7 +31,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // Diagnostic registry keys. These match the names an agent will have seen from

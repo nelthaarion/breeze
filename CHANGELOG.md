@@ -1342,7 +1342,7 @@ optimised speculatively beyond that point.
 Five bugs, all in the same place and all invisible until a container actually ran.
 
 - **Provisioning could not build from a development orchestrator at all.** The generated
-  Dockerfile ran `go install github.com/nelthaarion/breeze/cmd/breeze-mcp@<pin>` and let
+  Dockerfile ran `go install  github.com/nelthaarion/breeze/v2/cmd/breeze-mcp@<pin>` and let
   the project's own go.mod resolve Breeze from the proxy. A working tree ahead of the
   newest tag — which it is, continuously — meant `module found, but does not contain
   package`, for `fleet/` and for `cmd/breeze-mcp` itself. An orchestrator could not

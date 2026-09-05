@@ -6,7 +6,7 @@ import (
 	"crypto/subtle"
 	"strings"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // AuthMiddleware returns a middleware that enforces dashboard authentication.

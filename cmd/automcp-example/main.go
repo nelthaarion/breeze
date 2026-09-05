@@ -65,9 +65,9 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/nelthaarion/breeze"
-	middleware "github.com/nelthaarion/breeze/middlewares"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2"
+	middleware "github.com/nelthaarion/breeze/v2/middlewares"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 // ─── the model ───────────────────────────────────────────────────────────────

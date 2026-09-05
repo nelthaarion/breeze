@@ -26,8 +26,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/nelthaarion/breeze/rpc"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2/rpc"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 const mcpFixtureToken = "mcp-test-token"

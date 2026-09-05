@@ -30,7 +30,7 @@ import (
 	"strings"
 )
 
-const rpcImport = `"github.com/nelthaarion/breeze/rpc"`
+const rpcImport = `"github.com/nelthaarion/breeze/v2/rpc"`
 
 func registerJSONRPC() {
 	register(&feature{
@@ -269,7 +269,7 @@ func rpcMethodsFile(cfg JSONRPCConfig, blocking map[string]bool) string {
 package main
 
 import (
-	"github.com/nelthaarion/breeze/rpc"
+	"github.com/nelthaarion/breeze/v2/rpc"
 )
 `)
 

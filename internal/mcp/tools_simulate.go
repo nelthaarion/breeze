@@ -37,7 +37,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze/client"
+	"github.com/nelthaarion/breeze/v2/client"
 )
 
 // simulateTimeout bounds one simulated call.

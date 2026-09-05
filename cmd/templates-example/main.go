@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	middleware "github.com/nelthaarion/breeze/middlewares"
+	"github.com/nelthaarion/breeze/v2"
+	middleware "github.com/nelthaarion/breeze/v2/middlewares"
 )
 
 type User struct {

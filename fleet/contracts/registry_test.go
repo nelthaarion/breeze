@@ -1,8 +1,9 @@
 package contracts
 
 import (
-	"github.com/nelthaarion/breeze/scalar"
 	"testing"
+
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 func TestOperationNormalizesBreezeRoute(t *testing.T) {

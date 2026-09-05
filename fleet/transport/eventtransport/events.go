@@ -12,8 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/nelthaarion/breeze/events"
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 const (

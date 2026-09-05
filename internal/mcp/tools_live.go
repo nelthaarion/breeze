@@ -30,7 +30,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 func registerLiveTools(s *Server) {

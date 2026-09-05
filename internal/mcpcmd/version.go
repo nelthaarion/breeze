@@ -5,7 +5,7 @@ package mcpcmd
 import (
 	"runtime/debug"
 
-	"github.com/nelthaarion/breeze/internal/mcp"
+	"github.com/nelthaarion/breeze/v2/internal/mcp"
 )
 
 // FeaturesEndpoint is the path the capability-report convenience is served on.
@@ -43,7 +43,7 @@ func ModuleVersion() string {
 }
 
 // breezeModulePath is the framework's import path.
-const breezeModulePath = "github.com/nelthaarion/breeze"
+const breezeModulePath = "github.com/nelthaarion/breeze/v2"
 
 // resolved reports whether a module version is a real one rather than the
 // placeholder a local build produces.

@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze/rpc"
+	"github.com/nelthaarion/breeze/v2/rpc"
 )
 
 // Server holds the tool table and the JSON-RPC registry the tools are reached

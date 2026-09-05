@@ -18,10 +18,10 @@ import (
 	"runtime"
 	"time"
 
-	breeze "github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/dashboard"
-	"github.com/nelthaarion/breeze/events"
-	"github.com/nelthaarion/breeze/video"
+	breeze "github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/v2/video"
 )
 
 // chunkSize is deliberately small so the demo shows several writes per

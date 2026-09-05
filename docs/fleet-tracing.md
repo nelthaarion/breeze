@@ -171,7 +171,7 @@ the transport:
 
 The base module's `go.mod` and `go.sum` are unchanged by this feature: no broker,
 WebSocket, or gRPC dependency is reachable from
-`go get github.com/nelthaarion/breeze`. Verify with `go list -deps ./...`, which
+`go get  github.com/nelthaarion/breeze/v2`. Verify with `go list -deps ./...`, which
 resolves no `kafka-go`, `nats`, `amqp091`, or `grpc` package.
 
 ## Security

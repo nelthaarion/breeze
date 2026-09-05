@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 // jsonUnmarshal is a small wrapper around go-json so we don't pull in

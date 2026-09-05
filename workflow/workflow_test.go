@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 // newTestEngine returns an engine isolated from the process-wide bus and

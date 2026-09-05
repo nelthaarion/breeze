@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/events"
-	"github.com/nelthaarion/breeze/video"
+	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/v2/video"
 )
 
 // TestVideoLiveNilSafe pins the guarantee that makes the tracker free when

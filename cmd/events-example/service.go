@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 func RegisterListeners() {

@@ -31,8 +31,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/internal/generator"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2/internal/generator"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 // ─── describe_schema ─────────────────────────────────────────────────────────

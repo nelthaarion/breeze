@@ -443,6 +443,14 @@ func TestCheckIdiomsFindsNothingInAGeneratedProject(t *testing.T) {
 // on. A tool that returned only prose would pass every test above.
 func TestCheckIdiomsToolReturnsStructuredFindings(t *testing.T) {
 	root := t.TempDir()
+
+	writeGo(t, root, "go.mod", `module example.com/test
+
+go 1.21
+
+require github.com/nelthaarion/breeze/v2 v2.0.2
+`)
+
 	writeGo(t, root, "handler.go", `package main
 
 import (

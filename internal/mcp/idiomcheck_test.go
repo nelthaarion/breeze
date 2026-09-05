@@ -444,11 +444,13 @@ func TestCheckIdiomsFindsNothingInAGeneratedProject(t *testing.T) {
 func TestCheckIdiomsToolReturnsStructuredFindings(t *testing.T) {
 	root := t.TempDir()
 
+	// Create a minimal go.mod without external dependencies. The idiom checker
+	// only performs AST-level analysis and resolves imports from each file's
+	// import block—it never needs to download or resolve actual modules. A go.mod
+	// with external requires would fail when GOPROXY=off during CI.
 	writeGo(t, root, "go.mod", `module example.com/test
 
 go 1.21
-
-require github.com/nelthaarion/breeze/v2 v2.0.2
 `)
 
 	writeGo(t, root, "handler.go", `package main

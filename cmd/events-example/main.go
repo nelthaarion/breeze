@@ -20,7 +20,6 @@ import (
 )
 
 func main() {
-
 	fmt.Println("🚀 Breeze Event Demo")
 
 	// register handlers
@@ -38,5 +37,4 @@ func main() {
 	fmt.Println("Request finished")
 
 	time.Sleep(time.Second)
-
 }

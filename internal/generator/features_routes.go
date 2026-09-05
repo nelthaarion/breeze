@@ -75,7 +75,10 @@ func registerStatic() {
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				if !strings.HasPrefix(*prefix, "/") {
-					return featureOutput{}, fmt.Errorf("--prefix must start with a slash, got %q", *prefix)
+					return featureOutput{}, fmt.Errorf(
+						"--prefix must start with a slash, got %q",
+						*prefix,
+					)
 				}
 				// --root is both embedded in the generated ServeStatic call and
 				// used below to create the directory, so an unchecked value
@@ -116,7 +119,11 @@ func registerVideo() {
 			root := fs.String("root", "./media", "directory holding the video files")
 			prefix := fs.String("prefix", "/videos", "URL prefix to serve under")
 			signed := fs.Bool("signed", false, "require a signed token on every request")
-			extensions := fs.String("extensions", "", "comma-separated allowed extensions (default: the package default)")
+			extensions := fs.String(
+				"extensions",
+				"",
+				"comma-separated allowed extensions (default: the package default)",
+			)
 			opaque := fs.Bool("opaque", false, "hide filesystem detail from error responses")
 
 			return func(ctx featureCtx) (featureOutput, error) {
@@ -135,13 +142,19 @@ func registerVideo() {
 						}
 						quoted[i] = fmt.Sprintf("%q", e)
 					}
-					fmt.Fprintf(&extra, "\t\tExtensions: []string{%s},\n", strings.Join(quoted, ", "))
+					fmt.Fprintf(
+						&extra,
+						"\t\tExtensions: []string{%s},\n",
+						strings.Join(quoted, ", "),
+					)
 				}
 				if *opaque {
 					extra.WriteString("\t\tOpaque:     true,\n")
 				}
 				if *signed {
-					extra.WriteString("\t\tSecret:     []byte(os.Getenv(\"VIDEO_SIGNING_SECRET\")),\n")
+					extra.WriteString(
+						"\t\tSecret:     []byte(os.Getenv(\"VIDEO_SIGNING_SECRET\")),\n",
+					)
 					imports = append(imports, osImport)
 				}
 				// The streamer publishes per-request signals, so hand it the
@@ -180,13 +193,19 @@ func SignVideo(name string, ttl time.Duration) string {
 
 				dir := strings.TrimPrefix(strings.TrimPrefix(*root, "./"), "/")
 				notes := []string{
-					fmt.Sprintf("Serving %s/* from %s, honouring Range requests with 206 + Content-Range.", *prefix, *root),
+					fmt.Sprintf(
+						"Serving %s/* from %s, honouring Range requests with 206 + Content-Range.",
+						*prefix,
+						*root,
+					),
 					fmt.Sprintf("Mount fails at boot if %s does not exist.", *root),
 				}
 				if *signed {
-					notes = append(notes,
+					notes = append(
+						notes,
 						"Set VIDEO_SIGNING_SECRET â€” with signing on, an unsigned request is rejected.",
-						"Build URLs with SignVideo(name, ttl).")
+						"Build URLs with SignVideo(name, ttl).",
+					)
 				}
 
 				return featureOutput{
@@ -209,11 +228,18 @@ func registerWebSocket() {
 		Imports:  []string{logImport},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
 			path := fs.String("path", "/ws", "path the endpoint is served on")
-			broadcast := fs.Bool("broadcast", false, "relay each message to every connected client instead of echoing")
+			broadcast := fs.Bool(
+				"broadcast",
+				false,
+				"relay each message to every connected client instead of echoing",
+			)
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				if !strings.HasPrefix(*path, "/") {
-					return featureOutput{}, fmt.Errorf("--path must start with a slash, got %q", *path)
+					return featureOutput{}, fmt.Errorf(
+						"--path must start with a slash, got %q",
+						*path,
+					)
 				}
 
 				handleBody := `			// Echo. Replace with your own dispatch.
@@ -228,7 +254,8 @@ func registerWebSocket() {
 			WSHub.Broadcast(opcode, payload)`
 				}
 
-				body := fmt.Sprintf(`// WSHub is the hub for this endpoint: it tracks live connections and can
+				body := fmt.Sprintf(
+					`// WSHub is the hub for this endpoint: it tracks live connections and can
 // broadcast to all of them.
 var WSHub *breeze.WSHub
 
@@ -247,7 +274,10 @@ func setupWebsocket(app *breeze.Breeze, router *breeze.Router) {
 			log.Printf("ws: %%s closed (%%d %%s)", conn.RemoteAddr(), code, reason)
 		},
 	})
-}`, *path, handleBody)
+}`,
+					*path,
+					handleBody,
+				)
 
 				notes := []string{
 					fmt.Sprintf("Endpoint at %s.", *path),
@@ -268,8 +298,16 @@ func registerTemplates() {
 		Imports:  []string{logImport},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
 			viewsDir := fs.String("views", "./views", "directory holding the view templates")
-			componentsDir := fs.String("components", "./components", "directory holding the component templates")
-			layout := fs.String("layout", "./views/layout.html", "layout template wrapping every view")
+			componentsDir := fs.String(
+				"components",
+				"./components",
+				"directory holding the component templates",
+			)
+			layout := fs.String(
+				"layout",
+				"./views/layout.html",
+				"layout template wrapping every view",
+			)
 			devMode := fs.Bool("dev", true, "reparse templates on change")
 			spa := fs.Bool("spa", true, "enable client-side navigation via EnableReRender")
 
@@ -297,7 +335,8 @@ func registerTemplates() {
 	router.EnableReRender(Templates)`
 				}
 
-				body := fmt.Sprintf(`// Templates is the view engine. Register a page with router.View, which
+				body := fmt.Sprintf(
+					`// Templates is the view engine. Register a page with router.View, which
 // renders viewName inside the layout:
 //
 //	router.View("/about", Templates, "about", nil)
@@ -325,7 +364,13 @@ func setupTemplates(app *breeze.Breeze, router *breeze.Router) {
 	}%s
 
 	router.View("/", Templates, "home", nil)
-}`, *viewsDir, *componentsDir, *layout, *devMode, reRender)
+}`,
+					*viewsDir,
+					*componentsDir,
+					*layout,
+					*devMode,
+					reRender,
+				)
 
 				views := strings.TrimPrefix(strings.TrimPrefix(*viewsDir, "./"), "/")
 				components := strings.TrimPrefix(strings.TrimPrefix(*componentsDir, "./"), "/")
@@ -345,7 +390,11 @@ func setupTemplates(app *breeze.Breeze, router *breeze.Router) {
 					Files: files,
 					Dirs:  []string{views, components},
 					Notes: []string{
-						fmt.Sprintf("Scaffolded %s and %s/home.html; the root route renders it.", layoutPath, views),
+						fmt.Sprintf(
+							"Scaffolded %s and %s/home.html; the root route renders it.",
+							layoutPath,
+							views,
+						),
 						"Add pages with router.View(pattern, Templates, viewName, dataFn).",
 						"DevMode reparses on every request â€” turn it off for production builds.",
 					},

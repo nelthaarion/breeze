@@ -30,7 +30,11 @@ func (d *microsoftDriver) AuthURL(cfg *Config, state, nonce, challenge string) s
 	return buildAuthURL(d.ep.auth, cfg, state, nonce, challenge, extra)
 }
 
-func (d *microsoftDriver) Exchange(ctx context.Context, cfg *Config, code, verifier string) (*Token, error) {
+func (d *microsoftDriver) Exchange(
+	ctx context.Context,
+	cfg *Config,
+	code, verifier string,
+) (*Token, error) {
 	form := exchangeForm(cfg, code, verifier)
 	// The scope must be echoed on the token request for v2.0.
 	if len(cfg.Scopes) > 0 {
@@ -39,7 +43,11 @@ func (d *microsoftDriver) Exchange(ctx context.Context, cfg *Config, code, verif
 	return postForm(ctx, cfg, d.ep.token, form, ErrTokenExchange)
 }
 
-func (d *microsoftDriver) Refresh(ctx context.Context, cfg *Config, refreshToken string) (*Token, error) {
+func (d *microsoftDriver) Refresh(
+	ctx context.Context,
+	cfg *Config,
+	refreshToken string,
+) (*Token, error) {
 	form := refreshForm(cfg, refreshToken)
 	if len(cfg.Scopes) > 0 {
 		form.Set("scope", joinScopes(cfg.Scopes))

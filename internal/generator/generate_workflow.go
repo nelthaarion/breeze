@@ -15,9 +15,17 @@ import (
 // rest of startup.
 func generateWorkflow(modulePath, name string, args []string) error {
 	fs := flag.NewFlagSet("generate workflow", flag.ContinueOnError)
-	steps := fs.String("steps", "", "comma-separated step names (e.g. --steps=validate,charge,ship)")
+	steps := fs.String(
+		"steps",
+		"",
+		"comma-separated step names (e.g. --steps=validate,charge,ship)",
+	)
 	retry := fs.Bool("retry", false, "attach an exponential-backoff retry policy to every step")
-	compensate := fs.Bool("compensate", false, "attach a compensation (rollback) function to every step")
+	compensate := fs.Bool(
+		"compensate",
+		false,
+		"attach a compensation (rollback) function to every step",
+	)
 	timeout := fs.String("timeout", "30s", "per-step timeout (e.g. --timeout=5s)")
 	force := fs.Bool("force", false, "overwrite an existing workflow file")
 	out := registerOutputFlags(fs)
@@ -68,7 +76,11 @@ func generateWorkflow(modulePath, name string, args []string) error {
 	lower := lowerFirst(name)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "// %sName is the identifier the workflow is registered and started under.\n", name)
+	fmt.Fprintf(
+		&b,
+		"// %sName is the identifier the workflow is registered and started under.\n",
+		name,
+	)
 	fmt.Fprintf(&b, "const %sName = %q\n\n", name, toSlug(name))
 
 	fmt.Fprintf(&b, "// %s builds the %s workflow definition.\n//\n", name, name)
@@ -116,7 +128,14 @@ func generateWorkflow(modulePath, name string, args []string) error {
 		b.WriteString("\treturn nil\n}\n\n")
 
 		if *compensate {
-			fmt.Fprintf(&b, "// %s%sUndo rolls back %s%s. It runs only if that step succeeded and a\n", lower, s.Ident, lower, s.Ident)
+			fmt.Fprintf(
+				&b,
+				"// %s%sUndo rolls back %s%s. It runs only if that step succeeded and a\n",
+				lower,
+				s.Ident,
+				lower,
+				s.Ident,
+			)
 			b.WriteString("// later step failed, so it must be idempotent.\n")
 			fmt.Fprintf(&b, "func %s%sUndo(ctx *workflow.Context) error {\n", lower, s.Ident)
 			fmt.Fprintf(&b, "\tlog.Printf(%q)\n", name+": undo "+s.Label)
@@ -138,11 +157,18 @@ func generateWorkflow(modulePath, name string, args []string) error {
 
 	notes := []string{
 		fmt.Sprintf("Register it:  WorkflowEngine.Register(%s.%s())", target.Package, name),
-		fmt.Sprintf("Run it:       res, err := WorkflowEngine.Run(ctx, %s.%sName, payload)", target.Package, name),
+		fmt.Sprintf(
+			"Run it:       res, err := WorkflowEngine.Run(ctx, %s.%sName, payload)",
+			target.Package,
+			name,
+		),
 		fmt.Sprintf("Import as:    \"%s/workflows\"", modulePath),
 	}
 	if !hasBlock(featuresFileName, featureMarkerPrefix, "workflow") {
-		notes = append(notes, "Run `breeze add workflow` â€” the WorkflowEngine this needs is declared by that block.")
+		notes = append(
+			notes,
+			"Run `breeze add workflow` â€” the WorkflowEngine this needs is declared by that block.",
+		)
 	}
 	printNotes(notes)
 	return nil
@@ -162,7 +188,11 @@ func parseDurationFlag(flagName, value string) (string, error) {
 	}
 	d, err := time.ParseDuration(value)
 	if err != nil {
-		return "", fmt.Errorf("invalid %s %q â€” expected a Go duration such as 30s, 5m, or 1h", flagName, value)
+		return "", fmt.Errorf(
+			"invalid %s %q â€” expected a Go duration such as 30s, 5m, or 1h",
+			flagName,
+			value,
+		)
 	}
 	if d <= 0 {
 		return "", fmt.Errorf("invalid %s %q â€” must be positive", flagName, value)

@@ -167,8 +167,8 @@ func TestBind_PathParameters(t *testing.T) {
 func TestBind_MultipleSources(t *testing.T) {
 	type Request struct {
 		ID    int    `param:"id" json:"id"`
-		Name  string `json:"name"`
-		Limit int    `form:"limit"`
+		Name  string `           json:"name"`
+		Limit int    `                       form:"limit"`
 	}
 
 	body := []byte(`{"name":"Alice"}`)
@@ -491,7 +491,12 @@ func TestValidate_MultipleRules(t *testing.T) {
 					return
 				}
 				if len(verr.Errors) != tt.wantErrors {
-					t.Errorf("Bind() got %d errors, want %d: %+v", len(verr.Errors), tt.wantErrors, verr.Errors)
+					t.Errorf(
+						"Bind() got %d errors, want %d: %+v",
+						len(verr.Errors),
+						tt.wantErrors,
+						verr.Errors,
+					)
 				}
 			}
 		})

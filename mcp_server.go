@@ -172,7 +172,13 @@ func (s *Breeze) MCPServer() (*rpc.Server, error) {
 			// error — and the message lists what does exist, because a model
 			// that guessed a name can recover from that and cannot recover
 			// from "invalid params".
-			ctx.Errorf(rpc.CodeInvalidParams, "no such tool: "+params.Name+" (available: "+strings.Join(mcpToolNames(tools), ", ")+")")
+			ctx.Errorf(
+				rpc.CodeInvalidParams,
+				"no such tool: "+params.Name+" (available: "+strings.Join(
+					mcpToolNames(tools),
+					", ",
+				)+")",
+			)
 			return
 		}
 		result, err := s.callMCPTool(tool, params.Arguments)
@@ -324,17 +330,32 @@ func (s *Breeze) buildMCPTools() ([]mcpTool, error) {
 	for _, t := range tagged {
 		name := t.spec.Name
 		if name == "" {
-			return nil, fmt.Errorf("breeze: MCPTool on %s %s has an empty name", t.rt.method, t.rt.pattern)
+			return nil, fmt.Errorf(
+				"breeze: MCPTool on %s %s has an empty name",
+				t.rt.method,
+				t.rt.pattern,
+			)
 		}
 		if prev, dup := seen[name]; dup {
-			return nil, fmt.Errorf("breeze: MCP tool %q is claimed by both %s and %s %s; tool names must be unique because a call carries only the name", name, prev, t.rt.method, t.rt.pattern)
+			return nil, fmt.Errorf(
+				"breeze: MCP tool %q is claimed by both %s and %s %s; tool names must be unique because a call carries only the name",
+				name,
+				prev,
+				t.rt.method,
+				t.rt.pattern,
+			)
 		}
 		seen[name] = string(t.rt.method) + " " + t.rt.pattern
 
 		key := strings.ToUpper(string(t.rt.method)) + " " + openAPIPattern(t.rt.pattern)
 		doc, documented := docs[key]
 		if !documented {
-			return nil, fmt.Errorf("breeze: MCP tool %q maps to %s %s, which has no Scalar documentation, so its arguments cannot be described; register it with scalar.RegisterRoute (middlewares.Doc) or remove the tag", name, t.rt.method, t.rt.pattern)
+			return nil, fmt.Errorf(
+				"breeze: MCP tool %q maps to %s %s, which has no Scalar documentation, so its arguments cannot be described; register it with scalar.RegisterRoute (middlewares.Doc) or remove the tag",
+				name,
+				t.rt.method,
+				t.rt.pattern,
+			)
 		}
 
 		tool, err := buildMCPTool(name, t.spec.Description, t.rt, doc)
@@ -363,7 +384,13 @@ func buildMCPTool(name, description string, rt *route, doc scalar.RouteDoc) (mcp
 
 	claim := func(field string, in mcpArgIn, schema *scalar.Schema, isRequired bool) error {
 		if _, exists := props[field]; exists {
-			return fmt.Errorf("breeze: MCP tool %q has two inputs named %q on %s %s; flattened tool arguments must be unique", name, field, rt.method, rt.pattern)
+			return fmt.Errorf(
+				"breeze: MCP tool %q has two inputs named %q on %s %s; flattened tool arguments must be unique",
+				name,
+				field,
+				rt.method,
+				rt.pattern,
+			)
 		}
 		if schema == nil {
 			schema = &scalar.Schema{Type: "string"}
@@ -438,7 +465,11 @@ func buildMCPTool(name, description string, rt *route, doc scalar.RouteDoc) (mcp
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return mcpTool{}, fmt.Errorf("breeze: MCP tool %q schema could not be encoded: %w", name, err)
+		return mcpTool{}, fmt.Errorf(
+			"breeze: MCP tool %q schema could not be encoded: %w",
+			name,
+			err,
+		)
 	}
 
 	if description == "" {
@@ -535,7 +566,10 @@ type mcpResponse struct {
 // here: it is a result with IsError set and the refusal's status intact, which
 // is the difference between "the tool is broken" and "you are not allowed to
 // do that".
-func (s *Breeze) callMCPTool(tool *mcpTool, arguments map[string]json.RawMessage) (mcpCallResult, error) {
+func (s *Breeze) callMCPTool(
+	tool *mcpTool,
+	arguments map[string]json.RawMessage,
+) (mcpCallResult, error) {
 	binding := make(map[string]mcpArgIn, len(tool.args))
 	for _, a := range tool.args {
 		binding[a.name] = a.in
@@ -549,7 +583,12 @@ func (s *Breeze) callMCPTool(tool *mcpTool, arguments map[string]json.RawMessage
 	for field, raw := range arguments {
 		in, known := binding[field]
 		if !known {
-			return mcpCallResult{}, fmt.Errorf("tool %q has no argument %q; it accepts: %s", tool.name, field, strings.Join(mcpArgNames(tool.args), ", "))
+			return mcpCallResult{}, fmt.Errorf(
+				"tool %q has no argument %q; it accepts: %s",
+				tool.name,
+				field,
+				strings.Join(mcpArgNames(tool.args), ", "),
+			)
 		}
 		switch in {
 		case mcpInPath:
@@ -583,7 +622,11 @@ func (s *Breeze) callMCPTool(tool *mcpTool, arguments map[string]json.RawMessage
 	if len(body) > 0 {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return mcpCallResult{}, fmt.Errorf("tool %q could not encode its body arguments: %w", tool.name, err)
+			return mcpCallResult{}, fmt.Errorf(
+				"tool %q could not encode its body arguments: %w",
+				tool.name,
+				err,
+			)
 		}
 		ctx.Req.Body = encoded
 		// Set so a handler or middleware that inspects the content type sees
@@ -734,7 +777,11 @@ func fillPattern(rt *route, params map[string]string) (string, error) {
 		name := seg[1:]
 		value, ok := params[name]
 		if !ok || value == "" {
-			return "", fmt.Errorf("argument %q is required: %s has no path without it", name, rt.pattern)
+			return "", fmt.Errorf(
+				"argument %q is required: %s has no path without it",
+				name,
+				rt.pattern,
+			)
 		}
 		parts = append(parts, url.PathEscape(value))
 	}

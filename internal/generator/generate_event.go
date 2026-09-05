@@ -60,9 +60,20 @@ func generateEvent(modulePath, name string, args []string) error {
 	fmt.Fprintf(&b, "func Emit%s(bus *evt.Bus, e %s) error {\n", name, name)
 	fmt.Fprintf(&b, "\treturn evt.EmitBus(bus, e)\n}\n\n")
 
-	fmt.Fprintf(&b, "// On%s subscribes fn to %s. Cancel the returned subscription to\n", name, name)
+	fmt.Fprintf(
+		&b,
+		"// On%s subscribes fn to %s. Cancel the returned subscription to\n",
+		name,
+		name,
+	)
 	b.WriteString("// stop receiving events.\n")
-	fmt.Fprintf(&b, "func On%s(bus *evt.Bus, fn func(ctx *evt.Context, e %s) error) *evt.Subscription[%s] {\n", name, name, name)
+	fmt.Fprintf(
+		&b,
+		"func On%s(bus *evt.Bus, fn func(ctx *evt.Context, e %s) error) *evt.Subscription[%s] {\n",
+		name,
+		name,
+		name,
+	)
 	fmt.Fprintf(&b, "\treturn evt.OnTypeBus[%s](bus, fn)\n}\n", name)
 
 	if err := writeGeneratedGoFile(generatedFile{
@@ -82,7 +93,10 @@ func generateEvent(modulePath, name string, args []string) error {
 		fmt.Sprintf("Import as:    \"%s/events\"", modulePath),
 	}
 	if !hasBlock(featuresFileName, featureMarkerPrefix, "events") {
-		notes = append(notes, "Run `breeze add events` â€” the EventBus this needs is declared by that block.")
+		notes = append(
+			notes,
+			"Run `breeze add events` â€” the EventBus this needs is declared by that block.",
+		)
 	}
 	printNotes(notes)
 	return nil

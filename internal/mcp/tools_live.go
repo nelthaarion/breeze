@@ -196,12 +196,15 @@ func getRoutes(a liveArgs) toolCallResult {
 	// a healthy service as dead code, so the tool says it rather than leaving
 	// the caller to infer it.
 	if report.Total > 0 && report.Exercised == 0 {
-		report.Notes = append(report.Notes, "Every route reports zero requests. That may mean no traffic, "+
-			"but per-route statistics are only accumulated for requests the dashboard captures in full — "+
-			"those served while someone has the dashboard open, those slower than the configured "+
-			"slow_request_ms, and those that failed. Fast successful requests served with nobody watching "+
-			"are counted in the totals but not attributed to a route. Treat zero here as 'not measured', "+
-			"not as 'never called'.")
+		report.Notes = append(
+			report.Notes,
+			"Every route reports zero requests. That may mean no traffic, "+
+				"but per-route statistics are only accumulated for requests the dashboard captures in full — "+
+				"those served while someone has the dashboard open, those slower than the configured "+
+				"slow_request_ms, and those that failed. Fast successful requests served with nobody watching "+
+				"are counted in the totals but not attributed to a route. Treat zero here as 'not measured', "+
+				"not as 'never called'.",
+		)
 	}
 
 	// Slowest first — the ordering someone asking about performance wants.
@@ -221,8 +224,14 @@ func getRoutes(a liveArgs) toolCallResult {
 			undocumented, report.Total))
 	}
 
-	summary := fmt.Sprintf("%d route(s): %d exercised, %d never called, %d with errors, %d documented",
-		report.Total, report.Exercised, report.Unused, report.WithErrors, report.Documented)
+	summary := fmt.Sprintf(
+		"%d route(s): %d exercised, %d never called, %d with errors, %d documented",
+		report.Total,
+		report.Exercised,
+		report.Unused,
+		report.WithErrors,
+		report.Documented,
+	)
 	return structuredResult(summary, report)
 }
 
@@ -323,7 +332,8 @@ func getPerformance(a liveArgs) toolCallResult {
 		report.Observations = append(report.Observations, fmt.Sprintf(
 			"%d goroutines is high. If this climbs between calls, something is starting goroutines "+
 				"per request without letting them finish — a blocking call in a handler is the usual cause.",
-			cur.Goroutines))
+			cur.Goroutines,
+		))
 	}
 	if cur.GC.CPUFraction > 0.10 {
 		report.Observations = append(report.Observations, fmt.Sprintf(
@@ -340,12 +350,21 @@ func getPerformance(a liveArgs) toolCallResult {
 		if first > 0 && last > first*2 {
 			report.Observations = append(report.Observations, fmt.Sprintf(
 				"Goroutines grew from %d to %d across the sampled history, which is the shape of a leak "+
-					"rather than of load.", first, last))
+					"rather than of load.",
+				first,
+				last,
+			))
 		}
 	}
 
-	summary := fmt.Sprintf("%d goroutines, heap %s, GC %d cycles (%.1f%% CPU), %d history point(s)",
-		cur.Goroutines, diag.HumanBytes(cur.Heap.Alloc), cur.GC.NumGC, cur.GC.CPUFraction*100, len(env.History))
+	summary := fmt.Sprintf(
+		"%d goroutines, heap %s, GC %d cycles (%.1f%% CPU), %d history point(s)",
+		cur.Goroutines,
+		diag.HumanBytes(cur.Heap.Alloc),
+		cur.GC.NumGC,
+		cur.GC.CPUFraction*100,
+		len(env.History),
+	)
 	return structuredResult(summary, report)
 }
 
@@ -410,7 +429,7 @@ func getRecentErrors(a recentErrorsArgs) toolCallResult {
 	// cannot express "anything that failed". Scanning the request log and
 	// filtering here is one call instead of several, and the scanned count is
 	// reported so the caller knows the denominator.
-	req := a.liveArgs.request("/requests", "dashboard")
+	req := a.request("/requests", "dashboard")
 	if a.Limit > 0 {
 		req.path += "?limit=" + fmt.Sprint(a.Limit)
 	}
@@ -450,9 +469,12 @@ func getRecentErrors(a recentErrorsArgs) toolCallResult {
 	report.Count = len(report.Errors)
 
 	if report.Scanned == 0 {
-		report.Notes = append(report.Notes, "The service has recorded no requests at all, so this is not "+
-			"evidence that it is error-free. Check that the dashboard middleware is installed and that "+
-			"traffic has reached the service.")
+		report.Notes = append(
+			report.Notes,
+			"The service has recorded no requests at all, so this is not "+
+				"evidence that it is error-free. Check that the dashboard middleware is installed and that "+
+				"traffic has reached the service.",
+		)
 	}
 
 	summary := fmt.Sprintf("%d failed request(s) out of %d scanned: %d server-side, %d client-side",
@@ -497,10 +519,14 @@ func getLogsTool() *tool {
 			"across a Fleet trace. Levels are app, http, error, panic, and warning. Requires the " +
 			"dashboard feature; this endpoint also accepts the service token.",
 		schema: objectSchema(liveProps(map[string]any{
-			"level": stringProp("Log level to read: app (default), http, error, panic, or warning."),
+			"level": stringProp(
+				"Log level to read: app (default), http, error, panic, or warning.",
+			),
 			"query": stringProp("Case-insensitive substring to match against the message."),
-			"trace_id": stringProp("Return only lines carrying this trace id — the lines belonging " +
-				"to one request."),
+			"trace_id": stringProp(
+				"Return only lines carrying this trace id — the lines belonging " +
+					"to one request.",
+			),
 			"limit": map[string]any{
 				"type":        "integer",
 				"description": "Maximum lines to read. Defaults to 500, the dashboard's own default.",
@@ -538,7 +564,7 @@ func getLogs(a logsArgs) toolCallResult {
 		query.Set("trace_id", id)
 	}
 
-	req := a.liveArgs.request("/logs", "dashboard")
+	req := a.request("/logs", "dashboard")
 	req.path += "?" + query.Encode()
 
 	var entries []liveLogEntry
@@ -721,16 +747,28 @@ func queryOpenAPI(a openAPIArgs) toolCallResult {
 	sort.Strings(report.SchemaNames)
 
 	if report.OpenAPI == "" {
-		report.Notes = append(report.Notes, "The document has no openapi version field, so it may not be "+
-			"an OpenAPI document at all. Check that spec_path points at the spec and not at the docs UI.")
+		report.Notes = append(
+			report.Notes,
+			"The document has no openapi version field, so it may not be "+
+				"an OpenAPI document at all. Check that spec_path points at the spec and not at the docs UI.",
+		)
 	}
 	if len(report.Operations) == 0 {
-		report.Notes = append(report.Notes, "The document declares no operations. Routes appear in the spec "+
-			"once they are registered with the docs middleware; a route added by hand without it "+
-			"will be served but undocumented.")
+		report.Notes = append(
+			report.Notes,
+			"The document declares no operations. Routes appear in the spec "+
+				"once they are registered with the docs middleware; a route added by hand without it "+
+				"will be served but undocumented.",
+		)
 	}
 
-	summary := fmt.Sprintf("%s %s: %d operation(s) across %d path(s), %d schema(s)",
-		report.Title, report.Version, len(report.Operations), report.PathCount, len(report.SchemaNames))
+	summary := fmt.Sprintf(
+		"%s %s: %d operation(s) across %d path(s), %d schema(s)",
+		report.Title,
+		report.Version,
+		len(report.Operations),
+		report.PathCount,
+		len(report.SchemaNames),
+	)
 	return structuredResult(summary, report)
 }

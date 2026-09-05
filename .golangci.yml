@@ -44,4 +44,9 @@ linters:
 
 formatters:
   enable:
+    - gofumpt
+    - goimports
+    - golines
+    - swaggo
+    - gci
     - gofmt

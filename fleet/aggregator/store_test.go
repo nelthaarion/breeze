@@ -122,7 +122,10 @@ func TestStoreRejectsInvalidSpans(t *testing.T) {
 		{TraceID: "", SpanID: sid("b")},
 		{TraceID: tid("a"), SpanID: ""},
 		{TraceID: "tooshort", SpanID: sid("b")},
-		{TraceID: strings.Repeat("0", 32), SpanID: sid("b")}, // all-zero: a broken propagation layer
+		{
+			TraceID: strings.Repeat("0", 32),
+			SpanID:  sid("b"),
+		}, // all-zero: a broken propagation layer
 		{TraceID: strings.Repeat("A", 32), SpanID: sid("b")}, // uppercase: not the wire format
 		{TraceID: strings.Repeat("z", 32), SpanID: sid("b")}, // not hex at all
 		{TraceID: tid("a"), SpanID: strings.Repeat("0", 16)}, // all-zero span id
@@ -299,11 +302,18 @@ func TestRecentRootServiceIsTheEntryPointNotTheFirstReporter(t *testing.T) {
 			t.Fatalf("arrival %v: got %d rows, want 1", serviceOrder(arrival), len(got))
 		}
 		if got[0].RootService != "gateway" {
-			t.Errorf("arrival %v: root service = %q, want gateway — arrival order must not decide the entry point",
-				serviceOrder(arrival), got[0].RootService)
+			t.Errorf(
+				"arrival %v: root service = %q, want gateway — arrival order must not decide the entry point",
+				serviceOrder(arrival),
+				got[0].RootService,
+			)
 		}
 		if got[0].Route != "/gateway" {
-			t.Errorf("arrival %v: route = %q, want the entry point's route", serviceOrder(arrival), got[0].Route)
+			t.Errorf(
+				"arrival %v: route = %q, want the entry point's route",
+				serviceOrder(arrival),
+				got[0].Route,
+			)
 		}
 	}
 }
@@ -329,7 +339,10 @@ func TestRecentRootServiceFallsBackWhenNoRootReported(t *testing.T) {
 		t.Fatalf("got %d rows, want 1", len(got))
 	}
 	if got[0].RootService != "auth" {
-		t.Errorf("root service = %q, want auth — the earliest span when no entry point reported", got[0].RootService)
+		t.Errorf(
+			"root service = %q, want auth — the earliest span when no entry point reported",
+			got[0].RootService,
+		)
 	}
 }
 
@@ -342,7 +355,6 @@ func serviceOrder(spans []fleet.Span) []string {
 }
 
 func TestRecentFilters(t *testing.T) {
-
 	s := testStore(t, Config{})
 	now := time.Now()
 
@@ -352,7 +364,10 @@ func TestRecentFilters(t *testing.T) {
 	slow.DurationMs = 500
 	s.Add(slow, now)
 
-	if got := s.Recent(TraceQuery{Service: "orders"}); len(got) != 1 || got[0].RootService != "orders" {
+	if got := s.Recent(
+		TraceQuery{Service: "orders"},
+	); len(got) != 1 ||
+		got[0].RootService != "orders" {
 		t.Errorf("service filter returned %+v", got)
 	}
 	if got := s.Recent(TraceQuery{Status: 500}); len(got) != 1 {
@@ -436,7 +451,10 @@ func TestTagIndexShrinksWithEviction(t *testing.T) {
 	ms.tagMu.Unlock()
 
 	if indexed > 5 {
-		t.Errorf("tag index holds %d keys for 5 retained traces — it outlives the traces it points at", indexed)
+		t.Errorf(
+			"tag index holds %d keys for 5 retained traces — it outlives the traces it points at",
+			indexed,
+		)
 	}
 	// An evicted trace's tag must no longer resolve, or the index would serve
 	// ids that no longer exist.
@@ -518,6 +536,9 @@ func TestStoreStaysBoundedUnderSustainedLoad(t *testing.T) {
 		t.Errorf("spans = %d, hard ceiling is %d", st.Spans, max)
 	}
 	if st.SpansRejected != 0 {
-		t.Fatalf("%d spans were rejected as invalid — the test's own ids are malformed, so it proves nothing", st.SpansRejected)
+		t.Fatalf(
+			"%d spans were rejected as invalid — the test's own ids are malformed, so it proves nothing",
+			st.SpansRejected,
+		)
 	}
 }

@@ -77,7 +77,13 @@ func (l *stderrLogger) LogEvent(ev mcp.Event) {
 	case mcp.EventToolUnknown:
 		fmt.Fprintf(l.out, "%s: tool %s unknown\n", l.name, ev.Tool)
 	case mcp.EventToolRefused:
-		fmt.Fprintf(l.out, "%s: tool %s refused (needs %s capability)\n", l.name, ev.Tool, ev.Reason)
+		fmt.Fprintf(
+			l.out,
+			"%s: tool %s refused (needs %s capability)\n",
+			l.name,
+			ev.Tool,
+			ev.Reason,
+		)
 	case mcp.EventHandshake:
 		fmt.Fprintf(l.out, "%s: session initialized\n", l.name)
 	case mcp.EventTransportRefusal:

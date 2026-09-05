@@ -164,7 +164,6 @@ func TestMetricsAreKeyedBySourceAndName(t *testing.T) {
 }
 
 func TestMetricForUnknownName(t *testing.T) {
-
 	col := NewCollector(Config{Capacity: 10, Metrics: true})
 	defer col.Close()
 	if m := col.MetricFor("never.published"); m != nil {

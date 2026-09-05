@@ -325,7 +325,10 @@ func TestTracerRequeuesOnExportFailure(t *testing.T) {
 		t.Errorf("SpansExported = %d, want 0", m.SpansExported)
 	}
 	if m.SpansBuffered != 2 {
-		t.Errorf("SpansBuffered = %d, want 2 — failed spans must be requeued, not dropped", m.SpansBuffered)
+		t.Errorf(
+			"SpansBuffered = %d, want 2 — failed spans must be requeued, not dropped",
+			m.SpansBuffered,
+		)
 	}
 	if m.SpansDropped != 0 {
 		t.Errorf("SpansDropped = %d, want 0 — failure is not overflow", m.SpansDropped)
@@ -401,7 +404,10 @@ func TestTracerDropsOldestWhenBufferFull(t *testing.T) {
 		t.Errorf("SpansDropped = %d, want 92", m.SpansDropped)
 	}
 	if m.SpansRecorded != 100 {
-		t.Errorf("SpansRecorded = %d, want 100 — dropping must not hide that a span happened", m.SpansRecorded)
+		t.Errorf(
+			"SpansRecorded = %d, want 100 — dropping must not hide that a span happened",
+			m.SpansRecorded,
+		)
 	}
 }
 

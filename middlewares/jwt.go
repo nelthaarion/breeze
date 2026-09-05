@@ -217,7 +217,12 @@ func validateJWT(tokenString, secret string, method jwt.SigningMethod) (jwt.MapC
 }
 
 // GenerateJWT generates a new JWT token.
-func GenerateJWT(secret string, claims jwt.MapClaims, duration time.Duration, method jwt.SigningMethod) (string, error) {
+func GenerateJWT(
+	secret string,
+	claims jwt.MapClaims,
+	duration time.Duration,
+	method jwt.SigningMethod,
+) (string, error) {
 	if method == nil {
 		method = jwt.SigningMethodHS256
 	}
@@ -230,7 +235,12 @@ func GenerateJWT(secret string, claims jwt.MapClaims, duration time.Duration, me
 }
 
 // GenerateRefreshToken generates a refresh token.
-func GenerateRefreshToken(secret string, claims jwt.MapClaims, duration time.Duration, method jwt.SigningMethod) (string, error) {
+func GenerateRefreshToken(
+	secret string,
+	claims jwt.MapClaims,
+	duration time.Duration,
+	method jwt.SigningMethod,
+) (string, error) {
 	if method == nil {
 		method = jwt.SigningMethodHS256
 	}

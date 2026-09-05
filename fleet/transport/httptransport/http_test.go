@@ -224,7 +224,12 @@ func TestExportErrorClassification(t *testing.T) {
 			continue
 		}
 		if ee.Permanent() != tc.wantPermanent {
-			t.Errorf("status %d: Permanent() = %v, want %v", tc.status, ee.Permanent(), tc.wantPermanent)
+			t.Errorf(
+				"status %d: Permanent() = %v, want %v",
+				tc.status,
+				ee.Permanent(),
+				tc.wantPermanent,
+			)
 		}
 	}
 }

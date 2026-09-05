@@ -46,7 +46,12 @@ func NewViolationStore(max int, window time.Duration) *ViolationStore {
 	if window <= 0 {
 		window = time.Minute
 	}
-	return &ViolationStore{max: max, window: window, groups: make([]Group, max), byKey: make(map[string]int, max)}
+	return &ViolationStore{
+		max:    max,
+		window: window,
+		groups: make([]Group, max),
+		byKey:  make(map[string]int, max),
+	}
 }
 
 func violationKey(v Violation) string {

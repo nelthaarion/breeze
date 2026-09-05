@@ -319,7 +319,8 @@ func (g *TopologyGraph) Observe(span fleet.Span, parentService string, now time.
 }
 
 func (g *TopologyGraph) MarkEdgeSeen(span fleet.Span, parentService string, now time.Time) {
-	if span.TraceID == "" || span.SpanID == "" || parentService == "" || parentService == span.Service {
+	if span.TraceID == "" || span.SpanID == "" || parentService == "" ||
+		parentService == span.Service {
 		return
 	}
 	g.mu.Lock()
@@ -433,7 +434,10 @@ func (g *TopologyGraph) Snapshot() Topology {
 		top.Edges = append(top.Edges, edge)
 	}
 
-	sort.Slice(top.Nodes, func(i, j int) bool { return top.Nodes[i].Service < top.Nodes[j].Service })
+	sort.Slice(
+		top.Nodes,
+		func(i, j int) bool { return top.Nodes[i].Service < top.Nodes[j].Service },
+	)
 	sort.Slice(top.Edges, func(i, j int) bool {
 		if top.Edges[i].Caller != top.Edges[j].Caller {
 			return top.Edges[i].Caller < top.Edges[j].Caller
@@ -509,7 +513,10 @@ func (g *TopologyGraph) WindowedErrorRate(service string, now time.Time) (float6
 }
 
 // EdgeWindowedErrorRate is WindowedErrorRate for one caller→callee pair.
-func (g *TopologyGraph) EdgeWindowedErrorRate(caller, callee string, now time.Time) (float64, uint64) {
+func (g *TopologyGraph) EdgeWindowedErrorRate(
+	caller, callee string,
+	now time.Time,
+) (float64, uint64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 

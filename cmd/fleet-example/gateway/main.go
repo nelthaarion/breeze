@@ -80,7 +80,12 @@ func main() {
 
 		req, err := http.NewRequest(http.MethodGet, authURL+"/internal/auth/"+id, nil)
 		if err != nil {
-			coll.PushLogCtx(ctx, "error", "gateway could not build the auth request: "+err.Error(), "app")
+			coll.PushLogCtx(
+				ctx,
+				"error",
+				"gateway could not build the auth request: "+err.Error(),
+				"app",
+			)
 
 			ctx.Status(500)
 			return ctx.JSON(map[string]string{"error": "internal error"})
@@ -91,7 +96,12 @@ func main() {
 		// auth would start a brand-new trace instead of joining this one.
 		resp, err := fleet.WrapClient(http.DefaultClient, ctx).Do(req)
 		if err != nil {
-			coll.PushLogCtx(ctx, "error", "gateway could not reach auth-service: "+err.Error(), "app")
+			coll.PushLogCtx(
+				ctx,
+				"error",
+				"gateway could not reach auth-service: "+err.Error(),
+				"app",
+			)
 
 			ctx.Status(502)
 			return ctx.JSON(map[string]string{"error": err.Error()})
@@ -100,7 +110,12 @@ func main() {
 
 		var result any
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			coll.PushLogCtx(ctx, "error", "gateway got an undecodable auth response: "+err.Error(), "app")
+			coll.PushLogCtx(
+				ctx,
+				"error",
+				"gateway got an undecodable auth response: "+err.Error(),
+				"app",
+			)
 
 			ctx.Status(502)
 			return ctx.JSON(map[string]string{"error": "invalid downstream response"})
@@ -111,11 +126,15 @@ func main() {
 		// gateway that swallowed a 500 would hide the cascade it is meant to
 		// illustrate.
 		if resp.StatusCode >= 500 {
-			coll.PushLogCtx(ctx, "error", "gateway saw auth-service fail with "+strconv.Itoa(resp.StatusCode), "app")
+			coll.PushLogCtx(
+				ctx,
+				"error",
+				"gateway saw auth-service fail with "+strconv.Itoa(resp.StatusCode),
+				"app",
+			)
 			ctx.Status(resp.StatusCode)
 		} else {
 			coll.PushLogCtx(ctx, "info", "gateway completed order "+id, "app")
-
 		}
 		return ctx.JSON(map[string]any{"order_id": id, "result": result})
 	})
@@ -199,7 +218,11 @@ func skipUntraced(traced breeze.HandlerFunc) breeze.HandlerFunc {
 	}
 }
 
-func newTracer(service string, log func(string, string, string), router *breeze.Router) *fleet.Tracer {
+func newTracer(
+	service string,
+	log func(string, string, string),
+	router *breeze.Router,
+) *fleet.Tracer {
 	return fleet.New(fleet.TracerConfig{
 		Enabled:       true,
 		ServiceName:   service,

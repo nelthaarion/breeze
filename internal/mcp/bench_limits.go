@@ -83,7 +83,12 @@ func validateBenchArg(field, value string) error {
 			"program that runs the compiled tests", field, value)
 	}
 	if len(value) > maxBenchArgLength {
-		return fmt.Errorf("%s is %d characters; the limit is %d", field, len(value), maxBenchArgLength)
+		return fmt.Errorf(
+			"%s is %d characters; the limit is %d",
+			field,
+			len(value),
+			maxBenchArgLength,
+		)
 	}
 	if !benchArgPattern.MatchString(value) {
 		return fmt.Errorf("%s %q contains characters that are not part of a benchmark pattern; "+
@@ -101,7 +106,10 @@ var benchtimeIterations = regexp.MustCompile(`^([0-9]+)x$`)
 // a caller to the other with the same intent and no limit.
 func validateBenchtime(value string) error {
 	if strings.HasPrefix(value, "-") {
-		return fmt.Errorf("benchtime %q begins with a dash, so `go test` would read it as a flag", value)
+		return fmt.Errorf(
+			"benchtime %q begins with a dash, so `go test` would read it as a flag",
+			value,
+		)
 	}
 
 	if m := benchtimeIterations.FindStringSubmatch(value); m != nil {

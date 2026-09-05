@@ -191,7 +191,9 @@ func (d LLMSDoc) LLMS() []byte {
 		}
 	}
 
-	b.WriteString("\nSee llms-full.txt for request and response shapes and the framework conventions.\n")
+	b.WriteString(
+		"\nSee llms-full.txt for request and response shapes and the framework conventions.\n",
+	)
 	d.writeNotes(&b)
 	return stamped(b.String())
 }

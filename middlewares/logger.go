@@ -23,7 +23,14 @@ func LoggingMiddleware() breeze.HandlerFunc {
 		if ctx.Res != nil {
 			status = ctx.Res.Status
 		}
-		fmt.Printf("[Breeze][%s] %s %s -> %d (%v)\n", start.Format(time.RFC3339), method, path, status, time.Since(start))
+		fmt.Printf(
+			"[Breeze][%s] %s %s -> %d (%v)\n",
+			start.Format(time.RFC3339),
+			method,
+			path,
+			status,
+			time.Since(start),
+		)
 
 		// Counted after the line is printed, so the count is of lines actually
 		// emitted rather than of requests that reached this middleware.

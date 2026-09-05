@@ -218,7 +218,10 @@ func New(cfg TracerConfig) *Tracer {
 			// Enabled-but-unusable is worth saying out loud: this is
 			// someone who meant to turn tracing on and will otherwise
 			// spend a while wondering why no spans appear.
-			t.logf("warn", "fleet tracing enabled but inactive: service_name and aggregator_url are both required")
+			t.logf(
+				"warn",
+				"fleet tracing enabled but inactive: service_name and aggregator_url are both required",
+			)
 		}
 		// Registered even though inactive: this tracer's report is the answer to
 		// "why are there no traces", and it is the only place that is stated.
@@ -341,7 +344,10 @@ func (t *Tracer) run() {
 				// otherwise fill the log ring buffer with the
 				// same line and evict the logs someone actually
 				// needs.
-				t.logf("warn", "fleet span export failed, retrying in "+backoff.String()+": "+err.Error())
+				t.logf(
+					"warn",
+					"fleet span export failed, retrying in "+backoff.String()+": "+err.Error(),
+				)
 				continue
 			}
 			backoff = 0

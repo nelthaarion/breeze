@@ -75,7 +75,10 @@ func parseRoutes(fileName string) ([]routeEntry, error) {
 	src, err := os.ReadFile(fileName)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%s not found â€” run this from a project root, after `breeze generate`", fileName)
+			return nil, fmt.Errorf(
+				"%s not found â€” run this from a project root, after `breeze generate`",
+				fileName,
+			)
 		}
 		return nil, err
 	}
@@ -219,7 +222,10 @@ func blockAtLine(ranges []markerRange, line int) string {
 
 func printRouteTable(routes []routeEntry, fileName string) {
 	if len(routes) == 0 {
-		fmt.Printf("No routes in %s.\n\nGenerate some with:\n  breeze generate resource User name:string email:string\n", fileName)
+		fmt.Printf(
+			"No routes in %s.\n\nGenerate some with:\n  breeze generate resource User name:string email:string\n",
+			fileName,
+		)
 		return
 	}
 

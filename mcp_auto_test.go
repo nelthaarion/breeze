@@ -43,7 +43,7 @@ const (
 )
 
 type orderBody struct {
-	SKU string `json:"sku" description:"Stock keeping unit to order."`
+	SKU string `json:"sku"           description:"Stock keeping unit to order."`
 	Qty int    `json:"qty,omitempty" description:"How many; defaults to one."`
 }
 
@@ -249,7 +249,12 @@ type callResult struct {
 	IsError bool `json:"isError"`
 }
 
-func callTool(t *testing.T, srv *rpc.Server, name string, args map[string]any) (callResult, *rpcReply) {
+func callTool(
+	t *testing.T,
+	srv *rpc.Server,
+	name string,
+	args map[string]any,
+) (callResult, *rpcReply) {
 	t.Helper()
 	params := map[string]any{"name": name}
 	if args != nil {
@@ -316,7 +321,11 @@ func TestUntaggedRoutesAreNeverExposedAsTools(t *testing.T) {
 		}
 	}
 	if len(tools) != 4 {
-		t.Errorf("tool count = %d, want 4; an untagged route may have leaked in: %v", len(tools), keysOfTools(tools))
+		t.Errorf(
+			"tool count = %d, want 4; an untagged route may have leaked in: %v",
+			len(tools),
+			keysOfTools(tools),
+		)
 	}
 
 	// And it cannot be reached by guessing a name either.
@@ -385,14 +394,26 @@ func TestToolSchemaMatchesTheOpenAPIDocument(t *testing.T) {
 			for _, param := range op.Parameters {
 				prop, ok := schema.Properties[param.Name]
 				if !ok {
-					t.Errorf("OpenAPI declares %s parameter %q, which the tool does not accept", param.In, param.Name)
+					t.Errorf(
+						"OpenAPI declares %s parameter %q, which the tool does not accept",
+						param.In,
+						param.Name,
+					)
 					continue
 				}
 				if param.Schema != nil && prop.Type != param.Schema.Type {
-					t.Errorf("parameter %q: tool type %q, OpenAPI type %q", param.Name, prop.Type, param.Schema.Type)
+					t.Errorf(
+						"parameter %q: tool type %q, OpenAPI type %q",
+						param.Name,
+						prop.Type,
+						param.Schema.Type,
+					)
 				}
 				if param.In == "path" && !contains(schema.Required, param.Name) {
-					t.Errorf("path parameter %q is not required by the tool, but a URL cannot be built without it", param.Name)
+					t.Errorf(
+						"path parameter %q is not required by the tool, but a URL cannot be built without it",
+						param.Name,
+					)
 				}
 			}
 
@@ -405,21 +426,37 @@ func TestToolSchemaMatchesTheOpenAPIDocument(t *testing.T) {
 				for field, want := range media.Schema.Properties {
 					prop, ok := schema.Properties[field]
 					if !ok {
-						t.Errorf("OpenAPI declares body field %q, which the tool does not accept", field)
+						t.Errorf(
+							"OpenAPI declares body field %q, which the tool does not accept",
+							field,
+						)
 						continue
 					}
 					if prop.Type != want.Type {
-						t.Errorf("body field %q: tool type %q, OpenAPI type %q", field, prop.Type, want.Type)
+						t.Errorf(
+							"body field %q: tool type %q, OpenAPI type %q",
+							field,
+							prop.Type,
+							want.Type,
+						)
 					}
 					// The description is the sentence the model reads to decide
 					// what to put here. Losing it is a silent downgrade.
 					if want.Description != "" && prop.Description != want.Description {
-						t.Errorf("body field %q description: tool %q, OpenAPI %q", field, prop.Description, want.Description)
+						t.Errorf(
+							"body field %q description: tool %q, OpenAPI %q",
+							field,
+							prop.Description,
+							want.Description,
+						)
 					}
 				}
 				for _, field := range media.Schema.Required {
 					if !contains(schema.Required, field) {
-						t.Errorf("body field %q is required by OpenAPI but optional in the tool", field)
+						t.Errorf(
+							"body field %q is required by OpenAPI but optional in the tool",
+							field,
+						)
 					}
 				}
 			}
@@ -480,7 +517,14 @@ func contains(list []string, want string) bool {
 // OnTraffic does with one. Ignoring it here would make the reference disagree
 // with the real HTTP path for exactly the routes that fail — the case the
 // comparison is most needed for.
-func runHTTP(t *testing.T, r *Router, method Method, path string, headers map[string]string, body []byte) (int, string) {
+func runHTTP(
+	t *testing.T,
+	r *Router,
+	method Method,
+	path string,
+	headers map[string]string,
+	body []byte,
+) (int, string) {
 	t.Helper()
 	req := &HTTPRequest{Method: method, Path: path, Header: map[string]string{}, Body: body}
 	for k, v := range headers {
@@ -520,8 +564,11 @@ func TestToolCallIsRefusedExactlyAsHTTPWouldRefuseIt(t *testing.T) {
 	t.Run("without credentials", func(t *testing.T) {
 		result, rpcErr := callTool(t, srv, "create_order", map[string]any{"sku": "ABC-1"})
 		if rpcErr != nil {
-			t.Fatalf("refusal arrived as a protocol error (%d %s); a refused call is a result, not a broken tool",
-				rpcErr.Error.Code, rpcErr.Error.Message)
+			t.Fatalf(
+				"refusal arrived as a protocol error (%d %s); a refused call is a result, not a broken tool",
+				rpcErr.Error.Code,
+				rpcErr.Error.Message,
+			)
 		}
 		if result.StructuredContent.Status != 401 {
 			t.Errorf("status = %d, want 401", result.StructuredContent.Status)
@@ -573,15 +620,35 @@ func TestCredentialsTravelWhenTheRouteDeclaresTheHeader(t *testing.T) {
 		t.Fatalf("tools/call failed: %d %s", rpcErr.Error.Code, rpcErr.Error.Message)
 	}
 	if result.StructuredContent.Status != 200 {
-		t.Fatalf("status = %d, want 200 (body %q)", result.StructuredContent.Status, result.StructuredContent.Body)
+		t.Fatalf(
+			"status = %d, want 200 (body %q)",
+			result.StructuredContent.Status,
+			result.StructuredContent.Body,
+		)
 	}
 	if got := result.StructuredContent.JSONBody["tenant"]; got != "acme" {
-		t.Errorf("tenant = %v, want acme; the header did not reach the handler under the key it reads", got)
+		t.Errorf(
+			"tenant = %v, want acme; the header did not reach the handler under the key it reads",
+			got,
+		)
 	}
 
-	wantStatus, wantBody := runHTTP(t, router, GET, pathTenant, map[string]string{"X-Tenant": "acme"}, nil)
+	wantStatus, wantBody := runHTTP(
+		t,
+		router,
+		GET,
+		pathTenant,
+		map[string]string{"X-Tenant": "acme"},
+		nil,
+	)
 	if result.StructuredContent.Status != wantStatus || result.StructuredContent.Body != wantBody {
-		t.Errorf("MCP %d %q, HTTP %d %q", result.StructuredContent.Status, result.StructuredContent.Body, wantStatus, wantBody)
+		t.Errorf(
+			"MCP %d %q, HTTP %d %q",
+			result.StructuredContent.Status,
+			result.StructuredContent.Body,
+			wantStatus,
+			wantBody,
+		)
 	}
 }
 
@@ -590,7 +657,12 @@ func TestArgumentsArriveWhereTheSchemaSaidTheyWould(t *testing.T) {
 	_, router := mcpFixture(t)
 
 	t.Run("path and query", func(t *testing.T) {
-		result, rpcErr := callTool(t, srv, "get_order", map[string]any{"id": "42", "expand": "items"})
+		result, rpcErr := callTool(
+			t,
+			srv,
+			"get_order",
+			map[string]any{"id": "42", "expand": "items"},
+		)
 		if rpcErr != nil {
 			t.Fatalf("tools/call failed: %d %s", rpcErr.Error.Code, rpcErr.Error.Message)
 		}
@@ -601,7 +673,10 @@ func TestArgumentsArriveWhereTheSchemaSaidTheyWould(t *testing.T) {
 			t.Errorf("id = %v, want 42", got)
 		}
 		if got := result.StructuredContent.JSONBody["expand"]; got != "items" {
-			t.Errorf("expand = %v, want items; a query argument did not reach the query string", got)
+			t.Errorf(
+				"expand = %v, want items; a query argument did not reach the query string",
+				got,
+			)
 		}
 		if result.StructuredContent.Route != pathOrderID {
 			t.Errorf("route = %q, want the pattern %q", result.StructuredContent.Route, pathOrderID)
@@ -625,7 +700,9 @@ func TestArgumentsArriveWhereTheSchemaSaidTheyWould(t *testing.T) {
 	t.Run("a missing path argument is refused before any request is made", func(t *testing.T) {
 		_, rpcErr := callTool(t, srv, "get_order", map[string]any{"expand": "items"})
 		if rpcErr == nil {
-			t.Fatal("a call with no id produced a request; the path would have contained a literal :id")
+			t.Fatal(
+				"a call with no id produced a request; the path would have contained a literal :id",
+			)
 		}
 		if !strings.Contains(rpcErr.Error.Message, "id") {
 			t.Errorf("error does not name the missing argument: %q", rpcErr.Error.Message)
@@ -667,8 +744,11 @@ func TestAReturnedErrorReachesTheAgentAsTheSameFailureHTTPWouldSee(t *testing.T)
 
 	result, rpcErr := callTool(t, srv, "check_pricing", nil)
 	if rpcErr != nil {
-		t.Fatalf("a handler's returned error arrived as a protocol error (%d %s); the route was called, so this is a failed call and not a broken tool",
-			rpcErr.Error.Code, rpcErr.Error.Message)
+		t.Fatalf(
+			"a handler's returned error arrived as a protocol error (%d %s); the route was called, so this is a failed call and not a broken tool",
+			rpcErr.Error.Code,
+			rpcErr.Error.Message,
+		)
 	}
 
 	if result.StructuredContent.Status != 503 {
@@ -680,18 +760,27 @@ func TestAReturnedErrorReachesTheAgentAsTheSameFailureHTTPWouldSee(t *testing.T)
 	}
 	// The message the handler chose for a client to read.
 	if !strings.Contains(result.StructuredContent.Body, "pricing service is unavailable") {
-		t.Errorf("the handler's message is missing from the body: %q", result.StructuredContent.Body)
+		t.Errorf(
+			"the handler's message is missing from the body: %q",
+			result.StructuredContent.Body,
+		)
 	}
 	// The wrapped cause is not in the body, exactly as over HTTP: WrapHTTPError's two
 	// fields exist to keep the internal address out of the response.
 	if strings.Contains(result.StructuredContent.Body, "10.0.0.7") {
-		t.Errorf("the wrapped cause leaked into the response body: %q", result.StructuredContent.Body)
+		t.Errorf(
+			"the wrapped cause leaked into the response body: %q",
+			result.StructuredContent.Body,
+		)
 	}
 	// It is reported out of band instead. Without this an operator debugging their own
 	// agent has a 503 and no way to learn why, which is the failure the field exists
 	// to prevent.
 	if !strings.Contains(result.StructuredContent.HandlerError, "10.0.0.7") {
-		t.Errorf("handler_error does not carry the cause: %q", result.StructuredContent.HandlerError)
+		t.Errorf(
+			"handler_error does not carry the cause: %q",
+			result.StructuredContent.HandlerError,
+		)
 	}
 
 	// The parity check. Same route, same chain, same error handler.
@@ -739,7 +828,11 @@ func TestTheTagIsNotAStepInTheChain(t *testing.T) {
 		t.Fatalf("MCPRoutes returned %d routes, want 2", len(exposed))
 	}
 	if exposed[0].Pattern() != "/tagged" || exposed[1].Pattern() != "/tag-only" {
-		t.Errorf("MCPRoutes = %q, %q; want /tagged, /tag-only", exposed[0].Pattern(), exposed[1].Pattern())
+		t.Errorf(
+			"MCPRoutes = %q, %q; want /tagged, /tag-only",
+			exposed[0].Pattern(),
+			exposed[1].Pattern(),
+		)
 	}
 }
 
@@ -747,7 +840,12 @@ func TestTheTagIsNotAStepInTheChain(t *testing.T) {
 // through the chain the route ends up with, not the one it had when tagged.
 func TestTagsSurviveAGlobalMiddlewareAddedLater(t *testing.T) {
 	r := NewRouter()
-	r.Handle(GET, "/late", func(ctx *Context) error { return ctx.WriteString("handler") }, MCPTool("late", "late"))
+	r.Handle(
+		GET,
+		"/late",
+		func(ctx *Context) error { return ctx.WriteString("handler") },
+		MCPTool("late", "late"),
+	)
 
 	seen := false
 	r.Use(func(ctx *Context) error {
@@ -802,7 +900,9 @@ func TestMisdescribedToolsAreRejectedAtStartup(t *testing.T) {
 		app := &Breeze{Router: r}
 		_, err := app.MCPServer()
 		if err == nil {
-			t.Fatal("a tagged route with no documentation was exposed; its arguments would be unknown")
+			t.Fatal(
+				"a tagged route with no documentation was exposed; its arguments would be unknown",
+			)
 		}
 		if !strings.Contains(err.Error(), "Scalar documentation") {
 			t.Errorf("error does not explain what is missing: %v", err)
@@ -846,7 +946,11 @@ func TestOpenAPIPatternAgreesWithScalar(t *testing.T) {
 		}
 		key := method + " " + openAPIPattern(pattern)
 		if !registered[key] {
-			t.Errorf("openAPIPattern(%q) produced %q, which is not how scalar stored it", pattern, key)
+			t.Errorf(
+				"openAPIPattern(%q) produced %q, which is not how scalar stored it",
+				pattern,
+				key,
+			)
 		}
 	}
 

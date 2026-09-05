@@ -262,7 +262,12 @@ type Context struct {
 // newContext builds the root context for one execution. Every step
 // context is derived from it with withCtx, so they all share one
 // metadata map and one mutex.
-func newContext(ctx context.Context, workflow, executionID, correlationID string, payload any, meta map[string]any) *Context {
+func newContext(
+	ctx context.Context,
+	workflow, executionID, correlationID string,
+	payload any,
+	meta map[string]any,
+) *Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}

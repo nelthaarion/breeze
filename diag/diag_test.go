@@ -31,7 +31,11 @@ func TestRegisterReplacesRatherThanAppends(t *testing.T) {
 
 	got := Snapshot()
 	if len(got) != 1 {
-		t.Fatalf("registering the same name twice produced %d report(s), want 1: %+v", len(got), got)
+		t.Fatalf(
+			"registering the same name twice produced %d report(s), want 1: %+v",
+			len(got),
+			got,
+		)
 	}
 	if got[0].Summary != "second" {
 		t.Errorf("summary = %q, want the last registration to win", got[0].Summary)
@@ -283,7 +287,8 @@ func TestCountersAreOffUntilEnabled(t *testing.T) {
 	if snap.Counting {
 		t.Error("Counting is true with the gate closed")
 	}
-	if snap.Hits != 0 || snap.Misses != 0 || snap.Errors != 0 || snap.Bytes != 0 || snap.BytesSaved != 0 {
+	if snap.Hits != 0 || snap.Misses != 0 || snap.Errors != 0 || snap.Bytes != 0 ||
+		snap.BytesSaved != 0 {
 		t.Errorf("counters moved with the gate closed: %+v", snap)
 	}
 	if snap.Last != "" {
@@ -343,7 +348,10 @@ func TestDisableCountersKeepsWhatWasCounted(t *testing.T) {
 
 	snap := c.Snapshot()
 	if snap.Hits != 1 {
-		t.Errorf("Hits = %d, want the pre-disable count kept and the post-disable one ignored", snap.Hits)
+		t.Errorf(
+			"Hits = %d, want the pre-disable count kept and the post-disable one ignored",
+			snap.Hits,
+		)
 	}
 	if snap.Counting {
 		t.Error("Counting is true after DisableCounters")

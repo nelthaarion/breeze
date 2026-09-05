@@ -122,27 +122,48 @@ func TestYAMLAndFlagParity(t *testing.T) {
 		{
 			name: "server",
 			yaml: "server:\n  host: 1.2.3.4\n  port: 4321\n  multicore: false\n",
-			args: []string{"--server.host=1.2.3.4", "--server.port=4321", "--server.multicore=false"},
+			args: []string{
+				"--server.host=1.2.3.4",
+				"--server.port=4321",
+				"--server.multicore=false",
+			},
 		},
 		{
 			name: "websocket",
 			yaml: "websocket:\n  enabled: true\n  rooms: true\n  path: /socket\n",
-			args: []string{"--websocket.enabled=true", "--websocket.rooms=true", "--websocket.path=/socket"},
+			args: []string{
+				"--websocket.enabled=true",
+				"--websocket.rooms=true",
+				"--websocket.path=/socket",
+			},
 		},
 		{
 			name: "fleet",
 			yaml: "fleet:\n  enabled: true\n  service_name: gateway\n  transport: http\n  sample_rate: 0.5\n",
-			args: []string{"--fleet.enabled=true", "--fleet.service_name=gateway", "--fleet.transport=http", "--fleet.sample_rate=0.5"},
+			args: []string{
+				"--fleet.enabled=true",
+				"--fleet.service_name=gateway",
+				"--fleet.transport=http",
+				"--fleet.sample_rate=0.5",
+			},
 		},
 		{
 			name: "jsonrpc",
 			yaml: "jsonrpc:\n  enabled: true\n  port: 7000\n  methods: [sum, echo]\n",
-			args: []string{"--jsonrpc.enabled=true", "--jsonrpc.port=7000", "--jsonrpc.methods=sum,echo"},
+			args: []string{
+				"--jsonrpc.enabled=true",
+				"--jsonrpc.port=7000",
+				"--jsonrpc.methods=sum,echo",
+			},
 		},
 		{
 			name: "docs",
 			yaml: "docs:\n  enabled: true\n  ui_path: /reference\n  title: My API\n",
-			args: []string{"--docs.enabled=true", "--docs.ui_path=/reference", "--docs.title=My API"},
+			args: []string{
+				"--docs.enabled=true",
+				"--docs.ui_path=/reference",
+				"--docs.title=My API",
+			},
 		},
 		{
 			// The keyed-section case: a flag addresses one element of a
@@ -169,7 +190,11 @@ func TestYAMLAndFlagParity(t *testing.T) {
 			fromFlags := mustLoad(t, "", tc.args...)
 
 			if !reflect.DeepEqual(fromYAML, fromFlags) {
-				t.Errorf("YAML and flags produced different configs\n YAML: %+v\nflags: %+v", fromYAML, fromFlags)
+				t.Errorf(
+					"YAML and flags produced different configs\n YAML: %+v\nflags: %+v",
+					fromYAML,
+					fromFlags,
+				)
 			}
 			// Guard against the test passing because neither path did anything.
 			if reflect.DeepEqual(fromYAML, Defaults()) {
@@ -491,11 +516,16 @@ func TestValidateRejects(t *testing.T) {
 		"port too high": func(c *ProjectConfig) { c.Server.Port = 70000 },
 		"empty host":    func(c *ProjectConfig) { c.Server.Host = "" },
 		"duplicate model": func(c *ProjectConfig) {
-			c.Models = []ModelConfig{{Name: "A", Fields: []FieldConfig{{Name: "x", Type: "int"}}}, {Name: "A", Fields: []FieldConfig{{Name: "y", Type: "int"}}}}
+			c.Models = []ModelConfig{
+				{Name: "A", Fields: []FieldConfig{{Name: "x", Type: "int"}}},
+				{Name: "A", Fields: []FieldConfig{{Name: "y", Type: "int"}}},
+			}
 		},
 		"model with no field": func(c *ProjectConfig) { c.Models = []ModelConfig{{Name: "A"}} },
 		"lowercase model": func(c *ProjectConfig) {
-			c.Models = []ModelConfig{{Name: "order", Fields: []FieldConfig{{Name: "x", Type: "int"}}}}
+			c.Models = []ModelConfig{
+				{Name: "order", Fields: []FieldConfig{{Name: "x", Type: "int"}}},
+			}
 		},
 		"two primary keys": func(c *ProjectConfig) {
 			c.Models = []ModelConfig{{Name: "A", Fields: []FieldConfig{
@@ -504,7 +534,12 @@ func TestValidateRejects(t *testing.T) {
 			}}}
 		},
 		"duplicate field": func(c *ProjectConfig) {
-			c.Models = []ModelConfig{{Name: "A", Fields: []FieldConfig{{Name: "x", Type: "int"}, {Name: "x", Type: "int"}}}}
+			c.Models = []ModelConfig{
+				{
+					Name:   "A",
+					Fields: []FieldConfig{{Name: "x", Type: "int"}, {Name: "x", Type: "int"}},
+				},
+			}
 		},
 		"unknown middleware": func(c *ProjectConfig) { c.Middleware = []MiddlewareConfig{{Name: "not-a-middleware"}} },
 		"bad http method":    func(c *ProjectConfig) { c.Routes = []RouteConfig{{Resource: "u", Methods: []string{"FETCH"}}} },
@@ -571,7 +606,11 @@ func TestUnimplementedFleetTransportIsRefusedWithAClearReason(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "no transport implementation") &&
 			!strings.Contains(err.Error(), "no implementation") {
-			t.Errorf("%s: error reads like a typo rather than a missing feature: %v", transport, err)
+			t.Errorf(
+				"%s: error reads like a typo rather than a missing feature: %v",
+				transport,
+				err,
+			)
 		}
 	}
 
@@ -584,7 +623,11 @@ func TestUnimplementedFleetTransportIsRefusedWithAClearReason(t *testing.T) {
 		cfg.Fleet.Enabled = true
 		cfg.Fleet.Transport = transport
 		if err := cfg.Validate(); err != nil {
-			t.Errorf("%s transport is in fleetImplementedTransports but was rejected: %v", transport, err)
+			t.Errorf(
+				"%s transport is in fleetImplementedTransports but was rejected: %v",
+				transport,
+				err,
+			)
 		}
 	}
 }

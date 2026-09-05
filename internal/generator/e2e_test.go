@@ -71,7 +71,14 @@ var e2eFeatures = [][]string{
 var e2eGenerators = [][]string{
 	{"handler", "Session", "--methods=list,get"},
 	{"resource", "User", "name:string", "email:string", "age:int", "signed_up_at:time.Time"},
-	{"resource", "Order", "total:float64", "paid:bool", "--methods=list,create", "--path=/api/v1/orders"},
+	{
+		"resource",
+		"Order",
+		"total:float64",
+		"paid:bool",
+		"--methods=list,create",
+		"--path=/api/v1/orders",
+	},
 	{"model", "Product", "sku:string", "price:float64", "tags:[]string"},
 	{"event", "UserCreated", "id:int64", "email:string"},
 	{"listener", "UserCreated", "--name=SendWelcomeEmail"},
@@ -278,7 +285,11 @@ func TestEndToEndMigrateCycle(t *testing.T) {
 	} {
 		up := filepath.Join("migrations", m.version+"_create_"+m.table+".up.sql")
 		down := filepath.Join("migrations", m.version+"_create_"+m.table+".down.sql")
-		if err := os.WriteFile(up, []byte("CREATE TABLE "+m.table+" (id INTEGER PRIMARY KEY);"), 0o644); err != nil {
+		if err := os.WriteFile(
+			up,
+			[]byte("CREATE TABLE "+m.table+" (id INTEGER PRIMARY KEY);"),
+			0o644,
+		); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(down, []byte("DROP TABLE "+m.table+";"), 0o644); err != nil {
@@ -376,7 +387,10 @@ func TestEndToEndMigrateCycle(t *testing.T) {
 		t.Fatalf("migrate down 9 with 3 applied should roll back all three: %v", err)
 	}
 	if out, err := migrate("down", "1"); err == nil {
-		t.Errorf("migrate down 1 on an empty ledger should report there is nothing to roll back, got success:\n%s", out)
+		t.Errorf(
+			"migrate down 1 on an empty ledger should report there is nothing to roll back, got success:\n%s",
+			out,
+		)
 	}
 }
 
@@ -418,7 +432,10 @@ func TestEndToEndAddIsIdempotent(t *testing.T) {
 
 	apply("first pass")
 	if second, third := apply("second pass"), apply("third pass"); second != third {
-		t.Errorf("%s kept changing after the second full pass â€” add does not converge", featuresFileName)
+		t.Errorf(
+			"%s kept changing after the second full pass â€” add does not converge",
+			featuresFileName,
+		)
 	}
 }
 
@@ -518,7 +535,12 @@ func TestAddRefusesToClobberHandEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edited := strings.Replace(string(content), "func setupCors(", "// tuned by hand\nfunc setupCors(", 1)
+	edited := strings.Replace(
+		string(content),
+		"func setupCors(",
+		"// tuned by hand\nfunc setupCors(",
+		1,
+	)
 	if edited == string(content) {
 		t.Fatalf("could not find setupCors to edit in %s:\n%s", featuresFileName, content)
 	}
@@ -624,6 +646,9 @@ func TestGeneratedFeatureBlocksAreIdempotent(t *testing.T) {
 	}
 
 	if first, second := run(), run(); first != second {
-		t.Errorf("re-running ws/job generators changed %s â€” the blocks are not idempotent", featuresFileName)
+		t.Errorf(
+			"re-running ws/job generators changed %s â€” the blocks are not idempotent",
+			featuresFileName,
+		)
 	}
 }

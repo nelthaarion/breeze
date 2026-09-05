@@ -257,8 +257,11 @@ func (s *Breeze) poolProbe() diag.Report {
 	}
 	if m.Panicked > 0 {
 		degraded = true
-		notes = append(notes, fmt.Sprintf("%d task(s) panicked and were recovered by their worker. "+
-			"The connection they were serving got no response.", m.Panicked))
+		notes = append(
+			notes,
+			fmt.Sprintf("%d task(s) panicked and were recovered by their worker. "+
+				"The connection they were serving got no response.", m.Panicked),
+		)
 	}
 	if m.Spawned > 0 {
 		notes = append(notes, fmt.Sprintf("%d task(s) ran on an overflow goroutine rather than a "+
@@ -309,8 +312,9 @@ func (s *Breeze) autoMCPProbe() diag.Report {
 
 	if tagged == 0 {
 		return diag.Degraded(fmt.Sprintf("Auto-MCP is listening on %s but no route is tagged", addr),
-			detail).WithNotes("Tag a route with breeze.MCPTool(name, description) as its last " +
-			"middleware argument; an untagged route is never exposed.")
+			detail).
+			WithNotes("Tag a route with breeze.MCPTool(name, description) as its last " +
+				"middleware argument; an untagged route is never exposed.")
 	}
 	return diag.OK(fmt.Sprintf("Auto-MCP on %s exposing %d tagged route(s)", addr, tagged), detail)
 }

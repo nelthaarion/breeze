@@ -301,8 +301,14 @@ func TestSpanRingConcurrentPushAndDrain(t *testing.T) {
 
 	total := writers * perW
 	if got := drained + int(r.droppedCount()) + r.len(); got != total {
-		t.Errorf("drained %d + dropped %d + buffered %d = %d, want %d — spans were lost or duplicated",
-			drained, r.droppedCount(), r.len(), got, total)
+		t.Errorf(
+			"drained %d + dropped %d + buffered %d = %d, want %d — spans were lost or duplicated",
+			drained,
+			r.droppedCount(),
+			r.len(),
+			got,
+			total,
+		)
 	}
 }
 

@@ -316,7 +316,8 @@ func internMethod(b []byte) Method {
 		// FIX: OPTIONS is 7 bytes, not 6. The old code checked for the
 		// non-existent 6-byte "OPTION" method and never matched real
 		// CORS preflight requests.
-		if b[0] == 'O' && b[1] == 'P' && b[2] == 'T' && b[3] == 'I' && b[4] == 'O' && b[5] == 'N' && b[6] == 'S' {
+		if b[0] == 'O' && b[1] == 'P' && b[2] == 'T' && b[3] == 'I' && b[4] == 'O' && b[5] == 'N' &&
+			b[6] == 'S' {
 			return OPTIONS
 		}
 	}

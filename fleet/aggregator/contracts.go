@@ -29,10 +29,18 @@ type contractEngine struct {
 }
 
 func newContractEngine(cfg Config) *contractEngine {
-	e := &contractEngine{registry: contracts.NewSchemaRegistry(nil), violations: contracts.NewViolationStore(cfg.MaxViolations, cfg.ViolationDedupeWindow), validate: make(chan contractJob, contractQueueSize), schemas: make(chan schemaJob, 128), stop: make(chan struct{}), done: make(chan struct{})}
+	e := &contractEngine{
+		registry:   contracts.NewSchemaRegistry(nil),
+		violations: contracts.NewViolationStore(cfg.MaxViolations, cfg.ViolationDedupeWindow),
+		validate:   make(chan contractJob, contractQueueSize),
+		schemas:    make(chan schemaJob, 128),
+		stop:       make(chan struct{}),
+		done:       make(chan struct{}),
+	}
 	go e.run(cfg)
 	return e
 }
+
 func (e *contractEngine) enqueueSpan(span fleet.Span, caller string) {
 	if len(span.RequestPayload) == 0 && len(span.ResponsePayload) == 0 {
 		return
@@ -42,6 +50,7 @@ func (e *contractEngine) enqueueSpan(span fleet.Span, caller string) {
 	default:
 	}
 }
+
 func (e *contractEngine) enqueueSchema(hb fleet.Heartbeat) {
 	if hb.OpenAPIHash == "" || hb.OpenAPIURL == "" {
 		return
@@ -51,6 +60,7 @@ func (e *contractEngine) enqueueSchema(hb fleet.Heartbeat) {
 	default:
 	}
 }
+
 func (e *contractEngine) run(cfg Config) {
 	defer close(e.done)
 	for {
@@ -59,10 +69,19 @@ func (e *contractEngine) run(cfg Config) {
 			return
 		case job := <-e.schemas:
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_, err := e.registry.Refresh(ctx, job.heartbeat.Service, job.heartbeat.OpenAPIHash, job.heartbeat.OpenAPIURL)
+			_, err := e.registry.Refresh(
+				ctx,
+				job.heartbeat.Service,
+				job.heartbeat.OpenAPIHash,
+				job.heartbeat.OpenAPIURL,
+			)
 			cancel()
 			if err != nil && cfg.Logger != nil {
-				cfg.Logger("warning", "fleet OpenAPI refresh failed for "+job.heartbeat.Service+": "+err.Error(), "fleet")
+				cfg.Logger(
+					"warning",
+					"fleet OpenAPI refresh failed for "+job.heartbeat.Service+": "+err.Error(),
+					"fleet",
+				)
 			}
 		case job := <-e.validate:
 			op, ok := e.registry.Operation(job.span.Service, job.span.Route, job.span.Method)

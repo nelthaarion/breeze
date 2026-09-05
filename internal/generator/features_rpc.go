@@ -47,12 +47,28 @@ func registerJSONRPC() {
 			// The default matches JSONRPCConfig's, so `add jsonrpc` and the
 			// equivalent YAML land on the same port rather than differing by
 			// which entry point was used.
-			port := fs.Int("port", Defaults().JSONRPC.Port, "TCP port for the JSON-RPC listener (must differ from the HTTP port)")
+			port := fs.Int(
+				"port",
+				Defaults().JSONRPC.Port,
+				"TCP port for the JSON-RPC listener (must differ from the HTTP port)",
+			)
 
-			methods := fs.String("methods", "", "comma-separated method names to scaffold, e.g. sum,echo")
-			blocking := fs.String("blocking", "", "of those methods, the ones that perform I/O and must run off the event loop")
+			methods := fs.String(
+				"methods",
+				"",
+				"comma-separated method names to scaffold, e.g. sum,echo",
+			)
+			blocking := fs.String(
+				"blocking",
+				"",
+				"of those methods, the ones that perform I/O and must run off the event loop",
+			)
 			multicore := fs.Bool("multicore", true, "run one event loop per CPU core")
-			maxBytes := fs.Int("max-message-bytes", 0, "cap one reassembled message in bytes (0 keeps the package default)")
+			maxBytes := fs.Int(
+				"max-message-bytes",
+				0,
+				"cap one reassembled message in bytes (0 keeps the package default)",
+			)
 
 			return func(ctx featureCtx) (featureOutput, error) {
 				names := splitList(*methods)
@@ -90,7 +106,10 @@ func validateRPCFeature(cfg JSONRPCConfig) error {
 	// Compare against the schema's own default HTTP port only if the user left
 	// it there; otherwise the clash test belongs to config validation.
 	if cfg.Port == probe.Server.Port {
-		return fmt.Errorf("--port %d is the default HTTP port â€” JSON-RPC needs its own listener and cannot share it", cfg.Port)
+		return fmt.Errorf(
+			"--port %d is the default HTTP port â€” JSON-RPC needs its own listener and cannot share it",
+			cfg.Port,
+		)
 	}
 	if errs := probe.validateJSONRPC(); len(errs) > 0 {
 		return fmt.Errorf("%s", errs[0])
@@ -129,7 +148,11 @@ var RPCServer *rpc.Server
 
 `)
 
-	fmt.Fprintf(&b, "func %s(app *breeze.Breeze, router *breeze.Router) {\n", featureSetupFunc("jsonrpc"))
+	fmt.Fprintf(
+		&b,
+		"func %s(app *breeze.Breeze, router *breeze.Router) {\n",
+		featureSetupFunc("jsonrpc"),
+	)
 	b.WriteString("\tRPCServer = rpc.NewServer(nil)\n\n")
 
 	// The pool is only needed if something actually runs off the event loop.
@@ -176,7 +199,9 @@ var RPCServer *rpc.Server
 	}
 
 	// Run blocks, so it cannot be called on the dispatcher's goroutine.
-	fmt.Fprintf(&b, `	// Run blocks â€” it owns its own gnet listener, since JSON-RPC is a peer of
+	fmt.Fprintf(
+		&b,
+		`	// Run blocks â€” it owns its own gnet listener, since JSON-RPC is a peer of
 	// the HTTP layer rather than a route inside it. On the dispatcher's
 	// goroutine it would mean app.Run is never reached and the HTTP port never
 	// opens, so it goes in a goroutine of its own.
@@ -190,7 +215,11 @@ var RPCServer *rpc.Server
 			log.Printf("json-rpc: server stopped: %%v", err)
 		}
 	}()
-}`, cfg.Port, cfg.Port, cfg.Multicore)
+}`,
+		cfg.Port,
+		cfg.Port,
+		cfg.Multicore,
+	)
 
 	// Handler scaffolds go in their own file rather than in the block, because
 	// they are code the developer is meant to edit â€” the same division `add`
@@ -209,14 +238,29 @@ var RPCServer *rpc.Server
 		fmt.Sprintf("Listening on :%d, separate from the HTTP port.", cfg.Port),
 	}
 	if len(cfg.Methods) > 0 {
-		notes = append(notes, fmt.Sprintf("Method scaffolds in rpc_methods.go: %s.", strings.Join(cfg.Methods, ", ")))
+		notes = append(
+			notes,
+			fmt.Sprintf("Method scaffolds in rpc_methods.go: %s.", strings.Join(cfg.Methods, ", ")),
+		)
 	}
 	if len(cfg.BlockingMethods) > 0 {
-		notes = append(notes, fmt.Sprintf("Registered as blocking (run on the worker pool): %s.", strings.Join(cfg.BlockingMethods, ", ")))
+		notes = append(
+			notes,
+			fmt.Sprintf(
+				"Registered as blocking (run on the worker pool): %s.",
+				strings.Join(cfg.BlockingMethods, ", "),
+			),
+		)
 	} else {
-		notes = append(notes, "No blocking methods, so no worker pool is created â€” use --blocking for handlers that do I/O.")
+		notes = append(
+			notes,
+			"No blocking methods, so no worker pool is created â€” use --blocking for handlers that do I/O.",
+		)
 	}
-	notes = append(notes, "Notifications (requests with no id) get no reply; ctx.IsNotification() reports which you are in.")
+	notes = append(
+		notes,
+		"Notifications (requests with no id) get no reply; ctx.IsNotification() reports which you are in.",
+	)
 
 	return featureOutput{Body: b.String(), Imports: imports, Files: files, Notes: notes}, nil
 }
@@ -277,9 +321,13 @@ import (
 		name := rpcHandlerName(m)
 		fmt.Fprintf(&b, "\n// %s handles the %q method.\n", name, m)
 		if blocking[m] {
-			b.WriteString("//\n// Registered with RegisterBlocking, so this runs on the worker pool rather\n// than an event loop: I/O here is safe.\n")
+			b.WriteString(
+				"//\n// Registered with RegisterBlocking, so this runs on the worker pool rather\n// than an event loop: I/O here is safe.\n",
+			)
 		} else {
-			b.WriteString("//\n// Registered with Register, so this runs directly on the event loop. Keep it\n// non-blocking â€” no database calls, no outbound HTTP â€” or move it to\n// --blocking, or every connection on that loop waits behind it.\n")
+			b.WriteString(
+				"//\n// Registered with Register, so this runs directly on the event loop. Keep it\n// non-blocking â€” no database calls, no outbound HTTP â€” or move it to\n// --blocking, or every connection on that loop waits behind it.\n",
+			)
 		}
 
 		fmt.Fprintf(&b, `func %s(ctx *rpc.Context) {

@@ -320,15 +320,20 @@ func TestGetRoutesReportsLiveTrafficFromARunningService(t *testing.T) {
 	// asserting a count on /api/widgets would be asserting against the
 	// framework's actual sampling design rather than against this tool.
 	if counts["/api/broken"] < 2 {
-		t.Errorf("/api/broken failed twice but reports %v requests; live counts are not reaching the tool",
-			counts["/api/broken"])
+		t.Errorf(
+			"/api/broken failed twice but reports %v requests; live counts are not reaching the tool",
+			counts["/api/broken"],
+		)
 	}
 	if _, ok := counts["/api/widgets/:id"]; !ok {
 		t.Errorf("the parameterised route is missing from %v", counts)
 	}
 	if _, ok := counts["/api/widgets"]; !ok {
-		t.Errorf("a registered route is missing entirely from %v; the static route table should be "+
-			"merged in even for routes with no captured traffic", counts)
+		t.Errorf(
+			"a registered route is missing entirely from %v; the static route table should be "+
+				"merged in even for routes with no captured traffic",
+			counts,
+		)
 	}
 
 	// The dashboard's own endpoints must not be reported as application routes.
@@ -352,7 +357,11 @@ func TestGetRecentErrorsFindsTheDeliberateFailureAndGroupsIt(t *testing.T) {
 		t.Fatal("no requests were scanned, so the dashboard recorded nothing")
 	}
 	if server, _ := got["server_errors"].(float64); server < 2 {
-		t.Errorf("/api/broken failed twice but server_errors = %v: %s", got["server_errors"], summary)
+		t.Errorf(
+			"/api/broken failed twice but server_errors = %v: %s",
+			got["server_errors"],
+			summary,
+		)
 	}
 
 	entries, ok := got["errors"].([]any)

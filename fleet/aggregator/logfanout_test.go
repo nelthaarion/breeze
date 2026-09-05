@@ -71,7 +71,12 @@ func TestLogFanoutMergesByTimestamp(t *testing.T) {
 	}
 	for i, msg := range want {
 		if got.Logs[i].Message != msg {
-			t.Errorf("line %d = %q, want %q (merge is not timestamp-ordered)", i, got.Logs[i].Message, msg)
+			t.Errorf(
+				"line %d = %q, want %q (merge is not timestamp-ordered)",
+				i,
+				got.Logs[i].Message,
+				msg,
+			)
 		}
 	}
 
@@ -110,7 +115,10 @@ func TestLogFanoutPartialFailure(t *testing.T) {
 		t.Fatalf("lost the reachable service's logs: %+v", got.Logs)
 	}
 	if len(got.Sources) != 3 {
-		t.Fatalf("got %d sources, want 3 (every service in the trace is accounted for)", len(got.Sources))
+		t.Fatalf(
+			"got %d sources, want 3 (every service in the trace is accounted for)",
+			len(got.Sources),
+		)
 	}
 
 	byName := map[string]LogSource{}
@@ -127,7 +135,10 @@ func TestLogFanoutPartialFailure(t *testing.T) {
 	// from an unreachable one, and must not be silently dropped: omitting
 	// it would read as "this service logged nothing".
 	if byName["unregistered"].Available || byName["unregistered"].Error == "" {
-		t.Errorf("unregistered service = %+v, want unavailable with a reason", byName["unregistered"])
+		t.Errorf(
+			"unregistered service = %+v, want unavailable with a reason",
+			byName["unregistered"],
+		)
 	}
 }
 
@@ -149,7 +160,6 @@ func TestLogFanoutUnauthorizedIsExplained(t *testing.T) {
 		t.Fatalf("sources = %+v, want one unavailable", got.Sources)
 	}
 	if msg := got.Sources[0].Error; !strings.Contains(msg, "service_token") {
-
 		t.Errorf("error = %q, want it to name service_token as the cause", msg)
 	}
 }
@@ -227,7 +237,10 @@ func TestDashboardBaseFromOpenAPI(t *testing.T) {
 // them for one trace's logs would turn a debugging click into a fleet-wide load
 // event.
 func TestLogEndpointsOnlyIncludesTraceServices(t *testing.T) {
-	a := &Aggregator{cfg: DefaultConfig().withDefaults(), registry: NewServiceRegistry(DefaultConfig().withDefaults())}
+	a := &Aggregator{
+		cfg:      DefaultConfig().withDefaults(),
+		registry: NewServiceRegistry(DefaultConfig().withDefaults()),
+	}
 	now := time.Now()
 	for _, svc := range []string{"gateway", "orders", "unrelated"} {
 		a.registry.Observe(fleet.Heartbeat{

@@ -51,7 +51,10 @@ func runMigrate(args []string) error {
 	// message rather than a compile-and-run round trip.
 	if sub == "down" && len(args) > 1 && !strings.HasPrefix(args[1], "-") {
 		if n, err := strconv.Atoi(args[1]); err != nil || n < 1 {
-			return fmt.Errorf("invalid step count %q â€” expected a positive integer, as in `breeze migrate down 2`", args[1])
+			return fmt.Errorf(
+				"invalid step count %q â€” expected a positive integer, as in `breeze migrate down 2`",
+				args[1],
+			)
 		}
 	}
 
@@ -79,7 +82,9 @@ func migratorPresent() bool {
 func requireMigrator() error {
 	if _, err := os.Stat("go.mod"); err != nil {
 		if os.IsNotExist(err) {
-			return errors.New("no go.mod in the current directory â€” run this from the root of a Breeze project")
+			return errors.New(
+				"no go.mod in the current directory â€” run this from the root of a Breeze project",
+			)
 		}
 		return err
 	}
@@ -177,7 +182,12 @@ func runMakeMigration(args []string) error {
 		return fmt.Errorf("creating %s: %w", upFile, err)
 	}
 
-	downContent := fmt.Sprintf("-- Rollback for migration %s: %s\n-- Created at %s\n\n", versionStr, slug, stamp)
+	downContent := fmt.Sprintf(
+		"-- Rollback for migration %s: %s\n-- Created at %s\n\n",
+		versionStr,
+		slug,
+		stamp,
+	)
 	if err := os.WriteFile(downFile, []byte(downContent), 0o644); err != nil {
 		os.Remove(upFile)
 		return fmt.Errorf("creating %s: %w", downFile, err)

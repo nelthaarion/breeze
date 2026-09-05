@@ -6,8 +6,13 @@ import (
 )
 
 func TestCaptureJSONPayloadRedactsNestedSensitiveFields(t *testing.T) {
-	got := string(CaptureJSONPayload([]byte(`{"user":"n","nested":{"token":"abc"},"items":[{"password":"pw"}]}`)))
-	if strings.Contains(got, "abc") || strings.Contains(got, "pw") || !strings.Contains(got, "••••••") {
+	got := string(
+		CaptureJSONPayload(
+			[]byte(`{"user":"n","nested":{"token":"abc"},"items":[{"password":"pw"}]}`),
+		),
+	)
+	if strings.Contains(got, "abc") || strings.Contains(got, "pw") ||
+		!strings.Contains(got, "••••••") {
 		t.Fatalf("payload was not redacted at source: %s", got)
 	}
 }

@@ -68,7 +68,10 @@ func TestRecoveryProbeCountsAPanicWithCountingOff(t *testing.T) {
 	if report.Detail["counting"] != false {
 		t.Errorf("counting = %v; this test runs with the gate closed", report.Detail["counting"])
 	}
-	if last, _ := report.Detail["last_panic"].(string); !strings.Contains(last, "deliberate failure") {
+	if last, _ := report.Detail["last_panic"].(string); !strings.Contains(
+		last,
+		"deliberate failure",
+	) {
 		t.Errorf("last_panic = %q, want the panic value", last)
 	}
 	if report.Detail["last_panic_at"] == nil {

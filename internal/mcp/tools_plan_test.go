@@ -188,7 +188,10 @@ func TestPlanProjectRejectsInvalidConfigWithoutScaffolding(t *testing.T) {
 		t.Error("the result carries no errors explaining the refusal")
 	}
 	if len(plan.Files) != 0 {
-		t.Errorf("an invalid configuration still produced a file plan: %v", changedPathsOf(plan.Files))
+		t.Errorf(
+			"an invalid configuration still produced a file plan: %v",
+			changedPathsOf(plan.Files),
+		)
 	}
 }
 
@@ -312,7 +315,9 @@ func TestChangeSetInvalidSequenceWritesZeroFiles(t *testing.T) {
 		t.Fatalf("snapshotting the project: %v", err)
 	}
 
-	open := srv.tools["breeze_begin_change_set"].run(mustJSON(t, map[string]any{"project_path": project}))
+	open := srv.tools["breeze_begin_change_set"].run(
+		mustJSON(t, map[string]any{"project_path": project}),
+	)
 	if open.IsError {
 		t.Fatalf("begin_change_set failed: %s", open.Content[0].Text)
 	}
@@ -322,7 +327,11 @@ func TestChangeSetInvalidSequenceWritesZeroFiles(t *testing.T) {
 	staged := srv.tools["breeze_stage_call"].run(mustJSON(t, map[string]any{
 		"change_set": id,
 		"tool":       "breeze_generate",
-		"arguments":  map[string]any{"kind": "model", "name": "User", "fields": []string{"name:string"}},
+		"arguments": map[string]any{
+			"kind":   "model",
+			"name":   "User",
+			"fields": []string{"name:string"},
+		},
 	}))
 	if staged.IsError {
 		t.Fatalf("staging a valid call failed: %s", staged.Content[0].Text)
@@ -351,7 +360,9 @@ func TestChangeSetInvalidSequenceWritesZeroFiles(t *testing.T) {
 	}
 
 	// Discarding must also write nothing, and must say what it dropped.
-	discarded := srv.tools["breeze_discard_change_set"].run(mustJSON(t, map[string]any{"change_set": id}))
+	discarded := srv.tools["breeze_discard_change_set"].run(
+		mustJSON(t, map[string]any{"change_set": id}),
+	)
 	if discarded.IsError {
 		t.Fatalf("discard_change_set failed: %s", discarded.Content[0].Text)
 	}
@@ -368,7 +379,9 @@ func TestChangeSetInvalidSequenceWritesZeroFiles(t *testing.T) {
 	}
 
 	// And the id is gone: a discarded set cannot then be committed.
-	if again := srv.tools["breeze_commit_change_set"].run(mustJSON(t, map[string]any{"change_set": id})); !again.IsError {
+	if again := srv.tools["breeze_commit_change_set"].run(
+		mustJSON(t, map[string]any{"change_set": id}),
+	); !again.IsError {
 		t.Error("a discarded change set was committable")
 	}
 }
@@ -380,7 +393,9 @@ func TestChangeSetCommitAppliesAndRecordsHistory(t *testing.T) {
 	project := newFixtureProject(t, "scratch", "docs:\n  enabled: true\n")
 	srv := NewServer("test")
 
-	open := srv.tools["breeze_begin_change_set"].run(mustJSON(t, map[string]any{"project_path": project}))
+	open := srv.tools["breeze_begin_change_set"].run(
+		mustJSON(t, map[string]any{"project_path": project}),
+	)
 	if open.IsError {
 		t.Fatalf("begin_change_set failed: %s", open.Content[0].Text)
 	}
@@ -389,13 +404,19 @@ func TestChangeSetCommitAppliesAndRecordsHistory(t *testing.T) {
 	staged := srv.tools["breeze_stage_call"].run(mustJSON(t, map[string]any{
 		"change_set": id,
 		"tool":       "breeze_generate",
-		"arguments":  map[string]any{"kind": "model", "name": "Invoice", "fields": []string{"total:int"}},
+		"arguments": map[string]any{
+			"kind":   "model",
+			"name":   "Invoice",
+			"fields": []string{"total:int"},
+		},
 	}))
 	if staged.IsError {
 		t.Fatalf("staging failed: %s", staged.Content[0].Text)
 	}
 
-	committed := srv.tools["breeze_commit_change_set"].run(mustJSON(t, map[string]any{"change_set": id}))
+	committed := srv.tools["breeze_commit_change_set"].run(
+		mustJSON(t, map[string]any{"change_set": id}),
+	)
 	if committed.IsError {
 		t.Fatalf("commit_change_set failed: %s", committed.Content[0].Text)
 	}
@@ -415,7 +436,9 @@ func TestChangeSetCommitAppliesAndRecordsHistory(t *testing.T) {
 	}
 
 	// And the history records what produced them.
-	history := srv.tools["breeze_get_change_history"].run(mustJSON(t, map[string]any{"project_path": project}))
+	history := srv.tools["breeze_get_change_history"].run(
+		mustJSON(t, map[string]any{"project_path": project}),
+	)
 	if history.IsError {
 		t.Fatalf("get_change_history failed: %s", history.Content[0].Text)
 	}
@@ -446,7 +469,9 @@ func TestStageCallRefusesUnstageableTools(t *testing.T) {
 	project := newFixtureProject(t, "scratch", "docs:\n  enabled: true\n")
 	srv := NewServer("test")
 
-	open := srv.tools["breeze_begin_change_set"].run(mustJSON(t, map[string]any{"project_path": project}))
+	open := srv.tools["breeze_begin_change_set"].run(
+		mustJSON(t, map[string]any{"project_path": project}),
+	)
 	id := open.StructuredContent.(changeSetView).ID
 	defer srv.tools["breeze_discard_change_set"].run(mustJSON(t, map[string]any{"change_set": id}))
 

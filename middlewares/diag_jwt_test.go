@@ -109,7 +109,11 @@ func TestJWTProbeFlagsAShortRefreshSecret(t *testing.T) {
 
 	report := jwtProbe()
 	if report.Status != diag.StatusDegraded {
-		t.Fatalf("status = %q with a 5-byte refresh key, want %q", report.Status, diag.StatusDegraded)
+		t.Fatalf(
+			"status = %q with a 5-byte refresh key, want %q",
+			report.Status,
+			diag.StatusDegraded,
+		)
 	}
 	if !strings.Contains(strings.Join(report.Notes, " "), "RefreshSecret") {
 		t.Errorf("no note names RefreshSecret: %q", report.Notes)

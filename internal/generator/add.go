@@ -42,13 +42,21 @@ func runAdd(args []string) error {
 	}
 
 	fs := flag.NewFlagSet("add "+name, flag.ContinueOnError)
-	force := fs.Bool("force", false, "overwrite an existing block or file that differs from what would be generated")
+	force := fs.Bool(
+		"force",
+		false,
+		"overwrite an existing block or file that differs from what would be generated",
+	)
 	generate := f.Build(fs)
 
 	flagArgs, positional := splitFlagsAndPositional(fs, args[1:])
 	if len(positional) > 0 {
-		return fmt.Errorf("`breeze add %s` takes no positional arguments, got %q â€” did you mean --%s?",
-			name, positional[0], positional[0])
+		return fmt.Errorf(
+			"`breeze add %s` takes no positional arguments, got %q â€” did you mean --%s?",
+			name,
+			positional[0],
+			positional[0],
+		)
 	}
 	if err := parseFlags(fs, flagArgs); err != nil {
 		return err
@@ -67,7 +75,6 @@ func runAdd(args []string) error {
 		HasObservability: hasBlock(featuresFileName, featureMarkerPrefix, "observability"),
 		HasDashboard:     hasBlock(featuresFileName, featureMarkerPrefix, "dashboard"),
 	})
-
 	if err != nil {
 		return err
 	}
@@ -132,10 +139,13 @@ func applyFeatureBlock(f *feature, out featureOutput, force bool) (blockResult, 
 		case blockIsPristine(stored, stamp), force:
 			result = blockUpdated
 		default:
-			return blockUnchanged, fmt.Errorf("the %s block in %s has been edited since it was generated, "+
-				"and differs from what would be generated now\n"+
-				"  re-run with --force to replace it, losing those edits",
-				f.Name, featuresFileName)
+			return blockUnchanged, fmt.Errorf(
+				"the %s block in %s has been edited since it was generated, "+
+					"and differs from what would be generated now\n"+
+					"  re-run with --force to replace it, losing those edits",
+				f.Name,
+				featuresFileName,
+			)
 		}
 	}
 
@@ -264,7 +274,9 @@ func warnStaleDependents(added *feature, result blockResult) {
 	for _, name := range stale {
 		fmt.Printf("      breeze add %s\n", name)
 	}
-	fmt.Printf("    Re-run those to pick it up â€” the blocks are untouched, so no --force is needed.\n")
+	fmt.Printf(
+		"    Re-run those to pick it up â€” the blocks are untouched, so no --force is needed.\n",
+	)
 }
 
 // warnIfDispatcherUncalled checks that something actually calls the generated

@@ -459,7 +459,9 @@ func (s *memStore) RecentPage(q TraceQuery) TracePage {
 	}
 	page.Traces = all
 	if page.HasMore && len(all) > 0 {
-		page.NextCursor = encodeTraceCursor(traceCursor{Start: all[len(all)-1].StartNanoUTC, ID: all[len(all)-1].TraceID})
+		page.NextCursor = encodeTraceCursor(
+			traceCursor{Start: all[len(all)-1].StartNanoUTC, ID: all[len(all)-1].TraceID},
+		)
 	}
 	return page
 }

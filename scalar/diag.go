@@ -84,8 +84,11 @@ func probe() diag.Report {
 			"is what a consumer reads as an undocumented endpoint.", undescribed))
 	}
 	if title == "" {
-		notes = append(notes, "No API title is set. Call scalar.SetInfo(title, version, description) "+
-			"— the document falls back to a generic name otherwise.")
+		notes = append(
+			notes,
+			"No API title is set. Call scalar.SetInfo(title, version, description) "+
+				"— the document falls back to a generic name otherwise.",
+		)
 	}
 
 	// An empty registry with collection on is a degraded state, not an OK one: it
@@ -102,7 +105,9 @@ func probe() diag.Report {
 // Called with mu held, so it must not lock. The undocumented list is capped
 // because a project with three hundred undocumented routes needs to know that,
 // not to receive three hundred strings through a diagnostics endpoint.
-func summarise(entries []routeEntry) (described, undescribed int, byMethod map[string]int, missing []string) {
+func summarise(
+	entries []routeEntry,
+) (described, undescribed int, byMethod map[string]int, missing []string) {
 	byMethod = map[string]int{}
 	for _, e := range entries {
 		byMethod[strings.ToUpper(e.method)]++

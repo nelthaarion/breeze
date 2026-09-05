@@ -52,9 +52,15 @@ func TestParseFieldsDuplicate(t *testing.T) {
 // failure this whole path exists to avoid: the user would have typed a rule and
 // been given a struct that does not enforce it.
 func TestParseFieldsNoRulesRejectsRules(t *testing.T) {
-	if _, err := parseFieldsNoRules("model", []string{"name:string", "email:string:required,email"}); err == nil {
+	if _, err := parseFieldsNoRules(
+		"model",
+		[]string{"name:string", "email:string:required,email"},
+	); err == nil {
 		t.Error("parseFieldsNoRules accepted a rules segment")
-	} else if !strings.Contains(err.Error(), "generate resource") {
+	} else if !strings.Contains(
+		err.Error(),
+		"generate resource",
+	) {
 		t.Errorf("error should point at the generator that does validate, got: %v", err)
 	}
 

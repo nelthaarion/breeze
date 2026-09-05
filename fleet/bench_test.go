@@ -37,9 +37,14 @@ import (
 // flush loop from entering backoff, which would otherwise perturb long runs.
 type nopTransport struct{}
 
-func (nopTransport) Name() string                                             { return "nop" }
-func (nopTransport) Inject(TraceContext, Baggage, Carrier)                    {}
-func (nopTransport) Extract(Carrier) (TraceContext, Baggage, bool)            { return TraceContext{}, nil, false }
+func (nopTransport) Name() string                          { return "nop" }
+func (nopTransport) Inject(TraceContext, Baggage, Carrier) {}
+
+func (nopTransport) Extract(
+	Carrier,
+) (TraceContext, Baggage, bool) {
+	return TraceContext{}, nil, false
+}
 func (nopTransport) ExportSpans(context.Context, string, []Span) error        { return nil }
 func (nopTransport) ExportHeartbeat(context.Context, string, Heartbeat) error { return nil }
 

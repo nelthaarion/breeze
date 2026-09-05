@@ -23,7 +23,10 @@ func TestFeatureRegistryInvariants(t *testing.T) {
 			t.Errorf("feature registered under %q but names itself %q", name, f.Name)
 		}
 		if name != strings.ToLower(name) {
-			t.Errorf("feature %q is not lowercase â€” args[0] is lowercased before lookup, so it is unreachable", name)
+			t.Errorf(
+				"feature %q is not lowercase â€” args[0] is lowercased before lookup, so it is unreachable",
+				name,
+			)
 		}
 		if strings.TrimSpace(f.Summary) == "" {
 			t.Errorf("feature %q has no Summary â€” `add --list` would show a blank line", name)
@@ -32,11 +35,19 @@ func TestFeatureRegistryInvariants(t *testing.T) {
 			t.Errorf("feature %q has a nil Build â€” add would panic", name)
 		}
 		if f.Priority <= 0 {
-			t.Errorf("feature %q has priority %d; priorities order the dispatcher and must be positive", name, f.Priority)
+			t.Errorf(
+				"feature %q has priority %d; priorities order the dispatcher and must be positive",
+				name,
+				f.Priority,
+			)
 		}
 		for _, dep := range f.DependsOn {
 			if _, ok := features[dep]; !ok {
-				t.Errorf("feature %q depends on %q, which is not a registered feature â€” the stale-block warning would name a command that fails", name, dep)
+				t.Errorf(
+					"feature %q depends on %q, which is not a registered feature â€” the stale-block warning would name a command that fails",
+					name,
+					dep,
+				)
 			}
 			if dep == name {
 				t.Errorf("feature %q lists itself in DependsOn", name)
@@ -112,11 +123,21 @@ func TestDependsOnMatchesWhatGeneratorsRead(t *testing.T) {
 
 			switch {
 			case reads && !declared:
-				t.Errorf("feature %q generates different code when %q is installed but does not list it in DependsOn â€” "+
-					"`breeze add %s` will not report that %q needs re-running", name, in.name, in.name, name)
+				t.Errorf(
+					"feature %q generates different code when %q is installed but does not list it in DependsOn â€” "+
+						"`breeze add %s` will not report that %q needs re-running",
+					name,
+					in.name,
+					in.name,
+					name,
+				)
 			case declared && !reads:
-				t.Errorf("feature %q lists %q in DependsOn but generates identical code either way â€” "+
-					"the stale-block warning would be noise", name, in.name)
+				t.Errorf(
+					"feature %q lists %q in DependsOn but generates identical code either way â€” "+
+						"the stale-block warning would be noise",
+					name,
+					in.name,
+				)
 			}
 		}
 	}
@@ -132,7 +153,10 @@ func TestFeatureAliasesResolve(t *testing.T) {
 			t.Errorf("alias %q resolves to %q, which is not a registered feature", alias, canonical)
 		}
 		if _, ok := features[alias]; ok {
-			t.Errorf("alias %q is also a real feature name â€” the alias is dead code and the note it prints would be wrong", alias)
+			t.Errorf(
+				"alias %q is also a real feature name â€” the alias is dead code and the note it prints would be wrong",
+				alias,
+			)
 		}
 		if alias != strings.ToLower(alias) {
 			t.Errorf("alias %q is not lowercase, so it can never match the lowercased input", alias)

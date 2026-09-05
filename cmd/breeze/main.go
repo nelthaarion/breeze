@@ -113,7 +113,9 @@ Example:
   breeze makemigration CreateUsersTable
 `)
 	case "version":
-		fmt.Print("Usage: breeze version\n\nPrints the CLI's breeze module version, Go toolchain and platform.\n")
+		fmt.Print(
+			"Usage: breeze version\n\nPrints the CLI's breeze module version, Go toolchain and platform.\n",
+		)
 	case "start":
 		fmt.Print(`Usage: breeze start mcp-server [flags]
 

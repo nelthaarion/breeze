@@ -37,8 +37,12 @@ func assertCanonical(t *testing.T, path string) {
 		t.Fatalf("%s does not even parse: %v\n%s", path, err, src)
 	}
 	if string(want) != string(src) {
-		t.Errorf("%s is not gofmt-canonical; `gofmt -l` would report it.\n--- on disk ---\n%s\n--- gofmt ---\n%s",
-			path, src, want)
+		t.Errorf(
+			"%s is not gofmt-canonical; `gofmt -l` would report it.\n--- on disk ---\n%s\n--- gofmt ---\n%s",
+			path,
+			src,
+			want,
+		)
 	}
 }
 
@@ -68,8 +72,12 @@ func assertNoUnusedImports(t *testing.T, path string) {
 			}
 		}
 		if !used[name] {
-			t.Errorf("%s imports %s but never refers to %s — the generated project would not compile",
-				path, imp.Path.Value, name)
+			t.Errorf(
+				"%s imports %s but never refers to %s — the generated project would not compile",
+				path,
+				imp.Path.Value,
+				name,
+			)
 		}
 	}
 }
@@ -260,7 +268,15 @@ func TestNonCanonicalTemplateOutputIsFormattedBeforeItIsWritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeHandlerFile(target, "example.com/proj", "Session", actions, "/sessions", ugly, false); err != nil {
+	if err := writeHandlerFile(
+		target,
+		"example.com/proj",
+		"Session",
+		actions,
+		"/sessions",
+		ugly,
+		false,
+	); err != nil {
 		t.Fatalf("writing a handler from a non-canonical template: %v", err)
 	}
 
@@ -347,7 +363,11 @@ func TestConditionalTemplateBranchesLeaveNoUnusedImport(t *testing.T) {
 			}
 			for _, unwanted := range tc.absent {
 				if strings.Contains(string(src), unwanted) {
-					t.Errorf("%s imports %s, which nothing in this combination uses", path, unwanted)
+					t.Errorf(
+						"%s imports %s, which nothing in this combination uses",
+						path,
+						unwanted,
+					)
 				}
 			}
 		})

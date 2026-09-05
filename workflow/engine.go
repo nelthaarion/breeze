@@ -249,7 +249,12 @@ func WithMetadata(meta map[string]any) RunOption {
 // The returned error is nil only when the execution completed; a failed,
 // cancelled, timed-out or compensated execution returns the failure that
 // caused it, and Result carries the per-step detail either way.
-func (e *Engine) Run(ctx context.Context, name string, payload any, opts ...RunOption) (Result, error) {
+func (e *Engine) Run(
+	ctx context.Context,
+	name string,
+	payload any,
+	opts ...RunOption,
+) (Result, error) {
 	if e.closed.Load() {
 		return Result{}, ErrEngineClosed
 	}
@@ -298,7 +303,12 @@ func (e *Engine) nextID(workflow string) string {
 }
 
 // execute is the whole lifecycle of one execution.
-func (e *Engine) execute(ctx context.Context, def *Definition, payload any, o runOptions) (Result, error) {
+func (e *Engine) execute(
+	ctx context.Context,
+	def *Definition,
+	payload any,
+	o runOptions,
+) (Result, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -306,7 +316,12 @@ func (e *Engine) execute(ctx context.Context, def *Definition, payload any, o ru
 	// Idempotency: an existing execution for the key wins, and the
 	// caller gets its outcome rather than a second run.
 	if o.idempotencyKey != "" {
-		if rec, found, err := e.store.FindByIdempotencyKey(ctx, def.name, o.idempotencyKey); err == nil && found {
+		if rec, found, err := e.store.FindByIdempotencyKey(
+			ctx,
+			def.name,
+			o.idempotencyKey,
+		); err == nil &&
+			found {
 			return Result{
 				ExecutionID: rec.ExecutionID,
 				Workflow:    def.name,
@@ -316,7 +331,10 @@ func (e *Engine) execute(ctx context.Context, def *Definition, payload any, o ru
 		}
 		// Guard the window before the record exists: two concurrent
 		// starts with the same key must not both create one.
-		if _, loaded := e.inflight.LoadOrStore(def.name+"\x00"+o.idempotencyKey, struct{}{}); loaded {
+		if _, loaded := e.inflight.LoadOrStore(
+			def.name+"\x00"+o.idempotencyKey,
+			struct{}{},
+		); loaded {
 			return Result{Workflow: def.name, State: StatePending}, nil
 		}
 		defer e.inflight.Delete(def.name + "\x00" + o.idempotencyKey)
@@ -439,7 +457,13 @@ func (e *Engine) execute(ctx context.Context, def *Definition, payload any, o ru
 
 // runSteps walks the plan level by level, running each level with
 // bounded parallelism and stopping at the first failure.
-func (e *Engine) runSteps(ctx context.Context, def *Definition, wctx *Context, execID string, completed map[string]bool) (Result, []observability.Span) {
+func (e *Engine) runSteps(
+	ctx context.Context,
+	def *Definition,
+	wctx *Context,
+	execID string,
+	completed map[string]bool,
+) (Result, []observability.Span) {
 	var (
 		res   Result
 		spans []observability.Span
@@ -511,13 +535,24 @@ func (e *Engine) acquire() { e.sem <- struct{}{} }
 func (e *Engine) release() { <-e.sem }
 
 // runStep executes one step with its condition, timeout and retries.
-func (e *Engine) runStep(ctx context.Context, def *Definition, step *Step, wctx *Context, execID string) (StepResult, observability.Span) {
+func (e *Engine) runStep(
+	ctx context.Context,
+	def *Definition,
+	step *Step,
+	wctx *Context,
+	execID string,
+) (StepResult, observability.Span) {
 	sr := StepResult{Name: step.name, State: StateRunning}
 	started := time.Now()
 
 	if step.cond != nil && !step.cond(wctx.withCtx(ctx)) {
 		sr.State, sr.Skipped = StateCompleted, true
-		return sr, observability.Span{Name: step.name, Skipped: true, Index: step.index, Priority: 0}
+		return sr, observability.Span{
+			Name:     step.name,
+			Skipped:  true,
+			Index:    step.index,
+			Priority: 0,
+		}
 	}
 
 	policy := def.policyFor(step)
@@ -614,7 +649,14 @@ func (e *Engine) runStep(ctx context.Context, def *Definition, step *Step, wctx 
 
 // invoke runs a step function under its timeout, converting a panic into
 // an error so that one bad step cannot take the process down.
-func (e *Engine) invoke(ctx context.Context, def *Definition, step *Step, wctx *Context, timeout time.Duration, fn StepFunc) (err error) {
+func (e *Engine) invoke(
+	ctx context.Context,
+	def *Definition,
+	step *Step,
+	wctx *Context,
+	timeout time.Duration,
+	fn StepFunc,
+) (err error) {
 	stepCtx := ctx
 	var cancel context.CancelFunc
 	if timeout > 0 {
@@ -662,7 +704,13 @@ func (e *Engine) invoke(ctx context.Context, def *Definition, step *Step, wctx *
 
 // compensate rolls back the completed steps in reverse order. It
 // reports whether rollback finished cleanly.
-func (e *Engine) compensate(def *Definition, wctx *Context, execID string, res Result, rec *WorkflowRecord) bool {
+func (e *Engine) compensate(
+	def *Definition,
+	wctx *Context,
+	execID string,
+	res Result,
+	rec *WorkflowRecord,
+) bool {
 	// Compensation runs on a context detached from the failure: the
 	// execution's context may already be cancelled or expired, and
 	// rollback still has to happen.
@@ -896,7 +944,13 @@ func (e *Engine) saveStep(ctx context.Context, rec StepRecord) {
 	_ = e.store.SaveStep(context.WithoutCancel(ctx), rec)
 }
 
-func (e *Engine) stepError(def *Definition, execID string, step *Step, attempt int, err error) error {
+func (e *Engine) stepError(
+	def *Definition,
+	execID string,
+	step *Step,
+	attempt int,
+	err error,
+) error {
 	if err == nil {
 		return nil
 	}
@@ -909,7 +963,12 @@ func (e *Engine) stepError(def *Definition, execID string, step *Step, attempt i
 // publishSignal records the execution as one observability signal, with
 // its steps as spans — the same shape the event bus publishes, so the
 // dashboard renders workflows with no new code.
-func (e *Engine) publishSignal(def *Definition, res Result, spans []observability.Span, o runOptions) {
+func (e *Engine) publishSignal(
+	def *Definition,
+	res Result,
+	spans []observability.Span,
+	o runOptions,
+) {
 	if e.col == nil {
 		return
 	}

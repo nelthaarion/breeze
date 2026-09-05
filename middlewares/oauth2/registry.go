@@ -35,8 +35,18 @@ func lookupDriver(p Provider) (ProviderDriver, bool) {
 // router is the minimal surface of *breeze.Router this package needs. Using an
 // interface keeps Register testable and decoupled from the concrete type.
 type router interface {
-	Handle(method breeze.Method, pattern string, handler breeze.HandlerFunc, middlewares ...breeze.HandlerFunc)
-	HandleBlocking(method breeze.Method, pattern string, handler breeze.HandlerFunc, middlewares ...breeze.HandlerFunc)
+	Handle(
+		method breeze.Method,
+		pattern string,
+		handler breeze.HandlerFunc,
+		middlewares ...breeze.HandlerFunc,
+	)
+	HandleBlocking(
+		method breeze.Method,
+		pattern string,
+		handler breeze.HandlerFunc,
+		middlewares ...breeze.HandlerFunc,
+	)
 }
 
 // Register wires the full login/callback/logout flow for a provider onto the

@@ -136,7 +136,12 @@ func (b *Backend) Subscribe(topic string, fn events.MessageHandler) (func(), err
 	return stop, nil
 }
 
-func (b *Backend) consume(ctx context.Context, reader *kafka.Reader, topic string, fn events.MessageHandler) {
+func (b *Backend) consume(
+	ctx context.Context,
+	reader *kafka.Reader,
+	topic string,
+	fn events.MessageHandler,
+) {
 	defer func() {
 		_ = reader.Close()
 		b.mu.Lock()

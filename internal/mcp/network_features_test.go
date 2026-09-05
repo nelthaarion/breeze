@@ -13,7 +13,11 @@ import (
 )
 
 // fetchFeatures calls GET /mcp/features and returns the status and decoded body.
-func fetchFeatures(t *testing.T, srv *httptest.Server, token, method string) (int, featuresResponse, string) {
+func fetchFeatures(
+	t *testing.T,
+	srv *httptest.Server,
+	token, method string,
+) (int, featuresResponse, string) {
 	t.Helper()
 
 	req, err := http.NewRequest(method, srv.URL+FeaturesPath, nil)
@@ -139,10 +143,18 @@ func TestFeaturesEndpointAgreesWithTheHandshake(t *testing.T) {
 		t.Errorf("known: endpoint %q, handshake %q", got, want)
 	}
 	if report.Scoped != handshake.BreezeCapabilities.Scoped {
-		t.Errorf("scoped: endpoint %v, handshake %v", report.Scoped, handshake.BreezeCapabilities.Scoped)
+		t.Errorf(
+			"scoped: endpoint %v, handshake %v",
+			report.Scoped,
+			handshake.BreezeCapabilities.Scoped,
+		)
 	}
 	if report.ServerKind != string(handshake.BreezeServerKind) {
-		t.Errorf("server_kind: endpoint %q, handshake %q", report.ServerKind, handshake.BreezeServerKind)
+		t.Errorf(
+			"server_kind: endpoint %q, handshake %q",
+			report.ServerKind,
+			handshake.BreezeServerKind,
+		)
 	}
 
 	// And against tools/list, which is the third place the same decision surfaces.

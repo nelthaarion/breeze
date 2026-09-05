@@ -108,8 +108,13 @@ func TestMinifiedBundlesExistAndAreSmaller(t *testing.T) {
 			t.Errorf("%s is empty; the dashboard would load no %s at all", p.min, p.src)
 		}
 		if minStat.Size() >= srcStat.Size() {
-			t.Errorf("%s (%d bytes) is not smaller than %s (%d bytes); is it really minifier output?",
-				p.min, minStat.Size(), p.src, srcStat.Size())
+			t.Errorf(
+				"%s (%d bytes) is not smaller than %s (%d bytes); is it really minifier output?",
+				p.min,
+				minStat.Size(),
+				p.src,
+				srcStat.Size(),
+			)
 		}
 	}
 }

@@ -140,7 +140,6 @@ type Transport interface {
 // Safe to call unconditionally. With tracing disabled, no middleware installed,
 // or a nil ctx, it writes nothing and returns; call sites never need a guard.
 func Inject(ctx *breeze.Context, c Carrier) {
-
 	if c == nil {
 		return
 	}

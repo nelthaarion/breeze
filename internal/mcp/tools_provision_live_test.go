@@ -132,7 +132,9 @@ func TestLiveProvisionServiceReachableOnBothAddresses(t *testing.T) {
 		// control-versus-app distinction: two ports, two different services.
 		endpoint := fmt.Sprintf("http://%s:%d%s", got.Host, got.AppPort, DefaultEndpointPath)
 		if status, _ := liveHandshake(t, endpoint, got.ControlToken); status == http.StatusOK {
-			t.Error("the app port answered an MCP handshake, so both addresses reach the same service")
+			t.Error(
+				"the app port answered an MCP handshake, so both addresses reach the same service",
+			)
 		}
 	})
 }
@@ -207,10 +209,20 @@ func TestLiveProvisionFleetTracesFlowBetweenServices(t *testing.T) {
 
 	result := orch.provisionFleet(
 		[]fleetServiceRequest{
-			{Name: "live-gateway", Template: "api",
-				configInput: configInput{Config: map[string]any{"module": "example.com/live-gateway"}}},
-			{Name: "live-orders", Template: "api",
-				configInput: configInput{Config: map[string]any{"module": "example.com/live-orders"}}},
+			{
+				Name:     "live-gateway",
+				Template: "api",
+				configInput: configInput{
+					Config: map[string]any{"module": "example.com/live-gateway"},
+				},
+			},
+			{
+				Name:     "live-orders",
+				Template: "api",
+				configInput: configInput{
+					Config: map[string]any{"module": "example.com/live-orders"},
+				},
+			},
 		},
 		fleetAggregatorConfig{HostedBy: "live-gateway"},
 		dockerOptions{},
@@ -225,7 +237,12 @@ func TestLiveProvisionFleetTracesFlowBetweenServices(t *testing.T) {
 	for _, service := range report.Services {
 		resp, err := http.Get(service.AppURL + "/")
 		if err != nil {
-			t.Fatalf("%s is not reachable at its app_url %s: %v", service.ServiceName, service.AppURL, err)
+			t.Fatalf(
+				"%s is not reachable at its app_url %s: %v",
+				service.ServiceName,
+				service.AppURL,
+				err,
+			)
 		}
 		resp.Body.Close()
 	}
@@ -254,8 +271,11 @@ func TestLiveProvisionFleetTracesFlowBetweenServices(t *testing.T) {
 	names := waitForFleetServices(t, agg, 2, 60*time.Second)
 	for _, service := range report.Services {
 		if !names[service.ServiceName] {
-			t.Errorf("%s never appeared in the aggregator's topology at %s; its spans are not arriving",
-				service.ServiceName, agg.AggregatorURL)
+			t.Errorf(
+				"%s never appeared in the aggregator's topology at %s; its spans are not arriving",
+				service.ServiceName,
+				agg.AggregatorURL,
+			)
 		}
 	}
 }
@@ -266,7 +286,12 @@ func TestLiveProvisionFleetTracesFlowBetweenServices(t *testing.T) {
 // It goes through the same fleetArgs/fetchLiveJSON path breeze_get_topology uses, rather
 // than a hand-rolled HTTP call: if the tool can read this aggregator, so can an agent,
 // and that is the thing worth asserting.
-func waitForFleetServices(t *testing.T, agg fleetAggregatorAddress, want int, within time.Duration) map[string]bool {
+func waitForFleetServices(
+	t *testing.T,
+	agg fleetAggregatorAddress,
+	want int,
+	within time.Duration,
+) map[string]bool {
 	t.Helper()
 
 	// The aggregator's read side is Basic-authenticated with the defaults
@@ -285,7 +310,11 @@ func waitForFleetServices(t *testing.T, agg fleetAggregatorAddress, want int, wi
 		var topo fleetTopology
 		if err := fetchLiveJSON(args.request("/topology", "fleet aggregator"), &topo); err != nil {
 			if time.Now().After(deadline) {
-				t.Fatalf("the aggregator at %s never answered a topology read: %s", agg.AggregatorURL, err.Message)
+				t.Fatalf(
+					"the aggregator at %s never answered a topology read: %s",
+					agg.AggregatorURL,
+					err.Message,
+				)
 			}
 		} else {
 			for _, node := range topo.Nodes {

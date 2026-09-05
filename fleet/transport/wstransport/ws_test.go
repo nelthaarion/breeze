@@ -353,7 +353,10 @@ func TestLargePayloadUsesExtendedLength(t *testing.T) {
 
 	frames := s.waitFrames(t, 2)
 	if len(frames[1]) < 126 {
-		t.Fatalf("payload is %d bytes, too small to exercise the extended-length path", len(frames[1]))
+		t.Fatalf(
+			"payload is %d bytes, too small to exercise the extended-length path",
+			len(frames[1]),
+		)
 	}
 	var pub wsEnvelope
 	if err := json.Unmarshal(frames[1], &pub); err != nil {
@@ -389,7 +392,10 @@ func TestConnectionIsReused(t *testing.T) {
 		}
 	}
 	if auths != 1 {
-		t.Fatalf("got %d auth frames across 3 exports, want 1 — connection is not being reused", auths)
+		t.Fatalf(
+			"got %d auth frames across 3 exports, want 1 — connection is not being reused",
+			auths,
+		)
 	}
 }
 
@@ -397,7 +403,11 @@ func TestExportHeartbeatUsesHeartbeatTopic(t *testing.T) {
 	s := newStubServer(t)
 	tr := newTransport(t, s, "")
 
-	if err := tr.ExportHeartbeat(context.Background(), "", fleet.Heartbeat{Service: "gateway"}); err != nil {
+	if err := tr.ExportHeartbeat(
+		context.Background(),
+		"",
+		fleet.Heartbeat{Service: "gateway"},
+	); err != nil {
 		t.Fatalf("ExportHeartbeat: %v", err)
 	}
 

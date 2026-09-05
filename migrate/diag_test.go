@@ -135,7 +135,11 @@ func TestProbeIsDegradedAfterAFailedMigration(t *testing.T) {
 
 	report := probe()
 	if report.Status != diag.StatusDegraded {
-		t.Fatalf("status = %q after a failed migration, want %q", report.Status, diag.StatusDegraded)
+		t.Fatalf(
+			"status = %q after a failed migration, want %q",
+			report.Status,
+			diag.StatusDegraded,
+		)
 	}
 	if !strings.Contains(report.Summary, "syntax error near FROM") {
 		t.Errorf("the summary does not carry the error: %s", report.Summary)

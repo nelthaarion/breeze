@@ -53,7 +53,13 @@ func installWithStore(router *breeze.Router, cfg Config, store SpanStore) *Aggre
 	if store == nil {
 		store = NewMemStore(cfg)
 	}
-	a := &Aggregator{cfg: cfg, store: store, registry: NewServiceRegistry(cfg), topology: NewTopologyGraph(cfg), done: make(chan struct{})}
+	a := &Aggregator{
+		cfg:      cfg,
+		store:    store,
+		registry: NewServiceRegistry(cfg),
+		topology: NewTopologyGraph(cfg),
+		done:     make(chan struct{}),
+	}
 	if cfg.ContractValidation {
 		a.contracts = newContractEngine(cfg)
 	}
@@ -63,10 +69,18 @@ func installWithStore(router *breeze.Router, cfg Config, store SpanStore) *Aggre
 
 	if cfg.Logger != nil {
 		if !cfg.AuthEnabled() {
-			cfg.Logger("warning", "fleet aggregator read API has no Basic Auth; both username and password must be non-empty for auth to be enforced", "fleet")
+			cfg.Logger(
+				"warning",
+				"fleet aggregator read API has no Basic Auth; both username and password must be non-empty for auth to be enforced",
+				"fleet",
+			)
 		}
 		if cfg.IngestToken == "" {
-			cfg.Logger("warning", "fleet aggregator ingestion has no X-Fleet-Token; do not expose it on a public network", "fleet")
+			cfg.Logger(
+				"warning",
+				"fleet aggregator ingestion has no X-Fleet-Token; do not expose it on a public network",
+				"fleet",
+			)
 		}
 	}
 	a.registerRoutes(router)

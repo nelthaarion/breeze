@@ -84,7 +84,12 @@ func TestWorkerPool_PanicDoesNotLeak(t *testing.T) {
 	after := runtime.NumGoroutine()
 	leaked := after - before
 	if leaked > 1 {
-		t.Errorf("goroutine leak after panics: before=%d, after=%d, leaked=%d", before, after, leaked)
+		t.Errorf(
+			"goroutine leak after panics: before=%d, after=%d, leaked=%d",
+			before,
+			after,
+			leaked,
+		)
 	}
 }
 

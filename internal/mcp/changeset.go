@@ -154,10 +154,14 @@ func (s *changeSetStore) begin(projectPath string) (*changeSet, error) {
 	if len(s.sets) >= maxOpenChangeSets {
 		open := len(s.sets)
 		s.mu.Unlock()
-		return nil, fmt.Errorf("%d change sets are already open and the limit is %d. Each one is a "+
-			"full copy of a project that is kept until it is committed or discarded, so they do not "+
-			"expire on their own. Commit or discard one with breeze_commit_change_set or "+
-			"breeze_discard_change_set", open, maxOpenChangeSets)
+		return nil, fmt.Errorf(
+			"%d change sets are already open and the limit is %d. Each one is a "+
+				"full copy of a project that is kept until it is committed or discarded, so they do not "+
+				"expire on their own. Commit or discard one with breeze_commit_change_set or "+
+				"breeze_discard_change_set",
+			open,
+			maxOpenChangeSets,
+		)
 	}
 	s.mu.Unlock()
 
@@ -207,7 +211,10 @@ func (s *changeSetStore) get(id string) (*changeSet, error) {
 
 	set, ok := s.sets[id]
 	if !ok {
-		return nil, fmt.Errorf("unknown change set %q — it was committed, discarded, or never opened", id)
+		return nil, fmt.Errorf(
+			"unknown change set %q — it was committed, discarded, or never opened",
+			id,
+		)
 	}
 	return set, nil
 }
@@ -222,7 +229,10 @@ func (s *changeSetStore) take(id string) (*changeSet, error) {
 
 	set, ok := s.sets[id]
 	if !ok {
-		return nil, fmt.Errorf("unknown change set %q — it was committed, discarded, or never opened", id)
+		return nil, fmt.Errorf(
+			"unknown change set %q — it was committed, discarded, or never opened",
+			id,
+		)
 	}
 	delete(s.sets, id)
 	return set, nil
@@ -256,7 +266,11 @@ func (c *changeSet) pendingChanges() ([]fileChange, error) {
 // with its error — would mean a change set could be committed while containing
 // a step that did not happen, and the caller would have to inspect each entry
 // to find out whether the sequence is still coherent.
-func (c *changeSet) stage(toolName string, args json.RawMessage, run func(dir string) error) (stagedCall, error) {
+func (c *changeSet) stage(
+	toolName string,
+	args json.RawMessage,
+	run func(dir string) error,
+) (stagedCall, error) {
 	// Bounded before the generator runs. Each staged call retains its arguments and
 	// output for the history, so the sequence is memory as well as time.
 	if len(c.Calls) >= maxStagedCalls {
@@ -305,7 +319,11 @@ func (c *changeSet) commit() (changes []fileChange, warning string, err error) {
 	}
 
 	if err := applyChanges(c.box.projectDir(), c.ProjectPath, changes); err != nil {
-		return nil, "", fmt.Errorf("committing change set %s: %w (the project was left unchanged)", c.ID, err)
+		return nil, "", fmt.Errorf(
+			"committing change set %s: %w (the project was left unchanged)",
+			c.ID,
+			err,
+		)
 	}
 
 	for _, call := range c.Calls {
@@ -429,7 +447,10 @@ func stagedRunner(toolName string, args json.RawMessage) (func(dir string) error
 			return nil, fmt.Errorf("arguments for %s: %w", toolName, err)
 		}
 		if a.Dir != "" {
-			return nil, fmt.Errorf("%s cannot set dir inside a change set — the change set decides where the call runs", toolName)
+			return nil, fmt.Errorf(
+				"%s cannot set dir inside a change set — the change set decides where the call runs",
+				toolName,
+			)
 		}
 		argv, err := a.argv()
 		if err != nil {
@@ -443,7 +464,10 @@ func stagedRunner(toolName string, args json.RawMessage) (func(dir string) error
 			return nil, fmt.Errorf("arguments for %s: %w", toolName, err)
 		}
 		if a.Dir != "" {
-			return nil, fmt.Errorf("%s cannot set dir inside a change set — the change set decides where the call runs", toolName)
+			return nil, fmt.Errorf(
+				"%s cannot set dir inside a change set — the change set decides where the call runs",
+				toolName,
+			)
 		}
 		argv, err := a.argv()
 		if err != nil {
@@ -452,8 +476,10 @@ func stagedRunner(toolName string, args json.RawMessage) (func(dir string) error
 		return func(string) error { return generator.Generate(argv) }, nil
 
 	case "breeze_new":
-		return nil, errors.New("breeze_new cannot be staged: a change set is opened over a project that already exists. " +
-			"Use plan_project to see what a scaffold would create, then breeze_new to create it")
+		return nil, errors.New(
+			"breeze_new cannot be staged: a change set is opened over a project that already exists. " +
+				"Use plan_project to see what a scaffold would create, then breeze_new to create it",
+		)
 
 	default:
 		return nil, fmt.Errorf("%s cannot be staged; stageable tools are: %s",

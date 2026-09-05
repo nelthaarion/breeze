@@ -215,7 +215,12 @@ func TestVerifyProjectPassesAWorkingModule(t *testing.T) {
 			continue
 		}
 		if status, _ := step["status"].(string); status != "passed" {
-			t.Errorf("%s step status = %q, want passed (summary: %v)", name, status, step["summary"])
+			t.Errorf(
+				"%s step status = %q, want passed (summary: %v)",
+				name,
+				status,
+				step["summary"],
+			)
 		}
 	}
 
@@ -284,7 +289,11 @@ var Broken int = "this is a string, not an int"
 	// a disagreement between them would make one of the two wrong.
 	counts, _ := report["counts"].(map[string]any)
 	if errors, _ := counts["build_errors"].(float64); int(errors) != len(diagnostics) {
-		t.Errorf("counts.build_errors = %v but %d diagnostics were listed", errors, len(diagnostics))
+		t.Errorf(
+			"counts.build_errors = %v but %d diagnostics were listed",
+			errors,
+			len(diagnostics),
+		)
 	}
 }
 
@@ -387,7 +396,10 @@ func TestVerifyProjectSkipTestsSaysWhatItDidNotCheck(t *testing.T) {
 	report := structOf(t, result)
 
 	if ok, _ := report["ok"].(bool); !ok {
-		t.Fatalf("a working module failed a build-and-vet-only check:\n%s", renderStructured("", report))
+		t.Fatalf(
+			"a working module failed a build-and-vet-only check:\n%s",
+			renderStructured("", report),
+		)
 	}
 	if skipped, _ := report["tests_skipped"].(bool); !skipped {
 		t.Error("tests_skipped is false after skip_tests was set")
@@ -464,7 +476,10 @@ func TestRunBenchmarksReturnsNumbersNotText(t *testing.T) {
 		t.Errorf("iterations = %v, want a positive count", free["iterations"])
 	}
 	if allocs, present := free["allocs_per_op"].(float64); !present || allocs != 0 {
-		t.Errorf("allocs_per_op = %v for an allocation-free benchmark, want 0", free["allocs_per_op"])
+		t.Errorf(
+			"allocs_per_op = %v for an allocation-free benchmark, want 0",
+			free["allocs_per_op"],
+		)
 	}
 
 	// And the other direction: a benchmark that allocates must not be reported
@@ -505,7 +520,10 @@ func TestRunBenchmarksOnAPatternThatMatchesNothingSaysSo(t *testing.T) {
 		"benchtime": "10x",
 	})
 	if result.IsError {
-		t.Fatalf("an empty benchmark run was reported as a tool failure: %s", result.Content[0].Text)
+		t.Fatalf(
+			"an empty benchmark run was reported as a tool failure: %s",
+			result.Content[0].Text,
+		)
 	}
 
 	report := structOf(t, result)
@@ -537,7 +555,10 @@ func TestCoverageReportsPerPackageAndNamesUntestedOnesSeparately(t *testing.T) {
 
 	report := structOf(t, result)
 	if passed, _ := report["tests_passed"].(bool); !passed {
-		t.Errorf("the fixture's tests pass, but tests_passed is false:\n%s", renderStructured("", report))
+		t.Errorf(
+			"the fixture's tests pass, but tests_passed is false:\n%s",
+			renderStructured("", report),
+		)
 	}
 
 	total, present := report["total_percent"].(float64)
@@ -608,7 +629,10 @@ func TestAddFails(t *testing.T) {
 		"path": root,
 	})
 	if result.IsError {
-		t.Fatalf("coverage on a failing suite was reported as a tool error: %s", result.Content[0].Text)
+		t.Fatalf(
+			"coverage on a failing suite was reported as a tool error: %s",
+			result.Content[0].Text,
+		)
 	}
 
 	report := structOf(t, result)

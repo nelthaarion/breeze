@@ -47,7 +47,9 @@ func (c *Collector) registerDiagnostics() {
 // probe reports the dashboard's state.
 func (c *Collector) probe() diag.Report {
 	if c == nil {
-		return diag.Off("no dashboard collector is registered; call dashboard.Install(app, router, cfg)")
+		return diag.Off(
+			"no dashboard collector is registered; call dashboard.Install(app, router, cfg)",
+		)
 	}
 	if !c.cfg.Enabled {
 		return diag.Off("the dashboard is installed but Config.Enabled is false, so nothing is "+

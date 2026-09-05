@@ -147,7 +147,10 @@ func TestPublishDoesNotCrossTopics(t *testing.T) {
 		t.Errorf("the subscribed topic ran %d times, want 1", spans)
 	}
 	if beats != 0 {
-		t.Errorf("an unrelated topic ran %d times, want 0 — topic filtering is not isolating subscribers", beats)
+		t.Errorf(
+			"an unrelated topic ran %d times, want 0 — topic filtering is not isolating subscribers",
+			beats,
+		)
 	}
 }
 
@@ -292,7 +295,10 @@ func TestPublishAsyncCopiesPayload(t *testing.T) {
 	}
 
 	if s, _ := got.Load().(string); s != "original" {
-		t.Errorf("subscriber saw %q, want original — the async path is sharing the caller's buffer", s)
+		t.Errorf(
+			"subscriber saw %q, want original — the async path is sharing the caller's buffer",
+			s,
+		)
 	}
 }
 
@@ -321,7 +327,10 @@ func TestPublishAsyncCopiesMeta(t *testing.T) {
 	}
 
 	if s, _ := got.Load().(string); s != "abc" {
-		t.Errorf("subscriber saw trace_id=%q, want abc — the async path is sharing the caller's map", s)
+		t.Errorf(
+			"subscriber saw trace_id=%q, want abc — the async path is sharing the caller's map",
+			s,
+		)
 	}
 }
 

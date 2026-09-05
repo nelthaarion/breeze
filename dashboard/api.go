@@ -213,7 +213,11 @@ func (c *Collector) registerAuthRoutes(router *breeze.Router, base, dir string) 
 // once. auth is called inline rather than through c.wrap because a view route
 // answers an unauthenticated request with a redirect to the login page, while
 // wrap's callers are JSON endpoints that answer with a 401.
-func (c *Collector) registerPageRoutes(router *breeze.Router, base string, auth breeze.HandlerFunc) {
+func (c *Collector) registerPageRoutes(
+	router *breeze.Router,
+	base string,
+	auth breeze.HandlerFunc,
+) {
 	pages := []string{
 		"overview", "routes", "api", "requests",
 		"cache", "logs",
@@ -286,9 +290,21 @@ func (c *Collector) registerAPIRoutes(router *breeze.Router, base string, auth b
 
 	router.HandleBlocking(breeze.GET, api+"/db/tables", c.wrap(auth, c.handleDBTables))
 	router.HandleBlocking(breeze.GET, api+"/db/tables/:name", c.wrap(auth, c.handleDBTableData))
-	router.HandleBlocking(breeze.POST, api+"/db/tables/:name/rows", c.wrap(auth, c.handleDBTableInsert))
-	router.HandleBlocking(breeze.PUT, api+"/db/tables/:name/rows/:pk", c.wrap(auth, c.handleDBTableUpdate))
-	router.HandleBlocking(breeze.DELETE, api+"/db/tables/:name/rows/:pk", c.wrap(auth, c.handleDBTableDelete))
+	router.HandleBlocking(
+		breeze.POST,
+		api+"/db/tables/:name/rows",
+		c.wrap(auth, c.handleDBTableInsert),
+	)
+	router.HandleBlocking(
+		breeze.PUT,
+		api+"/db/tables/:name/rows/:pk",
+		c.wrap(auth, c.handleDBTableUpdate),
+	)
+	router.HandleBlocking(
+		breeze.DELETE,
+		api+"/db/tables/:name/rows/:pk",
+		c.wrap(auth, c.handleDBTableDelete),
+	)
 }
 
 // viewData builds the template data passed to every dashboard view.
@@ -337,7 +353,8 @@ func pageLabelFor(page string) string {
 func (c *Collector) wrap(auth breeze.HandlerFunc, h breeze.HandlerFunc) breeze.HandlerFunc {
 	return func(ctx *breeze.Context) error {
 		auth(ctx)
-		if ctx.Res != nil && (ctx.Res.Status == 401 || ctx.Res.Status == 403 || ctx.Res.Status == 302) {
+		if ctx.Res != nil &&
+			(ctx.Res.Status == 401 || ctx.Res.Status == 403 || ctx.Res.Status == 302) {
 			return nil
 		}
 		h(ctx)
@@ -590,7 +607,11 @@ func (c *Collector) handleFleetProxy(ctx *breeze.Context) error {
 		ctx.Status(502)
 		return ctx.JSON(map[string]any{"error": "fleet aggregator response unreadable"})
 	}
-	ctx.Res = &breeze.HTTPResponse{Status: resp.StatusCode, Headers: map[string]string{"Content-Type": resp.Header.Get("Content-Type")}, Body: body}
+	ctx.Res = &breeze.HTTPResponse{
+		Status:  resp.StatusCode,
+		Headers: map[string]string{"Content-Type": resp.Header.Get("Content-Type")},
+		Body:    body,
+	}
 
 	return nil
 }
@@ -671,7 +692,16 @@ func (c *Collector) handleDBTables(ctx *breeze.Context) error {
 func (c *Collector) handleDBTableData(ctx *breeze.Context) error {
 	inspector := c.DBInspector()
 	if inspector == nil {
-		return ctx.JSON(TableData{Table: ctx.Param("name"), Page: 1, PageSize: 50, Total: 0, Rows: []map[string]any{}, Columns: []TableColumn{}})
+		return ctx.JSON(
+			TableData{
+				Table:    ctx.Param("name"),
+				Page:     1,
+				PageSize: 50,
+				Total:    0,
+				Rows:     []map[string]any{},
+				Columns:  []TableColumn{},
+			},
+		)
 	}
 	page := atoiDefault(ctx.Query("page"), 1)
 	pageSize := atoiDefault(ctx.Query("page_size"), 50)
@@ -737,7 +767,10 @@ func (c *Collector) handleDBTableInsert(ctx *breeze.Context) error {
 		return ctx.JSON(map[string]any{"error": err.Error()})
 	}
 	c.invalidateTableCache(table)
-	c.RecordLog("app", LogEntry{Time: now(), Message: fmt.Sprintf("db write: insert into %s", table)})
+	c.RecordLog(
+		"app",
+		LogEntry{Time: now(), Message: fmt.Sprintf("db write: insert into %s", table)},
+	)
 	ctx.Status(201)
 	return ctx.JSON(row)
 }
@@ -766,7 +799,13 @@ func (c *Collector) handleDBTableUpdate(ctx *breeze.Context) error {
 		return ctx.JSON(map[string]any{"error": err.Error()})
 	}
 	c.invalidateTableCache(table)
-	c.RecordLog("app", LogEntry{Time: now(), Message: fmt.Sprintf("db write: update %s pk=%s", table, ctx.Param("pk"))})
+	c.RecordLog(
+		"app",
+		LogEntry{
+			Time:    now(),
+			Message: fmt.Sprintf("db write: update %s pk=%s", table, ctx.Param("pk")),
+		},
+	)
 	return ctx.JSON(map[string]any{"ok": true})
 }
 
@@ -787,7 +826,13 @@ func (c *Collector) handleDBTableDelete(ctx *breeze.Context) error {
 		return ctx.JSON(map[string]any{"error": err.Error()})
 	}
 	c.invalidateTableCache(table)
-	c.RecordLog("app", LogEntry{Time: now(), Message: fmt.Sprintf("db write: delete from %s pk=%s", table, ctx.Param("pk"))})
+	c.RecordLog(
+		"app",
+		LogEntry{
+			Time:    now(),
+			Message: fmt.Sprintf("db write: delete from %s pk=%s", table, ctx.Param("pk")),
+		},
+	)
 	ctx.Status(204)
 
 	return nil

@@ -33,7 +33,7 @@ type docTestParams struct {
 }
 
 type docTestBody struct {
-	Name  string `json:"name" description:"Display name."`
+	Name  string `json:"name"            description:"Display name."`
 	Count int    `json:"count,omitempty" description:"How many."`
 }
 
@@ -55,8 +55,10 @@ func registerDocTestRoutes(t *testing.T) {
 		Title: "Replace a widget",
 		Input: []scalar.InputGroup{
 			{Type: scalar.InputParams, Fields: docTestParams{}},
-			{Type: scalar.InputBody, Fields: docTestBody{}, Required: true,
-				Description: "The replacement."},
+			{
+				Type: scalar.InputBody, Fields: docTestBody{}, Required: true,
+				Description: "The replacement.",
+			},
 		},
 	})
 }

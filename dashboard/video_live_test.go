@@ -76,7 +76,10 @@ func TestVideoLiveRateUsesWindow(t *testing.T) {
 
 	// Two bursts 3ms apart. Span-based math would report ~66 MB/s.
 	v.record(video.StreamServed{File: "a.mp4", Bytes: 100 << 10, Partial: true}, now)
-	v.record(video.StreamServed{File: "a.mp4", Bytes: 100 << 10, Partial: true}, now.Add(3*time.Millisecond))
+	v.record(
+		video.StreamServed{File: "a.mp4", Bytes: 100 << 10, Partial: true},
+		now.Add(3*time.Millisecond),
+	)
 
 	got := v.Snapshot().Files[0].BytesPerSec
 	want := float64(200<<10) / videoRateWindow.Seconds()

@@ -60,7 +60,9 @@ func TestUsageNamesOnlyRealFeatures(t *testing.T) {
 	block := regexp.MustCompile(`(?s)Features \(breeze add --list for all \d+\):\n(.*?)\n\n`).
 		FindStringSubmatch(buf.String())
 	if block == nil {
-		t.Fatal("could not locate the feature block in printUsage; update this test if the layout changed")
+		t.Fatal(
+			"could not locate the feature block in printUsage; update this test if the layout changed",
+		)
 	}
 
 	known := make(map[string]bool, 32)
@@ -70,8 +72,12 @@ func TestUsageNamesOnlyRealFeatures(t *testing.T) {
 
 	for _, word := range regexp.MustCompile(`[a-z0-9]+`).FindAllString(block[1], -1) {
 		if !known[word] && generator.CanonicalFeatureName(word) == "" {
-			t.Errorf("printUsage's feature list names %q, which is not a registered feature or alias — "+
-				"`breeze add %s` would fail", word, word)
+			t.Errorf(
+				"printUsage's feature list names %q, which is not a registered feature or alias — "+
+					"`breeze add %s` would fail",
+				word,
+				word,
+			)
 		}
 	}
 }

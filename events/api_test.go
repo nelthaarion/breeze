@@ -571,7 +571,11 @@ func TestMultiErrorError(t *testing.T) {
 	}{
 		{"zero", nil, "events: no errors"},
 		{"one", []error{errors.New("a")}, "a"},
-		{"two", []error{errors.New("a"), errors.New("b")}, "events: 2 listeners failed: a (and 1 more)"},
+		{
+			"two",
+			[]error{errors.New("a"), errors.New("b")},
+			"events: 2 listeners failed: a (and 1 more)",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

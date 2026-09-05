@@ -57,10 +57,26 @@ func registerFleetFeature() {
 		DependsOn: []string{"dashboard"},
 
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
-			service := fs.String("service", "", "service name reported on every span (default: the module's last path element)")
-			transport := fs.String("transport", "http", "span transport: "+strings.Join(fleetImplementedTransports, ", "))
-			url := fs.String("aggregator-url", "http://localhost:9000/fleet", "aggregator HTTP write endpoint")
-			wsURL := fs.String("aggregator-ws-url", "ws://localhost:9000/fleet/ws", "aggregator WebSocket ingest endpoint (ws transport only)")
+			service := fs.String(
+				"service",
+				"",
+				"service name reported on every span (default: the module's last path element)",
+			)
+			transport := fs.String(
+				"transport",
+				"http",
+				"span transport: "+strings.Join(fleetImplementedTransports, ", "),
+			)
+			url := fs.String(
+				"aggregator-url",
+				"http://localhost:9000/fleet",
+				"aggregator HTTP write endpoint",
+			)
+			wsURL := fs.String(
+				"aggregator-ws-url",
+				"ws://localhost:9000/fleet/ws",
+				"aggregator WebSocket ingest endpoint (ws transport only)",
+			)
 			sample := fs.Float64("sample-rate", 1, "fraction of traces to sample, 0..1")
 			gzip := fs.Bool("gzip", false, "compress span batches (http transport only)")
 
@@ -200,12 +216,16 @@ func fleetEnv(key, fallback string) string {
 		notes = append(notes, loggerNote)
 	}
 	if cfg.Transport == "ws" {
-		notes = append(notes,
-			"The ws transport falls back to HTTP when the WebSocket cannot be established, so fleet.aggregator_url must stay reachable.")
+		notes = append(
+			notes,
+			"The ws transport falls back to HTTP when the WebSocket cannot be established, so fleet.aggregator_url must stay reachable.",
+		)
 	}
 	if cfg.Transport == "events" {
-		notes = append(notes,
-			"The events transport publishes spans onto the bus; the aggregator must subscribe to the same backend to receive them.")
+		notes = append(
+			notes,
+			"The events transport publishes spans onto the bus; the aggregator must subscribe to the same backend to receive them.",
+		)
 	}
 
 	return featureOutput{Body: body.String(), Imports: imports, Notes: notes}, nil

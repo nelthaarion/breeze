@@ -63,7 +63,10 @@ func parseFields(args []string) ([]field, error) {
 		// after the second is the rules segment.
 		parts := strings.SplitN(arg, ":", 3)
 		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-			return nil, fmt.Errorf("invalid field %q â€” expected name:type[:rules] (e.g. email:string or email:string:required,email)", arg)
+			return nil, fmt.Errorf(
+				"invalid field %q â€” expected name:type[:rules] (e.g. email:string or email:string:required,email)",
+				arg,
+			)
 		}
 		name, typ := parts[0], parts[1]
 		rules := ""
@@ -75,7 +78,12 @@ func parseFields(args []string) ([]field, error) {
 			return nil, fmt.Errorf("invalid field name %q â€” must be a valid Go identifier", name)
 		}
 		if !supportedFieldTypes[typ] {
-			return nil, fmt.Errorf("unsupported field type %q for %q â€” supported types: %s", typ, name, supportedFieldTypeList())
+			return nil, fmt.Errorf(
+				"unsupported field type %q for %q â€” supported types: %s",
+				typ,
+				name,
+				supportedFieldTypeList(),
+			)
 		}
 
 		validate, err := parseValidateSpec(rules, name, typ)
@@ -110,7 +118,11 @@ func parseFieldsNoRules(kind string, args []string) ([]field, error) {
 		// segment. Caught before parseFields so the message names the real
 		// problem rather than reporting an unknown rule.
 		if strings.Count(arg, ":") >= 2 {
-			return nil, fmt.Errorf("field %q carries validation rules, which `generate %s` cannot use â€” only `generate resource` binds a request through binding.Bind, which is what reads a validate tag", arg, kind)
+			return nil, fmt.Errorf(
+				"field %q carries validation rules, which `generate %s` cannot use â€” only `generate resource` binds a request through binding.Bind, which is what reads a validate tag",
+				arg,
+				kind,
+			)
 		}
 	}
 	return parseFields(args)
@@ -151,16 +163,29 @@ func parseValidateSpec(spec, fieldName, typ string) (string, error) {
 			}
 		case validateRulesNeedingArg[ruleName]:
 			if strings.TrimSpace(arg) == "" {
-				return "", fmt.Errorf("rule %q on field %q needs an argument, as in %s=â€¦", ruleName, fieldName, ruleName)
+				return "", fmt.Errorf(
+					"rule %q on field %q needs an argument, as in %s=â€¦",
+					ruleName,
+					fieldName,
+					ruleName,
+				)
 			}
 		default:
-			return "", fmt.Errorf("unknown validation rule %q on field %q â€” supported rules: email, max=N, min=N, oneof=a b c, required", ruleName, fieldName)
+			return "", fmt.Errorf(
+				"unknown validation rule %q on field %q â€” supported rules: email, max=N, min=N, oneof=a b c, required",
+				ruleName,
+				fieldName,
+			)
 		}
 
 		// email compares a string against a regexp; on any other kind
 		// checkEmail returns false, so every request would be rejected.
 		if ruleName == "email" && typ != "string" {
-			return "", fmt.Errorf("rule \"email\" on field %q applies to string, not %s", fieldName, typ)
+			return "", fmt.Errorf(
+				"rule \"email\" on field %q applies to string, not %s",
+				fieldName,
+				typ,
+			)
 		}
 
 		out = append(out, part)

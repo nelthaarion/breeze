@@ -248,7 +248,12 @@ func (c *Collector) shouldCaptureFullRecord(duration time.Duration, status int) 
 
 // updateRouteStats updates per-route aggregation for a request.
 // This is called only when capturing a full record.
-func (c *Collector) updateRouteStats(method, pattern string, durationUS int64, status int, when time.Time) {
+func (c *Collector) updateRouteStats(
+	method, pattern string,
+	durationUS int64,
+	status int,
+	when time.Time,
+) {
 	key := method + " " + pattern
 	c.routeStatsMu.RLock()
 	acc, ok := c.routeStats[key]

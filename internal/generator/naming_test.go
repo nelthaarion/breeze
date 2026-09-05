@@ -72,8 +72,11 @@ func TestFilenameAndPackageOverrideEveryApplicableKind(t *testing.T) {
 			if entries, err := os.ReadDir(tc.dir); err == nil {
 				for _, e := range entries {
 					if e.Name() != "custom_output.go" && strings.HasSuffix(e.Name(), ".go") {
-						t.Errorf("%s also wrote %s; the override should replace the default name, not add to it",
-							tc.kind, filepath.Join(tc.dir, e.Name()))
+						t.Errorf(
+							"%s also wrote %s; the override should replace the default name, not add to it",
+							tc.kind,
+							filepath.Join(tc.dir, e.Name()),
+						)
 					}
 				}
 			}
@@ -141,11 +144,18 @@ func TestKindsWithoutOutputFlagsRefuseThemWithAReason(t *testing.T) {
 			projectDir(t)
 			err := runGenerate(append(args, "--"+outputPackageFlag+"=whatever"))
 			if err == nil {
-				t.Fatalf("breeze generate %s accepted --%s, which it cannot honour", args[0], outputPackageFlag)
+				t.Fatalf(
+					"breeze generate %s accepted --%s, which it cannot honour",
+					args[0],
+					outputPackageFlag,
+				)
 			}
 			msg := err.Error()
 			if strings.Contains(msg, "not defined") {
-				t.Errorf("the refusal reads as an unknown flag rather than an inapplicable one: %v", err)
+				t.Errorf(
+					"the refusal reads as an unknown flag rather than an inapplicable one: %v",
+					err,
+				)
 			}
 			for _, want := range []string{outputPackageFlag, outputFilenameFlag} {
 				if !strings.Contains(msg, want) {
@@ -178,7 +188,9 @@ func TestInvalidPackageNameIsRejectedWithASpecificError(t *testing.T) {
 		}
 		t.Run(value, func(t *testing.T) {
 			projectDir(t)
-			err := runGenerate([]string{"model", "Gadget", "sku:string", "--" + outputPackageFlag + "=" + value})
+			err := runGenerate(
+				[]string{"model", "Gadget", "sku:string", "--" + outputPackageFlag + "=" + value},
+			)
 			if err == nil {
 				t.Fatalf("--%s=%s was accepted", outputPackageFlag, value)
 			}
@@ -190,7 +202,12 @@ func TestInvalidPackageNameIsRejectedWithASpecificError(t *testing.T) {
 				t.Errorf("the error does not quote the offending value: %v", err)
 			}
 			if !strings.Contains(msg, want) {
-				t.Errorf("the error does not say why %q is illegal (want it to mention %q): %v", value, want, err)
+				t.Errorf(
+					"the error does not say why %q is illegal (want it to mention %q): %v",
+					value,
+					want,
+					err,
+				)
 			}
 		})
 	}
@@ -210,8 +227,10 @@ func TestPackageThatDisagreesWithItsDirectoryIsRejected(t *testing.T) {
 		t.Fatalf("breeze generate handler: %v", err)
 	}
 
-	err := runGenerate([]string{"resource", "Widget", "name:string",
-		"--" + outputPackageFlag + "=widgets"})
+	err := runGenerate([]string{
+		"resource", "Widget", "name:string",
+		"--" + outputPackageFlag + "=widgets",
+	})
 	if err == nil {
 		t.Fatal("a second package was accepted in a directory that already has one")
 	}

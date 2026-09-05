@@ -73,13 +73,26 @@ func interactiveStdin(in io.Reader) bool {
 func printStdioGuide(w io.Writer, name string, opts Options) {
 	tools := mcp.ModeToolNames(opts.Mode)
 
-	fmt.Fprintf(w, "%s: MCP server ready on stdin/stdout. This is not an interactive command.\n\n", name)
-	fmt.Fprint(w, "  It is now waiting for JSON-RPC 2.0 messages on stdin and will answer on stdout.\n")
-	fmt.Fprint(w, "  Nothing else will be printed until a client speaks to it — the silence is the\n")
+	fmt.Fprintf(
+		w,
+		"%s: MCP server ready on stdin/stdout. This is not an interactive command.\n\n",
+		name,
+	)
+	fmt.Fprint(
+		w,
+		"  It is now waiting for JSON-RPC 2.0 messages on stdin and will answer on stdout.\n",
+	)
+	fmt.Fprint(
+		w,
+		"  Nothing else will be printed until a client speaks to it — the silence is the\n",
+	)
 	fmt.Fprint(w, "  server working, not a hang. Ctrl+C to stop.\n\n")
 
 	fmt.Fprintf(w, "  mode        %s (%s)\n", opts.Mode, modeSummary(opts.Mode))
-	fmt.Fprint(w, "  transport   stdio — no port, no token; the process boundary is the trust boundary\n")
+	fmt.Fprint(
+		w,
+		"  transport   stdio — no port, no token; the process boundary is the trust boundary\n",
+	)
 	fmt.Fprintf(w, "  tools       %d\n", len(tools))
 	if opts.Scope.IsScoped() {
 		fmt.Fprintf(w, "  scope       %s\n", strings.Join(scopeNames(opts.Scope), ", "))
@@ -89,15 +102,28 @@ func printStdioGuide(w io.Writer, name string, opts Options) {
 	if roots := mcp.WorkspaceRoots(); len(roots) > 0 {
 		fmt.Fprintf(w, "  workspace   %s\n", strings.Join(roots, ", "))
 	} else {
-		fmt.Fprint(w, "  workspace   UNCONFINED (--allow-any-path): tools may read, write and run\n")
+		fmt.Fprint(
+			w,
+			"  workspace   UNCONFINED (--allow-any-path): tools may read, write and run\n",
+		)
 		fmt.Fprint(w, "              \"go test\" anywhere on this host\n")
 	}
 
 	fmt.Fprint(w, "\n  An editor normally starts this for you. Point its MCP config at:\n\n")
-	fmt.Fprintf(w, "    {\"mcpServers\": {\"breeze\": {\"command\": %q, \"args\": [\"--mode\", %q]}}}\n", name, opts.Mode)
+	fmt.Fprintf(
+		w,
+		"    {\"mcpServers\": {\"breeze\": {\"command\": %q, \"args\": [\"--mode\", %q]}}}\n",
+		name,
+		opts.Mode,
+	)
 
 	fmt.Fprint(w, "\n  To drive it by hand, pipe a message in:\n\n")
-	fmt.Fprintf(w, "    echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' | %s --mode %s\n", name, opts.Mode)
+	fmt.Fprintf(
+		w,
+		"    echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' | %s --mode %s\n",
+		name,
+		opts.Mode,
+	)
 
 	fmt.Fprint(w, "\n  For a control port with a bearer token instead, which is what a remote or\n")
 	fmt.Fprint(w, "  containerised agent needs:\n\n")
@@ -128,14 +154,29 @@ func printNetworkGuide(w io.Writer, name string, opts Options, server *mcp.Netwo
 	if strings.TrimSpace(opts.Token) == "" {
 		// Generated. The one line above this is the only place it appears, so the
 		// instruction is to capture it rather than to look it up later.
-		fmt.Fprint(w, "    The token above is shown once and is not stored. Copy it now, or restart\n")
+		fmt.Fprint(
+			w,
+			"    The token above is shown once and is not stored. Copy it now, or restart\n",
+		)
 		fmt.Fprintf(w, "    with %s set to a value you control:\n\n", TokenEnv)
 	} else {
-		fmt.Fprintf(w, "    The token came from --token or %s, so it is not reprinted here.\n\n", TokenEnv)
+		fmt.Fprintf(
+			w,
+			"    The token came from --token or %s, so it is not reprinted here.\n\n",
+			TokenEnv,
+		)
 	}
-	fmt.Fprintf(w, "      export %s=<token>          # on Windows: $env:%s=\"<token>\"\n\n", TokenEnv, TokenEnv)
+	fmt.Fprintf(
+		w,
+		"      export %s=<token>          # on Windows: $env:%s=\"<token>\"\n\n",
+		TokenEnv,
+		TokenEnv,
+	)
 
-	fmt.Fprint(w, "    Check it works — this needs no MCP session and answers what this server can do:\n\n")
+	fmt.Fprint(
+		w,
+		"    Check it works — this needs no MCP session and answers what this server can do:\n\n",
+	)
 	fmt.Fprintf(w, "      curl -H \"Authorization: Bearer $%s\" %s%s\n\n",
 		TokenEnv, strings.TrimSuffix(endpoint, server.Endpoint()), featuresEndpoint)
 
@@ -147,7 +188,10 @@ func printNetworkGuide(w io.Writer, name string, opts Options, server *mcp.Netwo
 	fmt.Fprint(w, "    endpoint answers 401 and no tool is reachable.\n")
 
 	if opts.Host == mcp.DefaultNetworkHost {
-		fmt.Fprint(w, "\n    Bound to loopback, so only this machine can reach it. --host widens that,\n")
+		fmt.Fprint(
+			w,
+			"\n    Bound to loopback, so only this machine can reach it. --host widens that,\n",
+		)
 		fmt.Fprint(w, "    and then the token is the only guard.\n")
 	}
 	fmt.Fprintln(w)

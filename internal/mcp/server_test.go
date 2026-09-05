@@ -254,7 +254,11 @@ func TestToolRegistryCovers(t *testing.T) {
 	if len(srv.tools) != len(want) {
 		t.Errorf("the server registers %d tools, expected %d", len(srv.tools), len(want))
 	}
-	t.Logf("tool count: %d (the server began with %d generator tools)", len(srv.tools), baselineToolCount)
+	t.Logf(
+		"tool count: %d (the server began with %d generator tools)",
+		len(srv.tools),
+		baselineToolCount,
+	)
 }
 
 func TestToolsCallProtocolErrors(t *testing.T) {
@@ -492,7 +496,10 @@ func TestCaptureStdoutAllowsConcurrentCapturesFromOtherGoroutines(t *testing.T) 
 	select {
 	case err := <-second:
 		close(release)
-		t.Fatalf("a capture on another goroutine returned early (err=%v); it should have waited", err)
+		t.Fatalf(
+			"a capture on another goroutine returned early (err=%v); it should have waited",
+			err,
+		)
 	case <-time.After(200 * time.Millisecond):
 	}
 
@@ -508,7 +515,6 @@ func TestCaptureStdoutAllowsConcurrentCapturesFromOtherGoroutines(t *testing.T) 
 }
 
 func TestFlagsToArgv(t *testing.T) {
-
 	got := flagsToArgv(map[string]any{
 		"allow-writes": true,
 		"disabled":     false,
@@ -527,7 +533,11 @@ func TestGenerateToolPassesKindSpecificFlags(t *testing.T) {
 	// Generation commands intentionally refuse to write outside a Go module.
 	// A one-line module is enough for this fixture; the generator supplies the
 	// Breeze import when it writes the handler and route registry.
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/mcptest\n\ngo 1.24\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dir, "go.mod"),
+		[]byte("module example.com/mcptest\n\ngo 1.24\n"),
+		0o644,
+	); err != nil {
 		t.Fatalf("write fixture go.mod: %v", err)
 	}
 	result := callTool(t, NewServer("test"), "breeze_generate", map[string]any{

@@ -138,7 +138,15 @@ func payloadFor[T any](b *Bus, event T) any {
 // It exists to own the closure. See the comment at its only call site: the
 // closure's captures escape, and isolating it here keeps that cost on the
 // dispatches that actually have middleware registered.
-func runMiddlewareChain[T any](mw []Middleware, b *Bus, e *entry, ctx *Context, snap []*listener[T], event T, obs Observer) (ran int, stopped bool, err error) {
+func runMiddlewareChain[T any](
+	mw []Middleware,
+	b *Bus,
+	e *entry,
+	ctx *Context,
+	snap []*listener[T],
+	event T,
+	obs Observer,
+) (ran int, stopped bool, err error) {
 	err = runChain(mw, ctx, func() error {
 		var derr error
 		ran, stopped, derr = runListeners(b, e, ctx, snap, event, obs)
@@ -151,7 +159,14 @@ func runMiddlewareChain[T any](mw []Middleware, b *Bus, e *entry, ctx *Context, 
 //
 // It returns the number of listeners that actually ran, whether
 // propagation was stopped, and the resulting error.
-func runListeners[T any](b *Bus, e *entry, ctx *Context, snap []*listener[T], event T, obs Observer) (ran int, stopped bool, err error) {
+func runListeners[T any](
+	b *Bus,
+	e *entry,
+	ctx *Context,
+	snap []*listener[T],
+	event T,
+	obs Observer,
+) (ran int, stopped bool, err error) {
 	// errs stays nil unless ContinueOnError collects more than one
 	// failure, so the common paths allocate nothing.
 	var errs []error
@@ -202,7 +217,15 @@ func runListeners[T any](b *Bus, e *entry, ctx *Context, snap []*listener[T], ev
 // Recovery lives in its own function so the deferred recover is scoped to
 // a single listener: a panic unwinds only that call, and the loop in
 // runListeners survives to run the rest.
-func invokeListener[T any](b *Bus, e *entry, ctx *Context, l *listener[T], event T, obs Observer, idx int) (err error, skipped bool) {
+func invokeListener[T any](
+	b *Bus,
+	e *entry,
+	ctx *Context,
+	l *listener[T],
+	event T,
+	obs Observer,
+	idx int,
+) (err error, skipped bool) {
 	// panicked is set by the recovery defer below and read by the
 	// observer defer. Both are declared here so the observer sees the
 	// outcome after recovery has settled it.
@@ -280,7 +303,17 @@ func invokeListener[T any](b *Bus, e *entry, ctx *Context, l *listener[T], event
 
 // finish records metrics and history for a completed dispatch, and hands
 // the result to the observer if one is attached.
-func (b *Bus) finish(e *entry, ctx *Context, d time.Duration, start time.Time, ran int, stopped bool, err error, payload any, async bool) {
+func (b *Bus) finish(
+	e *entry,
+	ctx *Context,
+	d time.Duration,
+	start time.Time,
+	ran int,
+	stopped bool,
+	err error,
+	payload any,
+	async bool,
+) {
 	if b.cfg.Metrics {
 		e.stats.observe(d, start)
 		e.stats.listeners.Add(uint64(ran))
@@ -448,7 +481,17 @@ func emitAsync[T any](b *Bus, stdctx context.Context, event T, wg *sync.WaitGrou
 
 	// Duration here measures scheduling, not execution; the Record's
 	// Async flag tells consumers how to read it.
-	b.finish(e, ctx, time.Since(start), start, scheduled, ctx.Cancelled(), nil, payloadFor(b, event), true)
+	b.finish(
+		e,
+		ctx,
+		time.Since(start),
+		start,
+		scheduled,
+		ctx.Cancelled(),
+		nil,
+		payloadFor(b, event),
+		true,
+	)
 	return nil
 }
 
@@ -468,7 +511,14 @@ func (b *Bus) schedule(task func()) bool {
 //
 // It is a free function rather than a method because Go does not permit
 // type parameters on methods.
-func runAsyncListener[T any](b *Bus, e *entry, ctx *Context, l *listener[T], event T, obs Observer) {
+func runAsyncListener[T any](
+	b *Bus,
+	e *entry,
+	ctx *Context,
+	l *listener[T],
+	event T,
+	obs Observer,
+) {
 	var panicked bool
 	var lstart time.Time
 

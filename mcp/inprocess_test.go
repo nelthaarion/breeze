@@ -323,9 +323,15 @@ func TestInProcessRejectsAWorkspaceToolCall(t *testing.T) {
 				t.Fatalf("%s was accepted in-process; the response was %v", name, resp)
 			}
 			if code, _ := errObj["code"].(float64); int(code) != -32602 {
-				t.Errorf("error code = %v, want -32602 (an unknown tool name is a parameter error)", errObj["code"])
+				t.Errorf(
+					"error code = %v, want -32602 (an unknown tool name is a parameter error)",
+					errObj["code"],
+				)
 			}
-			if message, _ := errObj["message"].(string); !strings.Contains(message, "unknown tool") {
+			if message, _ := errObj["message"].(string); !strings.Contains(
+				message,
+				"unknown tool",
+			) {
 				t.Errorf("the refusal does not say the tool is unknown: %q", message)
 			}
 		})
@@ -481,9 +487,11 @@ func TestAppTrafficAndToolCallsConcurrently(t *testing.T) {
 				args map[string]any
 			}{
 				{"breeze_get_routes", map[string]any{
-					"service_url": app.appURL, "username": testUser, "password": testPassword}},
+					"service_url": app.appURL, "username": testUser, "password": testPassword,
+				}},
 				{"breeze_get_performance", map[string]any{
-					"service_url": app.appURL, "username": testUser, "password": testPassword}},
+					"service_url": app.appURL, "username": testUser, "password": testPassword,
+				}},
 				// Answers from constants, so it exercises the dispatcher without an
 				// outbound request — a different shape of concurrent work.
 				{"breeze_describe_schema", map[string]any{}},
@@ -512,10 +520,18 @@ func TestAppTrafficAndToolCallsConcurrently(t *testing.T) {
 	// Both sides must have actually run. A window in which one made no progress is a
 	// starvation result, and it would otherwise read as a pass.
 	if appRequests < trafficWorkers {
-		t.Errorf("only %d application requests completed in %s; the app was starved", appRequests, window)
+		t.Errorf(
+			"only %d application requests completed in %s; the app was starved",
+			appRequests,
+			window,
+		)
 	}
 	if toolCalls < toolWorkers {
-		t.Errorf("only %d tool calls completed in %s; the control plane was starved", toolCalls, window)
+		t.Errorf(
+			"only %d tool calls completed in %s; the control plane was starved",
+			toolCalls,
+			window,
+		)
 	}
 	t.Logf("%d application requests and %d tool calls completed concurrently in %s",
 		appRequests, toolCalls, window)
@@ -621,7 +637,10 @@ func TestWorkspaceToolInProcessUnderLoad(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("AllowWorkspaceTools did not restore breeze_new; %d tools advertised", len(advertised))
+		t.Fatalf(
+			"AllowWorkspaceTools did not restore breeze_new; %d tools advertised",
+			len(advertised),
+		)
 	}
 
 	// Traffic for the duration, so the generator call and request handling overlap.
@@ -684,8 +703,12 @@ func TestWorkspaceToolInProcessUnderLoad(t *testing.T) {
 	}
 
 	if len(failures) > 0 {
-		t.Errorf("%d of %d application requests failed while a workspace tool ran in-process; first: %s",
-			len(failures), served, failures[0])
+		t.Errorf(
+			"%d of %d application requests failed while a workspace tool ran in-process; first: %s",
+			len(failures),
+			served,
+			failures[0],
+		)
 	}
 	if served == 0 {
 		t.Error("no application requests completed during the generator call")
@@ -950,7 +973,11 @@ func TestInProcessUnscopedIsUnchanged(t *testing.T) {
 		t.Fatalf("the handshake returned %d", status)
 	}
 	if got, want := len(session.toolNames(t)), len(mcp.Tools()); got != want {
-		t.Errorf("%d tools advertised without a scope, want the full in-process set of %d", got, want)
+		t.Errorf(
+			"%d tools advertised without a scope, want the full in-process set of %d",
+			got,
+			want,
+		)
 	}
 }
 

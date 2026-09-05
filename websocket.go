@@ -436,11 +436,13 @@ func (h *WSHandlerFunc) OnConnect(c *WSConn) {
 		h.Connect(c)
 	}
 }
+
 func (h *WSHandlerFunc) OnMessage(c *WSConn, op byte, p []byte) {
 	if h.Message != nil {
 		h.Message(c, op, p)
 	}
 }
+
 func (h *WSHandlerFunc) OnClose(c *WSConn, code uint16, reason string) {
 	if h.Close != nil {
 		h.Close(c, code, reason)

@@ -15,7 +15,9 @@ func currentModulePath() (string, error) {
 	f, err := os.Open("go.mod")
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("no go.mod found in current directory â€” run this from the root of a Breeze project")
+			return "", fmt.Errorf(
+				"no go.mod found in current directory â€” run this from the root of a Breeze project",
+			)
 		}
 		return "", err
 	}

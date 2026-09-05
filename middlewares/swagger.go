@@ -19,7 +19,6 @@ import (
 // option; it is a deliberate decision that it is not currently taken, and the
 // changelog entry is the place that decision lives.
 type ScalarOptions struct {
-
 	// Title is the API name shown in Scalar (default: "Breeze API").
 	Title string
 

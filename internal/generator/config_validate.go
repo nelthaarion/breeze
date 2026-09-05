@@ -77,7 +77,9 @@ func (c *ProjectConfig) validateFleet() []string {
 	case !slices.Contains(fleetImplementedTransports, c.Fleet.Transport):
 		errs = append(errs, fmt.Sprintf(
 			"fleet.transport %q is defined by the Fleet specification but has no transport implementation in the fleet package yet, so it cannot be generated â€” currently generatable: %s",
-			c.Fleet.Transport, strings.Join(fleetImplementedTransports, ", ")))
+			c.Fleet.Transport,
+			strings.Join(fleetImplementedTransports, ", "),
+		))
 	}
 
 	// Backend is meaningful only for the events transport. Setting it elsewhere
@@ -89,7 +91,9 @@ func (c *ProjectConfig) validateFleet() []string {
 	} else if c.Fleet.Transport == "events" && !slices.Contains(fleetImplementedBackends, c.Fleet.Backend) {
 		errs = append(errs, fmt.Sprintf(
 			"fleet.backend %q has no implementation in the events package yet â€” currently generatable: %s",
-			c.Fleet.Backend, strings.Join(fleetImplementedBackends, ", ")))
+			c.Fleet.Backend,
+			strings.Join(fleetImplementedBackends, ", "),
+		))
 	}
 
 	if c.Fleet.SampleRate < 0 || c.Fleet.SampleRate > 1 {
@@ -114,7 +118,6 @@ func (c *ProjectConfig) validateFleet() []string {
 		}
 	}
 	return errs
-
 }
 
 func (c *ProjectConfig) validateJSONRPC() []string {
@@ -129,7 +132,8 @@ func (c *ProjectConfig) validateJSONRPC() []string {
 	if c.JSONRPC.Port == c.Server.Port {
 		errs = append(errs, fmt.Sprintf(
 			"jsonrpc.port %d is the same as server.port â€” JSON-RPC listens on its own gnet listener and cannot share the HTTP port",
-			c.JSONRPC.Port))
+			c.JSONRPC.Port,
+		))
 	}
 	if c.JSONRPC.MaxMessageBytes < 0 {
 		errs = append(errs, "jsonrpc.max_message_bytes is negative")
@@ -144,7 +148,9 @@ func (c *ProjectConfig) validateJSONRPC() []string {
 		// The spec reserves the rpc. prefix for internal methods (Â§4).
 		if strings.HasPrefix(m, "rpc.") {
 			errs = append(errs, fmt.Sprintf(
-				"jsonrpc method %q uses the rpc. prefix, which JSON-RPC 2.0 Â§4 reserves for internal methods", m))
+				"jsonrpc method %q uses the rpc. prefix, which JSON-RPC 2.0 Â§4 reserves for internal methods",
+				m,
+			))
 		}
 		if seen[m] {
 			errs = append(errs, fmt.Sprintf("jsonrpc method %q is listed twice", m))
@@ -217,13 +223,19 @@ func (c *ProjectConfig) validateRoutes() []string {
 
 		for _, m := range r.Methods {
 			if !slices.Contains(httpMethods, strings.ToUpper(m)) {
-				errs = append(errs, fmt.Sprintf("route %s method %q is not an HTTP method", r.Resource, m))
+				errs = append(
+					errs,
+					fmt.Sprintf("route %s method %q is not an HTTP method", r.Resource, m),
+				)
 			}
 		}
 		// A route may name a model, and that reference is checked here for the
 		// same reason field types are: the generated handler would not compile.
 		if r.Model != "" && !models[r.Model] {
-			errs = append(errs, fmt.Sprintf("route %s references unknown model %s", r.Resource, r.Model))
+			errs = append(
+				errs,
+				fmt.Sprintf("route %s references unknown model %s", r.Resource, r.Model),
+			)
 		}
 	}
 	return errs
@@ -273,7 +285,10 @@ func (c *ProjectConfig) validateModels() []string {
 				continue
 			}
 			if fieldSeen[f.Name] {
-				errs = append(errs, fmt.Sprintf("model %s field %s is defined twice", m.Name, f.Name))
+				errs = append(
+					errs,
+					fmt.Sprintf("model %s field %s is defined twice", m.Name, f.Name),
+				)
 			}
 			fieldSeen[f.Name] = true
 			if f.PrimaryKey {
@@ -285,7 +300,10 @@ func (c *ProjectConfig) validateModels() []string {
 			}
 		}
 		if keys > 1 {
-			errs = append(errs, fmt.Sprintf("model %s marks %d fields as primary_key", m.Name, keys))
+			errs = append(
+				errs,
+				fmt.Sprintf("model %s marks %d fields as primary_key", m.Name, keys),
+			)
 		}
 	}
 	return errs

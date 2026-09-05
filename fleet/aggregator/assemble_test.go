@@ -63,7 +63,17 @@ func TestAssembleLinksParentChild(t *testing.T) {
 	if tr.OrphanCount != 0 {
 		t.Errorf("orphan count = %d, want 0", tr.OrphanCount)
 	}
-	if want := []string{"auth", "gateway", "orders"}; strings.Join(tr.Services, ",") != strings.Join(want, ",") {
+	if want := []string{
+		"auth",
+		"gateway",
+		"orders",
+	}; strings.Join(
+		tr.Services,
+		",",
+	) != strings.Join(
+		want,
+		",",
+	) {
 		t.Errorf("services = %v, want %v", tr.Services, want)
 	}
 }
@@ -181,7 +191,9 @@ func TestAssembleDoesNotFlagNormalTiming(t *testing.T) {
 		span("b", "a", "auth", 105, 5, 200),
 	})
 	if tr.SkewFlagged {
-		t.Error("a normally-ordered trace was flagged as skewed — false positives train people to ignore the badge")
+		t.Error(
+			"a normally-ordered trace was flagged as skewed — false positives train people to ignore the badge",
+		)
 	}
 }
 
@@ -232,8 +244,9 @@ func TestRootCauseCascadingFailure(t *testing.T) {
 	for _, root := range tr.Roots {
 		walk(root, func(_, n *SpanNode) {
 			if n.SpanID == sid("a") && n.RootCause {
-
-				t.Error("gateway marked root cause: it was waiting on failing callees, so its 500 is inherited")
+				t.Error(
+					"gateway marked root cause: it was waiting on failing callees, so its 500 is inherited",
+				)
 			}
 		})
 	}
@@ -303,7 +316,6 @@ func TestRootCauseDeepSynchronousCascade(t *testing.T) {
 }
 
 func TestRootCauseAbsentWhenNothingFailed(t *testing.T) {
-
 	tr := Assemble(strings.Repeat("a", 32), []fleet.Span{
 		span("a", "", "gateway", 0, 40, 200),
 		span("b", "a", "auth", 10, 5, 204),

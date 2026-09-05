@@ -200,7 +200,10 @@ func (m *MemoryStore) PendingWorkflows(_ context.Context) ([]WorkflowRecord, err
 	return out, nil
 }
 
-func (m *MemoryStore) FindByIdempotencyKey(_ context.Context, workflow, key string) (WorkflowRecord, bool, error) {
+func (m *MemoryStore) FindByIdempotencyKey(
+	_ context.Context,
+	workflow, key string,
+) (WorkflowRecord, bool, error) {
 	if key == "" {
 		return WorkflowRecord{}, false, nil
 	}

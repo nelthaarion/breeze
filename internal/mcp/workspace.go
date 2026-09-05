@@ -458,7 +458,10 @@ func applyChanges(from, to string, changes []fileChange) (err error) {
 
 		switch change.Change {
 		case changeDeleted:
-			if removeErr := os.Remove(target); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+			if removeErr := os.Remove(
+				target,
+			); removeErr != nil &&
+				!errors.Is(removeErr, fs.ErrNotExist) {
 				return removeErr
 			}
 		default:

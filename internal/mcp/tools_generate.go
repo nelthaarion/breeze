@@ -43,10 +43,18 @@ func newProjectTool() *tool {
 		description: "Scaffold a new Breeze project. Creates a directory containing " +
 			"a runnable main.go, go.mod, and the layout for the chosen template.",
 		schema: objectSchema(map[string]any{
-			"name":     stringProp("Project directory name, e.g. myapp."),
-			"template": map[string]any{"type": "string", "enum": []string{"api", "views"}, "description": "api for a JSON service, views for server-rendered HTML. Defaults to api."},
-			"module":   stringProp("Go module path, e.g. example.com/myapp. Defaults to the project name."),
-			"dir":      stringProp("Parent directory to create the project in. Defaults to the server's working directory."),
+			"name": stringProp("Project directory name, e.g. myapp."),
+			"template": map[string]any{
+				"type":        "string",
+				"enum":        []string{"api", "views"},
+				"description": "api for a JSON service, views for server-rendered HTML. Defaults to api.",
+			},
+			"module": stringProp(
+				"Go module path, e.g. example.com/myapp. Defaults to the project name.",
+			),
+			"dir": stringProp(
+				"Parent directory to create the project in. Defaults to the server's working directory.",
+			),
 		}, "name"),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a newProjectArgs
@@ -111,13 +119,19 @@ func generateTool() *tool {
 		schema: objectSchema(map[string]any{
 			"kind": map[string]any{
 				"type": "string",
-				"enum": []string{"handler", "resource", "model", "event", "listener",
-					"workflow", "middleware", "ws", "view", "job", "grpc"},
+				"enum": []string{
+					"handler", "resource", "model", "event", "listener",
+					"workflow", "middleware", "ws", "view", "job", "grpc",
+				},
 				"description": "What to generate.",
 			},
-			"name":   stringProp("Name of the thing to generate, e.g. User. Required for every kind except where the generator says otherwise."),
-			"fields": stringsProp(`For model and resource: field specs as "name:type", e.g. ["name:string","age:int"].`),
-			"steps":  stringsProp("For workflow: step names, e.g. [\"validate\",\"create\"]."),
+			"name": stringProp(
+				"Name of the thing to generate, e.g. User. Required for every kind except where the generator says otherwise.",
+			),
+			"fields": stringsProp(
+				`For model and resource: field specs as "name:type", e.g. ["name:string","age:int"].`,
+			),
+			"steps": stringsProp("For workflow: step names, e.g. [\"validate\",\"create\"]."),
 			"flags": map[string]any{
 				"type":        "object",
 				"description": `Kind-specific generator flags, e.g. {"path":"/healthz","force":true}, {"retry":true}, or {"every":"5m"}. Booleans become --flag; other values become --flag=value.`,
@@ -175,7 +189,9 @@ func addFeatureTool() *tool {
 			"cors, observability, and others). Call breeze_features first to see the " +
 			"available features and their flags.",
 		schema: objectSchema(map[string]any{
-			"feature": stringProp("Feature name, e.g. dashboard. Use breeze_features for the full list."),
+			"feature": stringProp(
+				"Feature name, e.g. dashboard. Use breeze_features for the full list.",
+			),
 			"flags": map[string]any{
 				"type":        "object",
 				"description": `Feature-specific flags, e.g. {"allow-writes":true} or {"driver":"postgres"}. Booleans become --flag, other values become --flag=value.`,

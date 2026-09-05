@@ -28,7 +28,7 @@ type Source func(dst any) error
 func Bind(dst any, sources ...Source) error {
 	// Validate that dst is a pointer to a struct.
 	ptrVal := reflect.ValueOf(dst)
-	if ptrVal.Kind() != reflect.Ptr || ptrVal.IsNil() {
+	if ptrVal.Kind() != reflect.Pointer || ptrVal.IsNil() {
 		return fmt.Errorf("binding: dst must be a non-nil pointer, got %T", dst)
 	}
 
@@ -103,7 +103,7 @@ func Path(params map[string]string) Source {
 // using the specified tag names (checked in order).
 func populateFromValues(dst any, values url.Values, tagNames ...string) error {
 	ptrVal := reflect.ValueOf(dst)
-	if ptrVal.Kind() != reflect.Ptr || ptrVal.IsNil() {
+	if ptrVal.Kind() != reflect.Pointer || ptrVal.IsNil() {
 		return nil
 	}
 
@@ -151,7 +151,7 @@ func populateFromValues(dst any, values url.Values, tagNames ...string) error {
 // using the specified tag name.
 func populateFromMap(dst any, params map[string]string, tagName string) error {
 	ptrVal := reflect.ValueOf(dst)
-	if ptrVal.Kind() != reflect.Ptr || ptrVal.IsNil() {
+	if ptrVal.Kind() != reflect.Pointer || ptrVal.IsNil() {
 		return nil
 	}
 
@@ -190,7 +190,7 @@ func populateFromMap(dst any, params map[string]string, tagName string) error {
 // Supports: string, int, int64, float64, bool, and their pointer variants.
 func assignString(fld reflect.Value, strVal string) error {
 	// Handle pointer types: allocate if nil.
-	if fld.Kind() == reflect.Ptr {
+	if fld.Kind() == reflect.Pointer {
 		if fld.IsNil() {
 			fld.Set(reflect.New(fld.Type().Elem()))
 		}

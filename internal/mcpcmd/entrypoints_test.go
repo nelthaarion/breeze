@@ -60,7 +60,12 @@ func TestEntrypointsParseIdentically(t *testing.T) {
 				first.Host != second.Host || first.Token != second.Token ||
 				first.Log != second.Log ||
 				len(first.Origins) != len(second.Origins) {
-				t.Fatalf("the two entrypoints parsed %v differently:\n%+v\n%+v", argv, first, second)
+				t.Fatalf(
+					"the two entrypoints parsed %v differently:\n%+v\n%+v",
+					argv,
+					first,
+					second,
+				)
 			}
 			// Scope compared through its own accessors: the struct is unexported
 			// inside, so == would compare fields this package cannot see change.
@@ -155,14 +160,19 @@ func TestEntrypointsPrintTheSameBanner(t *testing.T) {
 		{"generated token", []string{"--mode", "generator", "--port", "2000"}},
 		{"app-runtime", []string{"--mode", "app-runtime", "--port", "2000"}},
 		// A supplied token must NOT be echoed, identically in both.
-		{"supplied token", []string{"--mode", "generator", "--port", "2000", "--token", "supplied-secret"}},
+		{
+			"supplied token",
+			[]string{"--mode", "generator", "--port", "2000", "--token", "supplied-secret"},
+		},
 		// A widened bind adds warning lines; both must add the same ones.
 		{"widened bind", []string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0"}},
 		// A scoped token changes the banner's scope line, and suppresses the
 		// unscoped-off-host warning. Both entrypoints must agree on both changes.
 		{"scoped token", []string{"--mode", "generator", "--port", "2000", "--scope", "fleet"}},
-		{"scoped widened bind", []string{"--mode", "generator", "--port", "2000",
-			"--host", "0.0.0.0", "--scope", "fleet"}},
+		{"scoped widened bind", []string{
+			"--mode", "generator", "--port", "2000",
+			"--host", "0.0.0.0", "--scope", "fleet",
+		}},
 	}
 
 	for _, tc := range cases {

@@ -108,8 +108,11 @@ func (b *Bus) probe() diag.Report {
 	}
 	if pool.Dropped > 0 {
 		degraded = true
-		notes = append(notes, fmt.Sprintf("%d async dispatch(es) were dropped because the pool queue "+
-			"was full. Raise QueueSize or Workers, or use OverflowSpawn.", pool.Dropped))
+		notes = append(
+			notes,
+			fmt.Sprintf("%d async dispatch(es) were dropped because the pool queue "+
+				"was full. Raise QueueSize or Workers, or use OverflowSpawn.", pool.Dropped),
+		)
 	}
 	if !b.cfg.Metrics {
 		notes = append(notes, "Per-event metrics are disabled for this bus, so the dispatch, "+

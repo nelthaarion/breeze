@@ -7,7 +7,14 @@ import (
 
 func TestViolationStoreDedupesAndBounds(t *testing.T) {
 	s := NewViolationStore(2, time.Minute)
-	v := Violation{Caller: "a", Callee: "b", Route: "/x", Path: "/id", Rule: "required", Timestamp: 1}
+	v := Violation{
+		Caller:    "a",
+		Callee:    "b",
+		Route:     "/x",
+		Path:      "/id",
+		Rule:      "required",
+		Timestamp: 1,
+	}
 	s.Add(v)
 	v.Timestamp = 2
 	g := s.Add(v)

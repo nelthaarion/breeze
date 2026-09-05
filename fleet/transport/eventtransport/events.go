@@ -50,13 +50,20 @@ func New(cfg Config) *Transport {
 	if cfg.HeartbeatTopic == "" {
 		cfg.HeartbeatTopic = DefaultHeartbeatTopic
 	}
-	return &Transport{backend: backend, spansTopic: cfg.SpansTopic, heartbeatTopic: cfg.HeartbeatTopic, token: cfg.IngestToken, service: cfg.ServiceName}
+	return &Transport{
+		backend:        backend,
+		spansTopic:     cfg.SpansTopic,
+		heartbeatTopic: cfg.HeartbeatTopic,
+		token:          cfg.IngestToken,
+		service:        cfg.ServiceName,
+	}
 }
 
 func (*Transport) Name() string { return "events" }
 func (t *Transport) Inject(tc fleet.TraceContext, bag fleet.Baggage, c fleet.Carrier) {
 	fleet.InjectInto(tc, bag, t.service, c)
 }
+
 func (*Transport) Extract(c fleet.Carrier) (fleet.TraceContext, fleet.Baggage, bool) {
 	return fleet.ExtractFrom(c)
 }

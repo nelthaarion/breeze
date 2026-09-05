@@ -39,7 +39,11 @@ func LocaleMiddleware(i18n *breeze.I18n) breeze.HandlerFunc {
 		}
 
 		if locale == "" {
-			if c := cookieValue(ctx.Req.Header["cookie"], LocaleCookieName); c != "" && i18n.HasLocale(c) {
+			if c := cookieValue(
+				ctx.Req.Header["cookie"],
+				LocaleCookieName,
+			); c != "" &&
+				i18n.HasLocale(c) {
 				locale = c
 				negotiated = true
 			}

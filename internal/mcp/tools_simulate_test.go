@@ -100,7 +100,12 @@ func startSimFixture(t *testing.T) simFixture {
 			}
 			switch {
 			case strings.HasPrefix(auth, "Bearer "):
-				_ = ctx.JSON(map[string]any{"scheme": "bearer", "credential": strings.TrimPrefix(auth, "Bearer ")})
+				_ = ctx.JSON(
+					map[string]any{
+						"scheme":     "bearer",
+						"credential": strings.TrimPrefix(auth, "Bearer "),
+					},
+				)
 			case strings.HasPrefix(auth, "Basic "):
 				_ = ctx.JSON(map[string]any{"scheme": "basic"})
 			default:
@@ -181,7 +186,11 @@ func TestSimulateRequestReportsARealSuccessfulRoute(t *testing.T) {
 	// result.
 	body, ok := report["json_body"].(map[string]any)
 	if !ok {
-		t.Fatalf("json_body is %T, not a decoded object: %v", report["json_body"], report["json_body"])
+		t.Fatalf(
+			"json_body is %T, not a decoded object: %v",
+			report["json_body"],
+			report["json_body"],
+		)
 	}
 	if pong, _ := body["pong"].(bool); !pong {
 		t.Errorf("json_body = %v, want the handler's {\"pong\":true}", body)

@@ -276,9 +276,9 @@ func newNetworkServer(handler rpcHandler, cfg NetworkConfig) (*NetworkServer, st
 	}
 	for _, origin := range cfg.AllowedOrigins {
 		origin = strings.TrimSpace(origin)
-		switch {
-		case origin == "":
-		case origin == "*":
+		switch origin {
+		case "":
+		case "*":
 			ns.anyOrigin = true
 		default:
 			ns.origins[strings.ToLower(strings.TrimSuffix(origin, "/"))] = true
@@ -328,8 +328,15 @@ func (n *NetworkServer) Handler() http.Handler {
 	// Anything else answers with a JSON-RPC body rather than net/http's HTML, so
 	// a client that has the wrong URL is told in the language it speaks.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeRPCError(w, http.StatusNotFound,
-			fmt.Sprintf("no MCP endpoint at %s; it is served at %s", r.URL.Path, DefaultEndpointPath))
+		writeRPCError(
+			w,
+			http.StatusNotFound,
+			fmt.Sprintf(
+				"no MCP endpoint at %s; it is served at %s",
+				r.URL.Path,
+				DefaultEndpointPath,
+			),
+		)
 	})
 	return mux
 }

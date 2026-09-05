@@ -279,7 +279,12 @@ func (r *Router) SetStaticDir(dir string) {
 	r.staticDir = dir
 }
 
-func (r *Router) Handle(method Method, pattern string, handler HandlerFunc, middlewares ...HandlerFunc) {
+func (r *Router) Handle(
+	method Method,
+	pattern string,
+	handler HandlerFunc,
+	middlewares ...HandlerFunc,
+) {
 	if pattern == "" || pattern[0] != '/' {
 		panic("invalid route pattern: must start with '/'")
 	}
@@ -389,7 +394,12 @@ func (r *Router) Handle(method Method, pattern string, handler HandlerFunc, midd
 // the event-loop goroutine. Use it for anything that is not pure CPU work on
 // data already in memory; running a blocking handler inline stalls every
 // connection pinned to the same reactor for as long as it takes.
-func (r *Router) HandleBlocking(method Method, pattern string, handler HandlerFunc, middlewares ...HandlerFunc) {
+func (r *Router) HandleBlocking(
+	method Method,
+	pattern string,
+	handler HandlerFunc,
+	middlewares ...HandlerFunc,
+) {
 	r.Handle(method, pattern, handler, middlewares...)
 	// The index holds the same *route pointer, so setting the flag here is
 	// visible to every lookup path.
@@ -465,7 +475,9 @@ func (r *route) matchesSegments(segs []string) bool {
 // Returns the matched route, its captured params (nil when the route has
 // none), and autoIndex — true when nothing matched but the request is a GET
 // for "/" and root auto-serving is on.
-func (r *Router) lookup(req *HTTPRequest) (matched *route, params map[string]string, autoIndex bool) {
+func (r *Router) lookup(
+	req *HTTPRequest,
+) (matched *route, params map[string]string, autoIndex bool) {
 	path := req.Path
 	if len(path) > 0 && path[0] == '/' {
 		path = path[1:]
@@ -634,7 +646,9 @@ func (r *Router) findChain(req *HTTPRequest) (chain []HandlerFunc, params map[st
 // handing it to the worker pool.
 //
 // The auto-index chain always reports blocking: it reads a file.
-func (r *Router) findDispatch(req *HTTPRequest) (chain []HandlerFunc, params map[string]string, blocking bool) {
+func (r *Router) findDispatch(
+	req *HTTPRequest,
+) (chain []HandlerFunc, params map[string]string, blocking bool) {
 	rt, params, autoIndex := r.lookup(req)
 	if rt != nil {
 		return rt.chain, params, rt.blocking

@@ -250,7 +250,9 @@ func ServeInProcess(app *breeze.Breeze, cfg InProcessConfig) error {
 // thing that goes in a goroutine.
 func StartInProcess(app *breeze.Breeze, cfg InProcessConfig) (*Server, string, error) {
 	if app == nil {
-		return nil, "", fmt.Errorf("breeze/mcp: an in-process endpoint needs the application it describes")
+		return nil, "", fmt.Errorf(
+			"breeze/mcp: an in-process endpoint needs the application it describes",
+		)
 	}
 	if err := checkPortConflict(app, cfg); err != nil {
 		return nil, "", err

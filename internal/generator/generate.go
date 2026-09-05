@@ -46,19 +46,25 @@ func generatorNames() []string {
 
 func init() {
 	registerGenerator(&generator{
-		Name: "handler", Args: "<Name> [flags]", NeedsName: true,
-		Summary: "route group with CRUD handler stubs",
-		Run:     func(mod, name string, args []string) error { return generateHandler(mod, name, args) },
+		Name:      "handler",
+		Args:      "<Name> [flags]",
+		NeedsName: true,
+		Summary:   "route group with CRUD handler stubs",
+		Run:       func(mod, name string, args []string) error { return generateHandler(mod, name, args) },
 	})
 	registerGenerator(&generator{
-		Name: "resource", Args: "<Name> field:type[:rules] ...", NeedsName: true,
-		Summary: "handler + struct + OpenAPI docs + validation",
-		Run:     func(mod, name string, args []string) error { return generateResource(mod, name, args) },
+		Name:      "resource",
+		Args:      "<Name> field:type[:rules] ...",
+		NeedsName: true,
+		Summary:   "handler + struct + OpenAPI docs + validation",
+		Run:       func(mod, name string, args []string) error { return generateResource(mod, name, args) },
 	})
 	registerGenerator(&generator{
-		Name: "grpc", Args: "<InterfaceName> [flags]", NeedsName: true,
-		Summary: "gRPC service skeleton",
-		Run:     func(mod, name string, args []string) error { return generateGRPC(mod, name, args) },
+		Name:      "grpc",
+		Args:      "<InterfaceName> [flags]",
+		NeedsName: true,
+		Summary:   "gRPC service skeleton",
+		Run:       func(mod, name string, args []string) error { return generateGRPC(mod, name, args) },
 	})
 	registerGenerator(&generator{
 		Name: "model", Args: "<Name> field:type [field:type ...]", NeedsName: true,
@@ -139,7 +145,10 @@ func runGenerate(args []string) error {
 		}
 		name = rest[idx]
 		if !token.IsIdentifier(name) || !strings.HasPrefix(name, strings.ToUpper(name[:1])) {
-			return fmt.Errorf("invalid name %q â€” must be an exported Go identifier (e.g. User)", name)
+			return fmt.Errorf(
+				"invalid name %q â€” must be an exported Go identifier (e.g. User)",
+				name,
+			)
 		}
 		rest = append(append([]string{}, rest[:idx]...), rest[idx+1:]...)
 	}
@@ -237,19 +246,48 @@ func actionsFor(name, plural string, requested []string) ([]action, error) {
 	for _, r := range requested {
 		r = strings.ToLower(strings.TrimSpace(r))
 		if !valid[r] {
-			return nil, fmt.Errorf("unknown method %q â€” must be one of: %s", r, strings.Join(allActions, ", "))
+			return nil, fmt.Errorf(
+				"unknown method %q â€” must be one of: %s",
+				r,
+				strings.Join(allActions, ", "),
+			)
 		}
 		switch r {
 		case "list":
-			actions = append(actions, action{Name: r, Method: "breeze.GET", PathSuffix: "", FuncName: "List" + plural})
+			actions = append(
+				actions,
+				action{Name: r, Method: "breeze.GET", PathSuffix: "", FuncName: "List" + plural},
+			)
 		case "get":
-			actions = append(actions, action{Name: r, Method: "breeze.GET", PathSuffix: "/:id", FuncName: "Get" + name})
+			actions = append(
+				actions,
+				action{Name: r, Method: "breeze.GET", PathSuffix: "/:id", FuncName: "Get" + name},
+			)
 		case "create":
-			actions = append(actions, action{Name: r, Method: "breeze.POST", PathSuffix: "", FuncName: "Create" + name})
+			actions = append(
+				actions,
+				action{Name: r, Method: "breeze.POST", PathSuffix: "", FuncName: "Create" + name},
+			)
 		case "update":
-			actions = append(actions, action{Name: r, Method: "breeze.PUT", PathSuffix: "/:id", FuncName: "Update" + name})
+			actions = append(
+				actions,
+				action{
+					Name:       r,
+					Method:     "breeze.PUT",
+					PathSuffix: "/:id",
+					FuncName:   "Update" + name,
+				},
+			)
 		case "delete":
-			actions = append(actions, action{Name: r, Method: "breeze.DELETE", PathSuffix: "/:id", FuncName: "Delete" + name})
+			actions = append(
+				actions,
+				action{
+					Name:       r,
+					Method:     "breeze.DELETE",
+					PathSuffix: "/:id",
+					FuncName:   "Delete" + name,
+				},
+			)
 		}
 	}
 	return actions, nil
@@ -305,7 +343,11 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 }
 
 func parseMethodsFlag(fs *flag.FlagSet) *string {
-	return fs.String("methods", strings.Join(allActions, ","), "comma-separated actions: list,get,create,update,delete")
+	return fs.String(
+		"methods",
+		strings.Join(allActions, ","),
+		"comma-separated actions: list,get,create,update,delete",
+	)
 }
 
 func splitMethods(s string) []string {

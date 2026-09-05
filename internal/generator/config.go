@@ -383,7 +383,11 @@ func resolvePath(v reflect.Value, path []string, full string) (reflect.Value, er
 		case reflect.Struct:
 			f, ok := fieldByYAMLTag(v, path[0])
 			if !ok {
-				return reflect.Value{}, fmt.Errorf("unknown configuration path --%s (no field %q)", full, path[0])
+				return reflect.Value{}, fmt.Errorf(
+					"unknown configuration path --%s (no field %q)",
+					full,
+					path[0],
+				)
 			}
 			v, path = f, path[1:]
 
@@ -391,7 +395,11 @@ func resolvePath(v reflect.Value, path []string, full string) (reflect.Value, er
 			// The remaining path is <element-name>.<field...>, so a bare
 			// element name with nothing after it is not addressable.
 			if len(path) < 2 {
-				return reflect.Value{}, fmt.Errorf("--%s must name a field of %q, not the entry itself", full, path[0])
+				return reflect.Value{}, fmt.Errorf(
+					"--%s must name a field of %q, not the entry itself",
+					full,
+					path[0],
+				)
 			}
 			elem, err := sliceElemByName(v, path[0])
 			if err != nil {
@@ -400,7 +408,11 @@ func resolvePath(v reflect.Value, path []string, full string) (reflect.Value, er
 			v, path = elem, path[1:]
 
 		default:
-			return reflect.Value{}, fmt.Errorf("--%s goes past the end of the configuration at %q", full, path[0])
+			return reflect.Value{}, fmt.Errorf(
+				"--%s goes past the end of the configuration at %q",
+				full,
+				path[0],
+			)
 		}
 	}
 	return v, nil

@@ -24,20 +24,29 @@ func TestEveryToolIsClassified(t *testing.T) {
 
 	for name := range registry.tools {
 		if _, ok := scopeOf(name); !ok {
-			t.Errorf("%s is registered but not classified in toolScopes. Decide whether it is safe to "+
-				"run inside a live application's process — see scope.go for the two criteria — and add it.",
-				name)
+			t.Errorf(
+				"%s is registered but not classified in toolScopes. Decide whether it is safe to "+
+					"run inside a live application's process — see scope.go for the two criteria — and add it.",
+				name,
+			)
 		}
 	}
 
 	for name := range toolScopes {
 		if _, ok := registry.tools[name]; !ok {
-			t.Errorf("toolScopes classifies %s, which is not a registered tool; the entry is stale", name)
+			t.Errorf(
+				"toolScopes classifies %s, which is not a registered tool; the entry is stale",
+				name,
+			)
 		}
 	}
 
 	if len(toolScopes) != len(registry.tools) {
-		t.Errorf("%d tools are registered but %d are classified", len(registry.tools), len(toolScopes))
+		t.Errorf(
+			"%d tools are registered but %d are classified",
+			len(registry.tools),
+			len(toolScopes),
+		)
 	}
 }
 
@@ -51,7 +60,9 @@ func TestInProcessServerServesOnlyTheSafeSubset(t *testing.T) {
 	server := NewInProcessServer("test", false)
 
 	if len(server.tools) == 0 {
-		t.Fatal("the in-process server has no tools at all, which makes it useless rather than safe")
+		t.Fatal(
+			"the in-process server has no tools at all, which makes it useless rather than safe",
+		)
 	}
 
 	for name := range server.tools {
@@ -103,7 +114,10 @@ func TestWorkspaceToolsAreAbsentInProcess(t *testing.T) {
 		"breeze_verify_project", "breeze_plan_project", "breeze_begin_change_set",
 	} {
 		if _, present := server.tools[name]; present {
-			t.Errorf("%s is served in-process by default; it mutates a workspace and must be opt-in", name)
+			t.Errorf(
+				"%s is served in-process by default; it mutates a workspace and must be opt-in",
+				name,
+			)
 		}
 	}
 
@@ -113,8 +127,10 @@ func TestWorkspaceToolsAreAbsentInProcess(t *testing.T) {
 		"breeze_get_recent_errors", "breeze_query_openapi", "breeze_simulate_request",
 	} {
 		if _, present := server.tools[name]; !present {
-			t.Errorf("%s is absent from in-process mode, which is the read-only introspection it exists for",
-				name)
+			t.Errorf(
+				"%s is absent from in-process mode, which is the read-only introspection it exists for",
+				name,
+			)
 		}
 	}
 }

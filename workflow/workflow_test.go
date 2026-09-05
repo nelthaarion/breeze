@@ -321,7 +321,12 @@ func TestIdempotencyKeyRunsOnce(t *testing.T) {
 		}))
 
 	for range 3 {
-		if _, err := e.Run(context.Background(), "once", nil, WithIdempotencyKey("order-1")); err != nil {
+		if _, err := e.Run(
+			context.Background(),
+			"once",
+			nil,
+			WithIdempotencyKey("order-1"),
+		); err != nil {
 			t.Fatalf("Run: %v", err)
 		}
 	}
@@ -414,7 +419,11 @@ func TestConcurrentRunsAreIsolated(t *testing.T) {
 		Step("b", func(c *Context) error {
 			got, _ := c.MetaString("id")
 			if got != c.ExecutionID() {
-				return fmt.Errorf("context leaked between executions: %q != %q", got, c.ExecutionID())
+				return fmt.Errorf(
+					"context leaked between executions: %q != %q",
+					got,
+					c.ExecutionID(),
+				)
 			}
 			return nil
 		}))

@@ -136,19 +136,40 @@ func TestSPARuntimeInvariants(t *testing.T) {
 			"GET submissions preserve the action fragment",
 			"var url = actionUrl.pathname + (qs ? '?' + qs : '') + actionUrl.hash;",
 		},
-		{"responses are cached only when the server allows it", "if (_isCacheable(res)) _cacheRoute("},
+		{
+			"responses are cached only when the server allows it",
+			"if (_isCacheable(res)) _cacheRoute(",
+		},
 		{"an identity change clears the cache", "function _syncAuthEpoch(res)"},
 		{"navigation applies the cache policy", "_syncAuthEpoch(res);"},
 		{"proxies are reused per underlying object", "var _proxyCache = new WeakMap();"},
-		{"writes that change nothing do not schedule a render", "if (ok && (!had || !Object.is(prev, val))) onChange();"},
+		{
+			"writes that change nothing do not schedule a render",
+			"if (ok && (!had || !Object.is(prev, val))) onChange();",
+		},
 		{"deletes of absent properties do not schedule a render", "if (ok && had) onChange();"},
 		{"binding passes share one server render", "var _renderBatch = null;"},
-		{"click delegation checks the target is an element", "if (!e.target || e.target.nodeType !== 1) return;"},
-		{"breeze.on tolerates a non-element target", "if (node && node.nodeType !== 1) node = node.parentElement;"},
+		{
+			"click delegation checks the target is an element",
+			"if (!e.target || e.target.nodeType !== 1) return;",
+		},
+		{
+			"breeze.on tolerates a non-element target",
+			"if (node && node.nodeType !== 1) node = node.parentElement;",
+		},
 		{"swap patches the DOM instead of rebuilding it", "_patch(el, html);"},
-		{"the patcher can be turned off if it ever regresses", "if (window.__BREEZE_NO_PATCH__ === true) {"},
-		{"attribute removal is limited to what a render declared", "var _ownedAttrs = new WeakMap();"},
-		{"static subtrees are treated as incompatible, not just skipped", "return _isStatic(a) === _isStatic(b);"},
+		{
+			"the patcher can be turned off if it ever regresses",
+			"if (window.__BREEZE_NO_PATCH__ === true) {",
+		},
+		{
+			"attribute removal is limited to what a render declared",
+			"var _ownedAttrs = new WeakMap();",
+		},
+		{
+			"static subtrees are treated as incompatible, not just skipped",
+			"return _isStatic(a) === _isStatic(b);",
+		},
 		{"mounts run where nodes are really inserted", "_runMounts(newNode);"},
 		{"destroys run where nodes are really removed", "_runDestroys(leftover[i]);"},
 	}
@@ -168,6 +189,8 @@ func TestSPARuntimeInvariants(t *testing.T) {
 	// anywhere inside it would end the script early and dump the remainder
 	// into the page as text.
 	if strings.Contains(js, "</script") {
-		t.Error("runtime contains a </script> sequence, which would close the tag breezeRuntime wraps it in")
+		t.Error(
+			"runtime contains a </script> sequence, which would close the tag breezeRuntime wraps it in",
+		)
 	}
 }

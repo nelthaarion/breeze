@@ -17,7 +17,11 @@ import (
 // without picking up a dependency cycle.
 func generateListener(modulePath, name string, args []string) error {
 	fs := flag.NewFlagSet("generate listener", flag.ContinueOnError)
-	nameOverride := fs.String("name", "", "listener name (default On<Event>, e.g. --name=SendWelcomeEmail)")
+	nameOverride := fs.String(
+		"name",
+		"",
+		"listener name (default On<Event>, e.g. --name=SendWelcomeEmail)",
+	)
 	force := fs.Bool("force", false, "overwrite an existing listener file")
 	out := registerOutputFlags(fs)
 
@@ -58,7 +62,12 @@ func generateListener(modulePath, name string, args []string) error {
 	b.WriteString("\t// TODO: implement\n")
 	b.WriteString("\treturn nil\n}\n\n")
 
-	fmt.Fprintf(&b, "// Register%s subscribes %s to bus. Call it once during startup.\n", listener, listener)
+	fmt.Fprintf(
+		&b,
+		"// Register%s subscribes %s to bus. Call it once during startup.\n",
+		listener,
+		listener,
+	)
 	fmt.Fprintf(&b, "func Register%s(bus *evt.Bus) {\n", listener)
 	fmt.Fprintf(&b, "\tevents.On%s(bus, %s)\n}\n", event, listener)
 
@@ -80,11 +89,20 @@ func generateListener(modulePath, name string, args []string) error {
 	// would get points at the listener rather than the missing declaration.
 	eventFile := filepath.Join("events", fileSlug(event)+".go")
 	if _, err := os.Stat(eventFile); err != nil {
-		notes = append(notes,
-			fmt.Sprintf("%s does not exist yet â€” run `breeze generate event %s` or this will not compile.", eventFile, event))
+		notes = append(
+			notes,
+			fmt.Sprintf(
+				"%s does not exist yet â€” run `breeze generate event %s` or this will not compile.",
+				eventFile,
+				event,
+			),
+		)
 	}
 	if !hasBlock(featuresFileName, featureMarkerPrefix, "events") {
-		notes = append(notes, "Run `breeze add events` â€” the EventBus this needs is declared by that block.")
+		notes = append(
+			notes,
+			"Run `breeze add events` â€” the EventBus this needs is declared by that block.",
+		)
 	}
 	printNotes(notes)
 	return nil

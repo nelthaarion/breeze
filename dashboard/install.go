@@ -98,7 +98,9 @@ func Install(app *breeze.Breeze, router *breeze.Router, cfg Config) *Collector {
 		}
 		// Check that the metrics sampler has run recently (within last 5s).
 		if time.Since(m.Time) > 5*time.Second {
-			return "red", "metrics sampler stalled (last sample " + time.Since(m.Time).String() + " ago)"
+			return "red", "metrics sampler stalled (last sample " + time.Since(m.Time).
+				String() +
+				" ago)"
 		}
 		return "green", fmt.Sprintf("online — %d requests captured, %d goroutines",
 			c.requestsTotal.Load(), m.Goroutines)
@@ -120,7 +122,15 @@ func (c *Collector) Middleware() breeze.HandlerFunc {
 
 // RecordQuery records a single ORM query. Application ORM adapters should
 // call this from their SQL execution path.
-func (c *Collector) PushQuery(sql string, args []any, durationUS int64, rows int64, file string, line int, err error) {
+func (c *Collector) PushQuery(
+	sql string,
+	args []any,
+	durationUS int64,
+	rows int64,
+	file string,
+	line int,
+	err error,
+) {
 	q := QueryRecord{
 		ID:         newID(),
 		Time:       now(),

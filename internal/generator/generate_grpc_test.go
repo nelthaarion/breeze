@@ -19,13 +19,21 @@ func setupGRPCGen(t *testing.T, ifaceName, src string, args ...string) error {
 	t.Helper()
 	t.Chdir(t.TempDir())
 
-	if err := os.WriteFile("go.mod", []byte("module example.com/test\n\ngo 1.24.3\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		"go.mod",
+		[]byte("module example.com/test\n\ngo 1.24.3\n"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll("handlers", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join("handlers", "service_grpc.go"), []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join("handlers", "service_grpc.go"),
+		[]byte(src),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 	return generateGRPC("example.com/test", ifaceName, args)
@@ -169,7 +177,11 @@ func TestGenerateGRPC_RequiresGrpcGoFile(t *testing.T) {
 	// Interface in a regular .go file (not _grpc.go) should NOT be found.
 	t.Chdir(t.TempDir())
 
-	if err := os.WriteFile("go.mod", []byte("module example.com/test\n\ngo 1.24.3\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		"go.mod",
+		[]byte("module example.com/test\n\ngo 1.24.3\n"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll("handlers", 0o755); err != nil {

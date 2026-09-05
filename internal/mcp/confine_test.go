@@ -49,7 +49,11 @@ func requireOutside(t *testing.T, path string) {
 
 	got, err := resolvePath(path)
 	if err == nil {
-		t.Fatalf("resolvePath(%q) = %q, want a refusal: this path is outside the workspace", path, got)
+		t.Fatalf(
+			"resolvePath(%q) = %q, want a refusal: this path is outside the workspace",
+			path,
+			got,
+		)
 	}
 	var outside *errOutsideWorkspace
 	if !errors.As(err, &outside) {
@@ -151,7 +155,11 @@ func TestConfinementRefusesANonExistentPathOutsideEveryRoot(t *testing.T) {
 	root := t.TempDir()
 	withWorkspace(t, root)
 
-	outside := filepath.Join(filepath.Dir(root), "no-such-directory-"+filepath.Base(root), "project")
+	outside := filepath.Join(
+		filepath.Dir(root),
+		"no-such-directory-"+filepath.Base(root),
+		"project",
+	)
 	requireOutside(t, outside)
 }
 
@@ -305,7 +313,13 @@ func TestConfinementAcceptsSeveralRoots(t *testing.T) {
 
 	for _, attempt := range []string{first, second, filepath.Join(second, "project")} {
 		if _, err := resolvePath(attempt); err != nil {
-			t.Errorf("resolvePath(%q) was refused with roots %q and %q: %v", attempt, first, second, err)
+			t.Errorf(
+				"resolvePath(%q) was refused with roots %q and %q: %v",
+				attempt,
+				first,
+				second,
+				err,
+			)
 		}
 	}
 	requireOutside(t, third)
@@ -345,7 +359,8 @@ var pathTakingTools = []struct {
 	{tool: "breeze_new", arg: "dir", extra: map[string]any{"name": "app"}},
 	{tool: "breeze_add", arg: "dir", extra: map[string]any{"feature": "jwt"}},
 	{tool: "breeze_generate", arg: "dir", extra: map[string]any{
-		"kind": "model", "name": "User", "args": []string{"email:string"}}},
+		"kind": "model", "name": "User", "args": []string{"email:string"},
+	}},
 }
 
 // TestEveryPathTakingToolIsConfined is the coverage test for the workspace boundary.

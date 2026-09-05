@@ -414,12 +414,21 @@ func snippetCSharp(req APIExplorerExecRequest, method string) string {
 	fmt.Fprintln(&b, "using System.Net.Http;")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "var client = new HttpClient();")
-	fmt.Fprintf(&b, "var request = new HttpRequestMessage(HttpMethod.%s, \"%s\");\n", csharpMethod(method), req.URL)
+	fmt.Fprintf(
+		&b,
+		"var request = new HttpRequestMessage(HttpMethod.%s, \"%s\");\n",
+		csharpMethod(method),
+		req.URL,
+	)
 	for k, v := range req.Headers {
 		fmt.Fprintf(&b, "request.Headers.Add(\"%s\", \"%s\");\n", k, v)
 	}
 	if req.Body != "" {
-		fmt.Fprintf(&b, "request.Content = new StringContent(%s, System.Text.Encoding.UTF8, \"application/json\");\n", csharpString(req.Body))
+		fmt.Fprintf(
+			&b,
+			"request.Content = new StringContent(%s, System.Text.Encoding.UTF8, \"application/json\");\n",
+			csharpString(req.Body),
+		)
 	}
 	fmt.Fprintln(&b, "var response = await client.SendAsync(request);")
 	fmt.Fprintln(&b, "var body = await response.Content.ReadAsStringAsync();")

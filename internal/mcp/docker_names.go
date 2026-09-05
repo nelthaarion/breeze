@@ -46,7 +46,9 @@ var dockerNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 // Deliberately narrower than the full OCI reference grammar. It permits lower-case
 // path segments separated by "/" plus an optional ":tag", and it does not permit a
 // digest, a port, or a registry host — see imageReferenceLocal.
-var dockerImagePattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]*)?$`)
+var dockerImagePattern = regexp.MustCompile(
+	`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[a-zA-Z0-9_][a-zA-Z0-9_.-]*)?$`,
+)
 
 // maxDockerNameLength bounds a name.
 //
@@ -137,7 +139,12 @@ func imageReferenceLocal(tag string) error {
 // a container name becomes the flag it resembles. The patterns already exclude a
 // leading dash; this exists to make the *reason* checkable and to produce a message
 // about argument smuggling rather than about character classes.
-func validateDockerIdentifier(field, value string, max int, pattern *regexp.Regexp, allowed string) error {
+func validateDockerIdentifier(
+	field, value string,
+	max int,
+	pattern *regexp.Regexp,
+	allowed string,
+) error {
 	if strings.TrimSpace(value) == "" {
 		// Empty means "use the default", which every caller of these is entitled to.
 		return nil

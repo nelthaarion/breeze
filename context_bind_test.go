@@ -21,7 +21,6 @@ func TestContextBind_JSONSuccess(t *testing.T) {
 
 	var req LoginRequest
 	err := ctx.Bind(&req)
-
 	if err != nil {
 		t.Fatalf("Bind() error = %v", err)
 	}
@@ -39,7 +38,7 @@ func TestContextBind_JSONSuccess(t *testing.T) {
 // TestContextBind_JSONValidationFail tests that validation errors return 422 with problem+json.
 func TestContextBind_JSONValidationFail(t *testing.T) {
 	type LoginRequest struct {
-		Email    string `json:"email" validate:"required,email"`
+		Email    string `json:"email"    validate:"required,email"`
 		Password string `json:"password" validate:"required,min=8"`
 	}
 
@@ -107,7 +106,6 @@ func TestContextBind_QueryParameters(t *testing.T) {
 
 	var req SearchRequest
 	err := ctx.Bind(&req)
-
 	if err != nil {
 		t.Fatalf("Bind() error = %v", err)
 	}
@@ -132,7 +130,6 @@ func TestContextBind_PathParameters(t *testing.T) {
 
 	var params RouteParams
 	err := ctx.Bind(&params)
-
 	if err != nil {
 		t.Fatalf("Bind() error = %v", err)
 	}
@@ -146,8 +143,8 @@ func TestContextBind_PathParameters(t *testing.T) {
 func TestContextBind_Combined(t *testing.T) {
 	type Request struct {
 		ID       int    `param:"id" json:"id"`
-		Name     string `json:"name"`
-		PageSize int    `form:"page_size"`
+		Name     string `           json:"name"`
+		PageSize int    `                       form:"page_size"`
 	}
 
 	ctx := NewContext(POST, "/users/1")
@@ -157,7 +154,6 @@ func TestContextBind_Combined(t *testing.T) {
 
 	var req Request
 	err := ctx.Bind(&req)
-
 	if err != nil {
 		t.Fatalf("Bind() error = %v", err)
 	}
@@ -248,7 +244,6 @@ func TestContextBind_EmptyBody(t *testing.T) {
 
 	var data Data
 	err := ctx.Bind(&data)
-
 	if err != nil {
 		t.Fatalf("Bind() unexpected error: %v", err)
 	}
@@ -284,7 +279,7 @@ func TestContextBind_ResponseStatus(t *testing.T) {
 // TestContextBind_ProblemJSONStructure tests that the problem+json response is correct.
 func TestContextBind_ProblemJSONStructure(t *testing.T) {
 	type Form struct {
-		Email    string `json:"email" validate:"required,email"`
+		Email    string `json:"email"    validate:"required,email"`
 		Password string `json:"password" validate:"required,min=8"`
 	}
 

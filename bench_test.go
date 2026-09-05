@@ -132,17 +132,23 @@ func BenchmarkFindChainParam(b *testing.B) {
 
 // --- Request path ------------------------------------------------------------
 
-var rawGET = []byte("GET /users/42 HTTP/1.1\r\nHost: localhost:3000\r\nUser-Agent: bombardier\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n")
+var rawGET = []byte(
+	"GET /users/42 HTTP/1.1\r\nHost: localhost:3000\r\nUser-Agent: bombardier\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n",
+)
 
 // rawGETStatic targets a route that lives in the method bucket's exact-path
 // map, so the lookup never splits the path.
-var rawGETStatic = []byte("GET /users HTTP/1.1\r\nHost: localhost:3000\r\nUser-Agent: bombardier\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n")
+var rawGETStatic = []byte(
+	"GET /users HTTP/1.1\r\nHost: localhost:3000\r\nUser-Agent: bombardier\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n",
+)
 
 // rawGETScanned targets a static route that a previously-registered :param
 // route also matches, so it cannot live in the exact-path map — the ordered scan
 // would reach the :param route first, and the map has to agree with the scan.
 // It is therefore the honest baseline for what the map buys.
-var rawGETScanned = []byte("GET /users/me HTTP/1.1\r\nHost: localhost:3000\r\nUser-Agent: bombardier\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n")
+var rawGETScanned = []byte(
+	"GET /users/me HTTP/1.1\r\nHost: localhost:3000\r\nUser-Agent: bombardier\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n",
+)
 
 // perfRouter mirrors a small real routing table. Registration order matters:
 // "/users" precedes "/users/:id" and nothing shadows it, so it is map-eligible;
@@ -607,7 +613,11 @@ func benchEngineDir(tb testing.TB) (viewsDir, compDir string) {
 
 	layout := `{{define "layout"}}<!DOCTYPE html><html><head><title>bench</title></head>` +
 		`<body><div id="breeze-app">{{template "content" .}}</div></body></html>{{end}}`
-	if err := os.WriteFile(filepath.Join(viewsDir, "layout.html"), []byte(layout), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(viewsDir, "layout.html"),
+		[]byte(layout),
+		0o644,
+	); err != nil {
 		tb.Fatal(err)
 	}
 

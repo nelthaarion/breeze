@@ -75,7 +75,7 @@ func (fs *fileStorage) Save(state *PersistedState) error {
 	}
 	// Write to temp file then rename (atomic on most OSes)
 	tmp := fs.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, fs.path)

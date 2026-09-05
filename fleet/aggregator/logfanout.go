@@ -132,7 +132,11 @@ func newLogFanout(token string) *logFanout {
 //
 // Services are queried concurrently: serially, a five-service trace with one
 // dead service would take five timeouts to render. Concurrently it takes one.
-func (f *logFanout) Collect(ctx context.Context, trace Trace, endpoints map[string]string) TraceLogs {
+func (f *logFanout) Collect(
+	ctx context.Context,
+	trace Trace,
+	endpoints map[string]string,
+) TraceLogs {
 	out := TraceLogs{TraceID: trace.TraceID, Logs: []TraceLog{}, Sources: []LogSource{}}
 	if len(trace.Services) == 0 {
 		return out
@@ -203,7 +207,10 @@ func (f *logFanout) Collect(ctx context.Context, trace Trace, endpoints map[stri
 }
 
 // fetch retrieves one service's logs for a trace id.
-func (f *logFanout) fetch(ctx context.Context, endpoint, traceID string) ([]dashboard.LogEntry, error) {
+func (f *logFanout) fetch(
+	ctx context.Context,
+	endpoint, traceID string,
+) ([]dashboard.LogEntry, error) {
 	target := strings.TrimSuffix(endpoint, "/") + "/api/logs?trace_id=" + url.QueryEscape(traceID)
 	req := client.NewRequest("GET", target, nil).WithContext(ctx)
 	if f.token != "" {

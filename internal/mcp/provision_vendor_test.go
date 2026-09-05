@@ -26,7 +26,9 @@ func TestBreezeSourceRootFindsThisModule(t *testing.T) {
 	}
 	// A landmark that exists only in this module, so a go.mod belonging to something
 	// else cannot satisfy the check above by coincidence.
-	if _, err := os.Stat(filepath.Join(root, "internal", "mcp", "provision_vendor.go")); err != nil {
+	if _, err := os.Stat(
+		filepath.Join(root, "internal", "mcp", "provision_vendor.go"),
+	); err != nil {
 		t.Errorf("%s does not look like this module: %v", root, err)
 	}
 }

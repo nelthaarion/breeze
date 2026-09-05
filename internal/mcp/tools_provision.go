@@ -290,10 +290,21 @@ func provisionServiceTool(orch *orchestrator) *tool {
 			"application's own address, for service_url arguments). These are always different " +
 			"ports. Requires an orchestrator instance with Docker access.",
 		schema: objectSchema(map[string]any{
-			"name":        stringProp("Service name, also the project directory and the registry key."),
-			"config":      map[string]any{"type": "object", "description": "Project configuration, in the shape breeze_describe_schema documents."},
-			"config_yaml": stringProp("Project configuration as breeze.yaml text. Use this or config, not both."),
-			"template":    map[string]any{"type": "string", "enum": []string{"api", "views"}, "description": "api for a JSON service, views for server-rendered HTML. Defaults to api."},
+			"name": stringProp(
+				"Service name, also the project directory and the registry key.",
+			),
+			"config": map[string]any{
+				"type":        "object",
+				"description": "Project configuration, in the shape breeze_describe_schema documents.",
+			},
+			"config_yaml": stringProp(
+				"Project configuration as breeze.yaml text. Use this or config, not both.",
+			),
+			"template": map[string]any{
+				"type":        "string",
+				"enum":        []string{"api", "views"},
+				"description": "api for a JSON service, views for server-rendered HTML. Defaults to api.",
+			},
 			"docker": map[string]any{
 				"type": "object",
 				"description": "Docker options: host, image_tag, container_name, env, skip_build, wait_seconds, " +
@@ -364,14 +375,21 @@ func (o *orchestrator) provisionService(a provisionServiceArgs) toolCallResult {
 		// The container is running but unrecorded, which is the one state this
 		// orchestrator must never leave behind: nothing would authorise removing it
 		// later. So it is removed now, and the registry failure is the reported one.
-		if rmErr := docker.removeContainer(context.Background(), service.ContainerID); rmErr != nil {
-			return errorResult(fmt.Sprintf("the container started but could not be recorded (%v), and "+
-				"removing it also failed (%v). Container %s must be removed by hand.",
-				err, rmErr, service.ContainerID))
+		if rmErr := docker.removeContainer(
+			context.Background(),
+			service.ContainerID,
+		); rmErr != nil {
+			return errorResult(
+				fmt.Sprintf("the container started but could not be recorded (%v), and "+
+					"removing it also failed (%v). Container %s must be removed by hand.",
+					err, rmErr, service.ContainerID),
+			)
 		}
 		plan.releasePorts(o.ports)
-		return errorResult(fmt.Sprintf("the container started but could not be recorded, so it was "+
-			"removed again rather than left unmanaged: %v", err))
+		return errorResult(
+			fmt.Sprintf("the container started but could not be recorded, so it was "+
+				"removed again rather than left unmanaged: %v", err),
+		)
 	}
 
 	status, healthNote := o.waitForApp(service, a.Docker.WaitSeconds)
@@ -563,12 +581,18 @@ func orDefault(value, fallback string) string {
 // generator.ApplyConfig is what wires every feature a configuration enables — Fleet
 // included — and is the same call `breeze new` makes when a breeze.yaml is present.
 // Nothing about a provisioned project's code is produced here.
-func (o *orchestrator) generateProject(name, template string, cfg generator.ProjectConfig) (string, func(), []string, error) {
+func (o *orchestrator) generateProject(
+	name, template string,
+	cfg generator.ProjectConfig,
+) (string, func(), []string, error) {
 	if strings.TrimSpace(template) == "" {
 		template = "api"
 	}
 	if err := cfg.Validate(); err != nil {
-		return "", nil, nil, fmt.Errorf("the configuration is not valid, so nothing was provisioned: %w", err)
+		return "", nil, nil, fmt.Errorf(
+			"the configuration is not valid, so nothing was provisioned: %w",
+			err,
+		)
 	}
 
 	root, err := os.MkdirTemp("", "breeze-provision-*")
@@ -601,7 +625,12 @@ func (o *orchestrator) generateProject(name, template string, cfg generator.Proj
 	projectDir := filepath.Join(root, name)
 	if _, err := os.Stat(projectDir); err != nil {
 		remove()
-		return "", nil, nil, fmt.Errorf("the generator did not produce %s: %w\n%s", name, err, strings.TrimSpace(out))
+		return "", nil, nil, fmt.Errorf(
+			"the generator did not produce %s: %w\n%s",
+			name,
+			err,
+			strings.TrimSpace(out),
+		)
 	}
 
 	notes, err := writeProvisionBuildFiles(projectDir, o.version)
@@ -614,7 +643,11 @@ func (o *orchestrator) generateProject(name, template string, cfg generator.Proj
 
 // launch builds the image if needed, starts the container, and returns the registry
 // entry describing it.
-func (o *orchestrator) launch(ctx context.Context, docker *dockerClient, plan provisionPlan) (provisionedService, []string, error) {
+func (o *orchestrator) launch(
+	ctx context.Context,
+	docker *dockerClient,
+	plan provisionPlan,
+) (provisionedService, []string, error) {
 	var notes []string
 	// Carried forward first, so how the image was built is reported even when the
 	// build itself then fails and the caller only sees the error's context.
@@ -625,7 +658,10 @@ func (o *orchestrator) launch(ctx context.Context, docker *dockerClient, plan pr
 			return provisionedService{}, nil, fmt.Errorf("building %s: %w", plan.image, err)
 		}
 	} else {
-		notes = append(notes, "skip_build was set, so "+plan.image+" was started as it already existed")
+		notes = append(
+			notes,
+			"skip_build was set, so "+plan.image+" was started as it already existed",
+		)
 	}
 
 	ports := map[int]int{
@@ -802,8 +838,10 @@ func (o *orchestrator) listProvisioned() toolCallResult {
 	// what needs cleaning up.
 	docker, dockerErr := o.dockerOrError()
 	if dockerErr != nil {
-		result.Notes = append(result.Notes,
-			"container status is unavailable ("+dockerErr.Error()+"); the addresses below are from the registry")
+		result.Notes = append(
+			result.Notes,
+			"container status is unavailable ("+dockerErr.Error()+"); the addresses below are from the registry",
+		)
 	}
 
 	for _, service := range services {
@@ -834,7 +872,9 @@ func (o *orchestrator) listProvisioned() toolCallResult {
 				entry.Status = "missing"
 				result.Notes = append(result.Notes, fmt.Sprintf(
 					"%s is in the registry but Docker does not report it; deprovision_service will "+
-						"clear the entry and release its ports", service.ServiceName))
+						"clear the entry and release its ports",
+					service.ServiceName,
+				))
 			case state.Running:
 				entry.Status = "running"
 				entry.Health = state.Health
@@ -883,8 +923,10 @@ func deprovisionServiceTool(orch *orchestrator) *tool {
 			"container that is not in this orchestrator's own registry.",
 		schema: objectSchema(map[string]any{
 			"service_name": stringProp("The name provision_service or provision_fleet recorded."),
-			"remove_image": boolProp("Also remove the image that was built for it. Defaults to false, " +
-				"because an image is reusable and rebuilding one is the slowest part of provisioning."),
+			"remove_image": boolProp(
+				"Also remove the image that was built for it. Defaults to false, " +
+					"because an image is reusable and rebuilding one is the slowest part of provisioning.",
+			),
 		}, "service_name"),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a struct {
@@ -941,11 +983,16 @@ func (o *orchestrator) deprovisionService(name string, removeImage bool) toolCal
 		// daemon restart with --rm. The registry entry still has to go, and its ports
 		// still have to come back, or they stay reserved for the life of the process.
 		if !strings.Contains(strings.ToLower(err.Error()), "no such container") {
-			return errorResult(fmt.Sprintf("could not remove %s (%s): %v. The registry entry was kept, "+
-				"so this can be retried.", name, service.ContainerID, err))
+			return errorResult(
+				fmt.Sprintf("could not remove %s (%s): %v. The registry entry was kept, "+
+					"so this can be retried.", name, service.ContainerID, err),
+			)
 		}
-		notes = append(notes, "Docker no longer had this container; the registry entry and its ports "+
-			"were released anyway")
+		notes = append(
+			notes,
+			"Docker no longer had this container; the registry entry and its ports "+
+				"were released anyway",
+		)
 	}
 
 	removed, err := reg.remove(name)
@@ -1160,8 +1207,10 @@ func (o *orchestrator) provisionFleet(
 	host := orDefault(opts.Host, "127.0.0.1")
 	hostedBy := orDefault(agg.HostedBy, names[0])
 	if !slices.Contains(names, hostedBy) {
-		return errorResult(fmt.Sprintf("aggregator.hosted_by is %q, which is not one of the services "+
-			"being provisioned (%s)", hostedBy, strings.Join(names, ", ")))
+		return errorResult(
+			fmt.Sprintf("aggregator.hosted_by is %q, which is not one of the services "+
+				"being provisioned (%s)", hostedBy, strings.Join(names, ", ")),
+		)
 	}
 
 	// From the same allocator as every control and app port, which is what makes a
@@ -1249,21 +1298,31 @@ func (o *orchestrator) provisionFleet(
 			// Everything already started is torn down. A half-provisioned fleet is
 			// worse than none: its traces are incomplete in a way that looks like a
 			// tracing bug rather than a failed provision.
-			result.Notes = append(result.Notes, o.rollbackFleet(ctx, docker, reg, result.Services)...)
+			result.Notes = append(
+				result.Notes,
+				o.rollbackFleet(ctx, docker, reg, result.Services)...)
 			for j := i; j < len(plans); j++ {
 				plans[j].releasePorts(o.ports)
 				plans[j].cleanup()
 			}
 			o.ports.release(aggregatorPort)
-			return structuredErrorResult(fmt.Sprintf("%s could not be started, so the fleet was rolled "+
-				"back: %v", plans[i].name, err), result)
+			return structuredErrorResult(
+				fmt.Sprintf("%s could not be started, so the fleet was rolled "+
+					"back: %v", plans[i].name, err),
+				result,
+			)
 		}
 		if err := reg.add(service); err != nil {
 			_ = docker.removeContainer(ctx, service.ContainerID)
-			result.Notes = append(result.Notes, o.rollbackFleet(ctx, docker, reg, result.Services)...)
+			result.Notes = append(
+				result.Notes,
+				o.rollbackFleet(ctx, docker, reg, result.Services)...)
 			o.ports.release(aggregatorPort)
-			return structuredErrorResult(fmt.Sprintf("%s started but could not be recorded, so the fleet "+
-				"was rolled back: %v", plans[i].name, err), result)
+			return structuredErrorResult(
+				fmt.Sprintf("%s started but could not be recorded, so the fleet "+
+					"was rolled back: %v", plans[i].name, err),
+				result,
+			)
 		}
 
 		status, healthNote := o.waitForApp(service, opts.WaitSeconds)
@@ -1287,9 +1346,20 @@ func (o *orchestrator) provisionFleet(
 		IngestToken:            ingestToken,
 	}
 
-	return structuredResult(fmt.Sprintf("%d service(s) provisioned; the Fleet Aggregator is hosted by "+
-		"%s at %s, which is a different port from that service's control plane (%d) and its application (%d)",
-		len(result.Services), hostedBy, aggregatorURL, hostEntry.ControlPort, hostEntry.AppPort), result)
+	return structuredResult(
+		fmt.Sprintf(
+			"%d service(s) provisioned; the Fleet Aggregator is hosted by "+
+				"%s at %s, which is a different port from that service's control plane (%d) and its application (%d)",
+			len(
+				result.Services,
+			),
+			hostedBy,
+			aggregatorURL,
+			hostEntry.ControlPort,
+			hostEntry.AppPort,
+		),
+		result,
+	)
 }
 
 // ─── fleet helpers ───────────────────────────────────────────────────────────
@@ -1303,7 +1373,11 @@ func (o *orchestrator) provisionFleet(
 //
 // The http transport is the default because it is the one cmd/fleet-example's services
 // use and the one that needs no additional endpoint.
-func fleetConfigFor(name, aggregatorURL string, sampleRate float64, existing generator.FleetConfig) generator.FleetConfig {
+func fleetConfigFor(
+	name, aggregatorURL string,
+	sampleRate float64,
+	existing generator.FleetConfig,
+) generator.FleetConfig {
 	cfg := existing
 	cfg.Enabled = true
 	cfg.AggregatorURL = aggregatorURL
@@ -1333,7 +1407,10 @@ func fleetConfigFor(name, aggregatorURL string, sampleRate float64, existing gen
 // ones the generated Fleet block reads through fleetEnv, which is what makes a
 // provisioned service configurable exactly like a hand-written one. Nothing here
 // invents a variable.
-func fleetEnvFor(name, aggregatorURL, ingestToken, serviceToken string, extra map[string]string) map[string]string {
+func fleetEnvFor(
+	name, aggregatorURL, ingestToken, serviceToken string,
+	extra map[string]string,
+) map[string]string {
 	env := map[string]string{}
 	for key, value := range extra {
 		env[key] = value
@@ -1397,13 +1474,19 @@ func (o *orchestrator) rollbackFleet(
 	var notes []string
 	for _, service := range started {
 		if err := docker.removeContainer(ctx, service.ContainerID); err != nil {
-			notes = append(notes, fmt.Sprintf("rollback: %s (%s) could not be removed and is still "+
-				"running: %v", service.ServiceName, service.ContainerID, err))
+			notes = append(
+				notes,
+				fmt.Sprintf("rollback: %s (%s) could not be removed and is still "+
+					"running: %v", service.ServiceName, service.ContainerID, err),
+			)
 			continue
 		}
 		if _, err := reg.remove(service.ServiceName); err != nil {
-			notes = append(notes, fmt.Sprintf("rollback: %s was removed but its registry entry was "+
-				"not: %v", service.ServiceName, err))
+			notes = append(
+				notes,
+				fmt.Sprintf("rollback: %s was removed but its registry entry was "+
+					"not: %v", service.ServiceName, err),
+			)
 		}
 	}
 	return notes

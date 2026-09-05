@@ -467,7 +467,10 @@ func (c *Client) pool(addr string) *hostPool {
 // the FIN is processed by the event loop, but the connection is still sitting
 // in the idle channel. That race is unavoidable in any connection pool, and is
 // why Do retries once on a pooled connection whose write fails.
-func (c *Client) getConn(addr, hostname string, secure bool) (gnet.Conn, *connContext, bool, error) {
+func (c *Client) getConn(
+	addr, hostname string,
+	secure bool,
+) (gnet.Conn, *connContext, bool, error) {
 	p := c.pool(addr)
 
 	// Try an idle connection first.
@@ -723,7 +726,10 @@ func buildHTTPRequest(req *ClientRequest, u *url.URL, userAgent string) []byte {
 // end up either hanging on a malformed response or discarding a partial one.
 //
 // buf is never mutated, so the caller can safely retain it across calls.
-func parseHTTPResponse(buf []byte, maxBody int64) (resp *Response, consumed int, done bool, err error) {
+func parseHTTPResponse(
+	buf []byte,
+	maxBody int64,
+) (resp *Response, consumed int, done bool, err error) {
 	// Wait until the whole header block has arrived.
 	headerEnd := bytes.Index(buf, crlfcrlf)
 	if headerEnd < 0 {
@@ -830,7 +836,12 @@ func parseHTTPResponse(buf []byte, maxBody int64) (resp *Response, consumed int,
 		if contentLength > maxBody {
 			// Fail as soon as the declared length is known to be too large,
 			// rather than buffering the whole body first only to reject it.
-			return nil, 0, true, fmt.Errorf("%w: %d > %d", ErrResponseTooLarge, contentLength, maxBody)
+			return nil, 0, true, fmt.Errorf(
+				"%w: %d > %d",
+				ErrResponseTooLarge,
+				contentLength,
+				maxBody,
+			)
 		}
 		if int64(len(buf)-bodyStart) < contentLength {
 			return nil, 0, false, nil // partial body; keep reading
@@ -891,7 +902,11 @@ func decodeChunked(buf []byte, maxBody int64) (body []byte, consumed int, done b
 		}
 
 		if int64(len(result))+chunkSize > maxBody {
-			return nil, 0, true, fmt.Errorf("%w: chunked body exceeds %d", ErrResponseTooLarge, maxBody)
+			return nil, 0, true, fmt.Errorf(
+				"%w: chunked body exceeds %d",
+				ErrResponseTooLarge,
+				maxBody,
+			)
 		}
 
 		// Chunk data plus its trailing CRLF.

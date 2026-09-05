@@ -7,14 +7,12 @@ import (
 )
 
 func RegisterListeners() {
-
 	events.On(
 		UserRegistered{},
 		func(
 			ctx *events.Context,
 			event UserRegistered,
 		) error {
-
 			fmt.Println(
 				"📧 Sending welcome email:",
 				event.Email,
@@ -30,7 +28,6 @@ func RegisterListeners() {
 			ctx *events.Context,
 			event UserRegistered,
 		) error {
-
 			fmt.Println(
 				"📝 Audit:",
 				event.ID,

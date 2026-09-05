@@ -82,7 +82,10 @@ func (m *mount) handler() breeze.HandlerFunc {
 // body bytes sent, and the internal error if any. Reporting is left to the
 // caller so that every exit path is instrumented identically — an early
 // 404 and a completed 206 travel through the same telemetry.
-func (m *mount) serve(ctx *breeze.Context, out sink) (name string, status int, sent int64, err error) {
+func (m *mount) serve(
+	ctx *breeze.Context,
+	out sink,
+) (name string, status int, sent int64, err error) {
 	origin := ctx.Req.Header["origin"]
 
 	// Header keys are lowercased by the request parser, so they are read
@@ -126,7 +129,11 @@ func (m *mount) serve(ctx *breeze.Context, out sink) (name string, status int, s
 		// Signature and authorisation both run on the normalized name
 		// and before any stat, so an unauthorised flood costs no disk
 		// I/O.
-		if err = m.verifySignature(name, ctx.Req.Query.Get("exp"), ctx.Req.Query.Get("sig")); err != nil {
+		if err = m.verifySignature(
+			name,
+			ctx.Req.Query.Get("exp"),
+			ctx.Req.Query.Get("sig"),
+		); err != nil {
 			status = statusFor(err)
 			_ = m.writeError(out, origin, status, 0)
 			return name, status, 0, err
@@ -159,7 +166,12 @@ func (m *mount) serve(ctx *breeze.Context, out sink) (name string, status int, s
 	// A conditional hit ends the request before the file is opened, which
 	// is the entire value of caching: a revalidation costs a stat, not a
 	// transfer.
-	if notModified(ctx.Req.Header["if-none-match"], ctx.Req.Header["if-modified-since"], tag, res.ModTime) {
+	if notModified(
+		ctx.Req.Header["if-none-match"],
+		ctx.Req.Header["if-modified-since"],
+		tag,
+		res.ModTime,
+	) {
 		h := newHead(304).
 			set("ETag", tag).
 			set("Last-Modified", httpTime(res.ModTime)).
@@ -267,7 +279,12 @@ func (m *mount) serve(ctx *breeze.Context, out sink) (name string, status int, s
 		// The head promised more than the file delivered, so the client
 		// will hang waiting. Nothing can fix the response now; what
 		// matters is that the operator finds out.
-		return name, status, sent, fmt.Errorf("short read: sent %d of %d bytes of %q", sent, length, name)
+		return name, status, sent, fmt.Errorf(
+			"short read: sent %d of %d bytes of %q",
+			sent,
+			length,
+			name,
+		)
 	}
 	return name, status, sent, nil
 }
@@ -277,7 +294,14 @@ func (m *mount) serve(ctx *breeze.Context, out sink) (name string, status int, s
 // All telemetry is funnelled through here so that a new exit path cannot
 // be added without instrumentation, and so a client disconnect is recorded
 // as what it is rather than as a server error.
-func (m *mount) report(ctx *breeze.Context, name string, status int, sent int64, took time.Duration, err error) {
+func (m *mount) report(
+	ctx *breeze.Context,
+	name string,
+	status int,
+	sent int64,
+	took time.Duration,
+	err error,
+) {
 	gone := isPeerGone(err)
 
 	// A disconnect is not a failure of the server. Counting it as one

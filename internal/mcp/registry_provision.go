@@ -196,10 +196,13 @@ func loadProvisionRegistry(path string, ports *portAllocator) (*provisionRegistr
 
 	var entries []provisionedService
 	if err := json.Unmarshal(raw, &entries); err != nil {
-		return nil, fmt.Errorf("mcp: the provisioning registry at %s is unreadable (%w). It lists the "+
-			"containers this orchestrator created and is the only thing that authorises removing them; "+
-			"repair or move it rather than deleting it, or those containers must be cleaned up by hand",
-			path, err)
+		return nil, fmt.Errorf(
+			"mcp: the provisioning registry at %s is unreadable (%w). It lists the "+
+				"containers this orchestrator created and is the only thing that authorises removing them; "+
+				"repair or move it rather than deleting it, or those containers must be cleaned up by hand",
+			path,
+			err,
+		)
 	}
 
 	for _, entry := range entries {
@@ -207,8 +210,11 @@ func loadProvisionRegistry(path string, ports *portAllocator) (*provisionRegistr
 			// An entry with no name cannot be looked up, deprovisioned, or reported.
 			// Skipping it would hide it; refusing makes the corruption visible while
 			// the rest of the file is still intact.
-			return nil, fmt.Errorf("mcp: the provisioning registry at %s contains an entry with no "+
-				"service_name, so it cannot be managed", path)
+			return nil, fmt.Errorf(
+				"mcp: the provisioning registry at %s contains an entry with no "+
+					"service_name, so it cannot be managed",
+				path,
+			)
 		}
 		reg.services[entry.ServiceName] = entry
 
@@ -236,8 +242,10 @@ func (r *provisionRegistry) add(service provisionedService) error {
 		return errors.New("mcp: a provisioned service needs a name")
 	}
 	if _, exists := r.services[service.ServiceName]; exists {
-		return fmt.Errorf("mcp: %q is already provisioned by this orchestrator; deprovision it first",
-			service.ServiceName)
+		return fmt.Errorf(
+			"mcp: %q is already provisioned by this orchestrator; deprovision it first",
+			service.ServiceName,
+		)
 	}
 
 	r.services[service.ServiceName] = service
@@ -342,8 +350,11 @@ func (r *provisionRegistry) namesLocked() []string {
 func (r *provisionRegistry) notInRegistryLocked(name string) error {
 	known := r.namesLocked()
 	if len(known) == 0 {
-		return fmt.Errorf("this orchestrator has not provisioned %q — its registry is empty, so it "+
-			"will not stop or remove any container", name)
+		return fmt.Errorf(
+			"this orchestrator has not provisioned %q — its registry is empty, so it "+
+				"will not stop or remove any container",
+			name,
+		)
 	}
 	return fmt.Errorf("this orchestrator has not provisioned %q, so it will not touch it; "+
 		"it manages: %s", name, strings.Join(known, ", "))
@@ -359,7 +370,10 @@ func (r *provisionRegistry) persistLocked() error {
 	for _, service := range r.services {
 		entries = append(entries, service)
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].ServiceName < entries[j].ServiceName })
+	sort.Slice(
+		entries,
+		func(i, j int) bool { return entries[i].ServiceName < entries[j].ServiceName },
+	)
 
 	// Indented, because reading this file by hand is a supported recovery path and
 	// one long line is not readable.

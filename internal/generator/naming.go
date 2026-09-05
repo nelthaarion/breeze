@@ -47,7 +47,13 @@ var (
 func configFieldTag(t reflect.Type, field string) string {
 	f, ok := t.FieldByName(field)
 	if !ok {
-		panic(fmt.Sprintf("generator: %s has no field %s; the output flags are derived from it", t, field))
+		panic(
+			fmt.Sprintf(
+				"generator: %s has no field %s; the output flags are derived from it",
+				t,
+				field,
+			),
+		)
 	}
 	return yamlTagName(f)
 }
@@ -65,8 +71,11 @@ type outputFlags struct {
 // so the wording, the defaults and the validation cannot differ between kinds.
 func registerOutputFlags(fs *flag.FlagSet) *outputFlags {
 	return &outputFlags{
-		filename: fs.String(outputFilenameFlag, "",
-			"output file name, e.g. --"+outputFilenameFlag+"=user_model.go (default derived from the name)"),
+		filename: fs.String(
+			outputFilenameFlag,
+			"",
+			"output file name, e.g. --"+outputFilenameFlag+"=user_model.go (default derived from the name)",
+		),
 		pkg: fs.String(outputPackageFlag, "",
 			"package clause of the generated file (default the containing directory's name)"),
 	}
@@ -142,7 +151,11 @@ func resolveOutputFilename(name string) (string, error) {
 		return "", fmt.Errorf("--%s %q is not a file name", outputFilenameFlag, name)
 	case strings.HasSuffix(name, ".go"):
 		if strings.TrimSuffix(name, ".go") == "" {
-			return "", fmt.Errorf("--%s %q has no name before the extension", outputFilenameFlag, name)
+			return "", fmt.Errorf(
+				"--%s %q has no name before the extension",
+				outputFilenameFlag,
+				name,
+			)
 		}
 		return name, nil
 	case filepath.Ext(name) != "":
@@ -179,7 +192,10 @@ func validateGoPackageName(name string) error {
 	case name == "":
 		return fmt.Errorf("package name is empty")
 	case name == "_":
-		return fmt.Errorf("package name %q is the blank identifier, which cannot name a package", name)
+		return fmt.Errorf(
+			"package name %q is the blank identifier, which cannot name a package",
+			name,
+		)
 	case token.Lookup(name).IsKeyword():
 		return fmt.Errorf("package name %q is a Go keyword", name)
 	case !token.IsIdentifier(name):
@@ -222,7 +238,12 @@ func checkPackageAgreesWithDirectory(dir, pkg, forPath string) error {
 			// replaced, so it cannot be the thing that conflicts.
 			continue
 		}
-		f, parseErr := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly|parser.SkipObjectResolution)
+		f, parseErr := parser.ParseFile(
+			fset,
+			path,
+			nil,
+			parser.PackageClauseOnly|parser.SkipObjectResolution,
+		)
 		if parseErr != nil {
 			continue
 		}

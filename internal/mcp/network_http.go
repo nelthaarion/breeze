@@ -170,7 +170,8 @@ func (n *NetworkServer) originAllowed(origin string) bool {
 // the only thing standing between a network peer and a code generator.
 func (n *NetworkServer) authorised(r *http.Request) bool {
 	header := r.Header.Get("Authorization")
-	if len(header) <= len(bearerPrefix) || !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
+	if len(header) <= len(bearerPrefix) ||
+		!strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
 		return false
 	}
 	presented := strings.TrimSpace(header[len(bearerPrefix):])
@@ -212,15 +213,19 @@ func (n *NetworkServer) resolveSession(r *http.Request, body []byte) (string, *h
 		if isNotification(body) {
 			return "", nil
 		}
-		return "", &httpError{http.StatusBadRequest, ReasonSessionMissing,
-			"this request needs the " + sessionHeader + " header returned by initialize"}
+		return "", &httpError{
+			http.StatusBadRequest, ReasonSessionMissing,
+			"this request needs the " + sessionHeader + " header returned by initialize",
+		}
 	}
 
 	if !n.knownSession(presented) {
 		// 404 is the specified answer, and it has a specific meaning to a client:
 		// start a new session by sending initialize without an id.
-		return "", &httpError{http.StatusNotFound, ReasonSessionUnknown,
-			"this session is no longer valid; send initialize again without " + sessionHeader}
+		return "", &httpError{
+			http.StatusNotFound, ReasonSessionUnknown,
+			"this session is no longer valid; send initialize again without " + sessionHeader,
+		}
 	}
 	return "", nil
 }

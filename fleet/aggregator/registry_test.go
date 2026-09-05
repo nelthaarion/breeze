@@ -122,7 +122,10 @@ func TestRegistryMarksSilentServiceDown(t *testing.T) {
 		t.Errorf("status after TTL = %q, want down", info.Status)
 	}
 	if info.Instances != 0 {
-		t.Errorf("instances = %d, want 0 — a silent replica must not be counted live", info.Instances)
+		t.Errorf(
+			"instances = %d, want 0 — a silent replica must not be counted live",
+			info.Instances,
+		)
 	}
 	// The last-seen time must survive, since "when did it stop" is the first
 	// question anyone asks about a down service.
@@ -177,10 +180,16 @@ func TestRegistryErrorRateIsTrafficWeighted(t *testing.T) {
 
 	// Flat mean would be 0.5. Weighted is ~0.001.
 	if info.ErrorRate > 0.01 {
-		t.Errorf("ErrorRate = %v, want ~0.001 — a flat mean over replicas misreports service health", info.ErrorRate)
+		t.Errorf(
+			"ErrorRate = %v, want ~0.001 — a flat mean over replicas misreports service health",
+			info.ErrorRate,
+		)
 	}
 	if info.Status != StatusUp {
-		t.Errorf("status = %q, want up: 1 failing request in 1001 is not a degraded service", info.Status)
+		t.Errorf(
+			"status = %q, want up: 1 failing request in 1001 is not a degraded service",
+			info.Status,
+		)
 	}
 }
 
@@ -265,7 +274,10 @@ func TestRegistrySweepKeepsRecentlyDownServices(t *testing.T) {
 	// Well past ServiceTTL, nowhere near the forget threshold.
 	justDown := start.Add(time.Minute)
 	if removed := r.Sweep(justDown); removed != 0 {
-		t.Errorf("Sweep removed %d instances one minute in; a down service must stay visible", removed)
+		t.Errorf(
+			"Sweep removed %d instances one minute in; a down service must stay visible",
+			removed,
+		)
 	}
 	info, ok := r.Service("orders", justDown)
 	if !ok {

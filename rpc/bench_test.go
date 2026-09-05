@@ -170,7 +170,6 @@ func BenchmarkHandleMethodNotFound(b *testing.B) {
 // but that couples the framer to the decoder's notion of validity, which is not
 // a trade worth making on these numbers.
 func BenchmarkHandleParseError(b *testing.B) {
-
 	s := benchServer()
 	req := []byte(`{"jsonrpc":"2.0","method":"sum","params":[1,2,3],"id":}`)
 

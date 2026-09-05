@@ -44,7 +44,11 @@ func TestBannerDoesNotEchoASuppliedToken(t *testing.T) {
 		// "shown once" is the generated-token line, which must not appear either: it
 		// would tell an operator to write down a value that was never printed.
 		if strings.Contains(banner, "shown once") {
-			t.Errorf("%s printed the generated-token line for a token it was given:\n%s", name, banner)
+			t.Errorf(
+				"%s printed the generated-token line for a token it was given:\n%s",
+				name,
+				banner,
+			)
 		}
 	}
 }
@@ -80,10 +84,16 @@ func TestBannerPrintsAGeneratedTokenExactlyOnce(t *testing.T) {
 	banner := errOut.String()
 
 	if token == "" {
-		t.Fatal("no token was generated for a network server; the endpoint would be unauthenticated")
+		t.Fatal(
+			"no token was generated for a network server; the endpoint would be unauthenticated",
+		)
 	}
 	if n := strings.Count(banner, token); n != 1 {
-		t.Errorf("the generated token appears %d times in the banner, want exactly 1:\n%s", n, banner)
+		t.Errorf(
+			"the generated token appears %d times in the banner, want exactly 1:\n%s",
+			n,
+			banner,
+		)
 	}
 }
 

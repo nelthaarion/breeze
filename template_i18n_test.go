@@ -124,7 +124,8 @@ func TestTemplateI18n_DictionaryInjected(t *testing.T) {
 	if !strings.Contains(da, `"home.title":"Velkommen"`) {
 		t.Error("i18n tag missing flattened da dictionary")
 	}
-	if strings.Contains(da, "Velkommen</h1>Welcome") || strings.Contains(da, `"home.title":"Welcome"`) {
+	if strings.Contains(da, "Velkommen</h1>Welcome") ||
+		strings.Contains(da, `"home.title":"Welcome"`) {
 		t.Error("i18n tag leaked a non-active locale dictionary")
 	}
 }

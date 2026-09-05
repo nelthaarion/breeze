@@ -655,12 +655,16 @@ func TestExplainIncidentComposesTheAggregatorsOwnAnalysis(t *testing.T) {
 			if _, ok := inc["banner"]; !ok {
 				t.Error("an incident came back without the aggregator's own banner sentence")
 			}
-			if inc["service"] == "inventory" || inc["service"] == "orders" || inc["service"] == "gateway" {
+			if inc["service"] == "inventory" || inc["service"] == "orders" ||
+				inc["service"] == "gateway" {
 				named = true
 			}
 		}
 		if !named {
-			t.Errorf("incidents were returned but none concern the services in this trace: %v", incidents)
+			t.Errorf(
+				"incidents were returned but none concern the services in this trace: %v",
+				incidents,
+			)
 		}
 		if !strings.Contains(explanation, "Fleet-wide") {
 			t.Errorf("blast radius was fetched but not narrated:\n%s", explanation)

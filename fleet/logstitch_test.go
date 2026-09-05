@@ -43,7 +43,11 @@ func TestPushLogCtxStampsTraceID(t *testing.T) {
 		t.Fatalf("got %d log lines, want 1", len(logs))
 	}
 	if got, want := logs[0].TraceID, st.tc.TraceIDHex(); got != want {
-		t.Errorf("TraceID = %q, want %q — this line is invisible to the trace's log panel", got, want)
+		t.Errorf(
+			"TraceID = %q, want %q — this line is invisible to the trace's log panel",
+			got,
+			want,
+		)
 	}
 }
 

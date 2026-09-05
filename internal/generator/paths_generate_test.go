@@ -91,7 +91,11 @@ func runGeneratorInScratch(t *testing.T, args []string) error {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	if err := os.WriteFile("go.mod", []byte("module example.com/proj\n\ngo 1.25\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		"go.mod",
+		[]byte("module example.com/proj\n\ngo 1.25\n"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 	// view refuses without it, and that refusal would mask the flag's outcome.

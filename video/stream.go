@@ -239,7 +239,10 @@ func (m *mount) applyCORS(h *head, origin string) {
 	}
 	// Without this, JavaScript can read the body but not the headers, so
 	// a player cannot discover the total length from Content-Range.
-	h.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified")
+	h.set(
+		"Access-Control-Expose-Headers",
+		"Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified",
+	)
 }
 
 // isPeerGone reports whether err is a transport failure rather than a

@@ -300,8 +300,10 @@ func unsupportedConfigKeys(cfg ProjectConfig) []string {
 	var unsupported []string
 
 	if cfg.WebSocket.Enabled && cfg.WebSocket.Rooms {
-		unsupported = append(unsupported,
-			"websocket.rooms â€” the generated handler has no room registry; use breeze.Rooms in your own code")
+		unsupported = append(
+			unsupported,
+			"websocket.rooms â€” the generated handler has no room registry; use breeze.Rooms in your own code",
+		)
 	}
 	// middleware.secret is read by no generator, and that is deliberate: the
 	// jwt feature takes --secret-env, the *name* of an environment variable, so
@@ -312,13 +314,17 @@ func unsupportedConfigKeys(cfg ProjectConfig) []string {
 		if m.Secret != "" {
 			unsupported = append(unsupported, fmt.Sprintf(
 				"middleware.%s.secret â€” secrets are read from the environment, not generated into source; "+
-					"set the variable named by the feature's --secret-env instead", m.Name))
+					"set the variable named by the feature's --secret-env instead",
+				m.Name,
+			))
 		}
 	}
 
 	if cfg.Fleet.Enabled && cfg.Fleet.Backend != "" && cfg.Fleet.Backend != "memory" {
-		unsupported = append(unsupported,
-			"fleet.backend â€” only the in-memory span store is generated; a persistent store is aggregator-side configuration")
+		unsupported = append(
+			unsupported,
+			"fleet.backend â€” only the in-memory span store is generated; a persistent store is aggregator-side configuration",
+		)
 	}
 	return unsupported
 }
@@ -338,7 +344,6 @@ func reportUnsupportedConfigKeys(cfg ProjectConfig) {
 // middlewareByName finds a middleware entry by canonical feature name, so a
 // hyphenated spelling in YAML matches the registry name the switch above uses.
 func middlewareByName(cfg ProjectConfig, name string) (MiddlewareConfig, bool) {
-
 	for _, m := range cfg.Middleware {
 		if canonicalFeatureName(m.Name) == name {
 			return m, true

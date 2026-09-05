@@ -317,7 +317,12 @@ func TestNewMountValidation(t *testing.T) {
 	if _, err := newMount(Config{}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("empty Root: err = %v", err)
 	}
-	if _, err := newMount(Config{Root: filepath.Join(t.TempDir(), "nope")}); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := newMount(
+		Config{Root: filepath.Join(t.TempDir(), "nope")},
+	); !errors.Is(
+		err,
+		ErrInvalidConfig,
+	) {
 		t.Fatalf("missing Root: err = %v", err)
 	}
 	// A file where a directory is expected must fail at setup, not per
@@ -329,7 +334,12 @@ func TestNewMountValidation(t *testing.T) {
 	if _, err := newMount(Config{Root: f}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("file as Root: err = %v", err)
 	}
-	if _, err := newMount(Config{Root: t.TempDir(), Prefix: "videos"}); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := newMount(
+		Config{Root: t.TempDir(), Prefix: "videos"},
+	); !errors.Is(
+		err,
+		ErrInvalidConfig,
+	) {
 		t.Fatalf("prefix without slash: err = %v", err)
 	}
 }
@@ -462,13 +472,27 @@ func TestSignRoundTrip(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalidSignature", err)
 	}
 	// Changing the expiry must invalidate it too.
-	if err := m.verifySignature("a/b.mp4", "9999999999", sig); !errors.Is(err, ErrInvalidSignature) {
+	if err := m.verifySignature(
+		"a/b.mp4",
+		"9999999999",
+		sig,
+	); !errors.Is(
+		err,
+		ErrInvalidSignature,
+	) {
 		t.Fatalf("err = %v, want ErrInvalidSignature", err)
 	}
 	if err := m.verifySignature("a/b.mp4", "", ""); !errors.Is(err, ErrSignatureRequired) {
 		t.Fatalf("err = %v, want ErrSignatureRequired", err)
 	}
-	if err := m.verifySignature("a/b.mp4", "notanumber", sig); !errors.Is(err, ErrInvalidSignature) {
+	if err := m.verifySignature(
+		"a/b.mp4",
+		"notanumber",
+		sig,
+	); !errors.Is(
+		err,
+		ErrInvalidSignature,
+	) {
 		t.Fatalf("err = %v, want ErrInvalidSignature", err)
 	}
 }

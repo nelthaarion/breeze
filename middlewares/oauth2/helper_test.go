@@ -102,7 +102,11 @@ func newMockProvider(t *testing.T) *mockProvider {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"at-123","token_type":"Bearer","refresh_token":"rt-456","expires_in":3600,"scope":"openid"}`))
+		_, _ = w.Write(
+			[]byte(
+				`{"access_token":"at-123","token_type":"Bearer","refresh_token":"rt-456","expires_in":3600,"scope":"openid"}`,
+			),
+		)
 	})
 
 	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +115,11 @@ func newMockProvider(t *testing.T) *mockProvider {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"sub":"user-1","oid":"user-1","id":42,"login":"octocat","email":"u@example.com","name":"Test User","picture":"http://img","avatar_url":"http://img","avatar":"abc","username":"octocat","global_name":"Testy"}`))
+		_, _ = w.Write(
+			[]byte(
+				`{"sub":"user-1","oid":"user-1","id":42,"login":"octocat","email":"u@example.com","name":"Test User","picture":"http://img","avatar_url":"http://img","avatar":"abc","username":"octocat","global_name":"Testy"}`,
+			),
+		)
 	})
 
 	mp.server = httptest.NewServer(mux)

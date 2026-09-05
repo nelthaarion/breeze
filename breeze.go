@@ -58,7 +58,9 @@ const compactThreshold = 512
 var (
 	resp400 = []byte("HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nBad Request")
 	resp404 = []byte("HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found")
-	resp500 = []byte("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 21\r\n\r\nInternal Server Error")
+	resp500 = []byte(
+		"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 21\r\n\r\nInternal Server Error",
+	)
 )
 
 // New creates a Breeze server with the given router and worker pool.

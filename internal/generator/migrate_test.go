@@ -31,7 +31,11 @@ func TestMigratorPresentTracksTheRunner(t *testing.T) {
 		t.Error("migratorPresent() is true with only the directory present")
 	}
 
-	if err := os.WriteFile(filepath.Join(migratorPkg, "main.go"), []byte("package main\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(migratorPkg, "main.go"),
+		[]byte("package main\n"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if !migratorPresent() {

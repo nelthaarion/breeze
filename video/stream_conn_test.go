@@ -161,7 +161,11 @@ func TestAliasingSinkCorruptsStream(t *testing.T) {
 	}
 	defer f.Close()
 
-	if _, err := m.copyRange(&aliasSink{conn: conn}, f, byteRange{Start: 0, End: size - 1}); err != nil {
+	if _, err := m.copyRange(
+		&aliasSink{conn: conn},
+		f,
+		byteRange{Start: 0, End: size - 1},
+	); err != nil {
 		t.Fatalf("copyRange: %v", err)
 	}
 
@@ -170,7 +174,9 @@ func TestAliasingSinkCorruptsStream(t *testing.T) {
 		got = append(got, q...)
 	}
 	if bytes.Equal(got, want) {
-		t.Fatal("aliasing sink produced correct bytes: the harness cannot detect the bug it exists to catch")
+		t.Fatal(
+			"aliasing sink produced correct bytes: the harness cannot detect the bug it exists to catch",
+		)
 	}
 	t.Logf("aliasing corrupts the stream as expected: got %q, want %q", got, want)
 }

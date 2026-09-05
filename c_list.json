@@ -1,1 +1,0 @@
-[{"trace_id":"538cdfa830fbf9cebdcdbedbacbd616f","services":["auth-service","gateway","orders-service"],"root_service":"gateway","route":"/api/orders/:id","method":"GET","status":200,"start_ns":1787777279841377264,"duration_ms":8.903,"span_count":3,"has_error":false}]

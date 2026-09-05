@@ -17,7 +17,7 @@ func InferSchema(v any) *Schema {
 
 // walkType recurses through a reflect.Type to build a Schema.
 func walkType(t reflect.Type) *Schema {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 

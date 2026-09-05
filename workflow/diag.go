@@ -138,7 +138,7 @@ func storeKind(s Store) string {
 		return "none"
 	}
 	t := reflect.TypeOf(s)
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if pkg := t.PkgPath(); pkg != "" {

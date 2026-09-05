@@ -410,7 +410,7 @@ func getRecentErrors(a recentErrorsArgs) toolCallResult {
 	// cannot express "anything that failed". Scanning the request log and
 	// filtering here is one call instead of several, and the scanned count is
 	// reported so the caller knows the denominator.
-	req := a.liveArgs.request("/requests", "dashboard")
+	req := a.request("/requests", "dashboard")
 	if a.Limit > 0 {
 		req.path += "?limit=" + fmt.Sprint(a.Limit)
 	}
@@ -538,7 +538,7 @@ func getLogs(a logsArgs) toolCallResult {
 		query.Set("trace_id", id)
 	}
 
-	req := a.liveArgs.request("/logs", "dashboard")
+	req := a.request("/logs", "dashboard")
 	req.path += "?" + query.Encode()
 
 	var entries []liveLogEntry

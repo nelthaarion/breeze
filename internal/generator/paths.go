@@ -59,10 +59,19 @@ func validatePathFlag(flag, value string) error {
 			"root", flag, value)
 	}
 
+	// Both separators are normalised before cleaning, and that is load-bearing rather
+	// than tidiness. filepath.Clean is per-platform: on Linux `\` is an ordinary
+	// filename character, so `..\windows` is one atom that Clean leaves untouched and
+	// the leading-".." test below never fires. The same value on Windows is a
+	// traversal. A path flag is refused or accepted on what it means, not on which
+	// machine the check happens to run — and the caller here may be an agent, which is
+	// exactly the caller that would send the spelling the host does not police.
+	normalised := strings.ReplaceAll(trimmed, `\`, "/")
+
 	// Clean collapses "a/../b" to "b" and reduces any escape to a leading "..",
 	// which is the whole test. A textual search for ".." would reject "..foo" and
 	// miss "a/b/../../..".
-	cleaned := filepath.Clean(filepath.FromSlash(trimmed))
+	cleaned := filepath.Clean(filepath.FromSlash(normalised))
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("--%s %q resolves outside the project (%s). This flag names a location "+
 			"inside the project, and a path that escapes it is refused rather than followed",

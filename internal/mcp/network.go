@@ -276,9 +276,9 @@ func newNetworkServer(handler rpcHandler, cfg NetworkConfig) (*NetworkServer, st
 	}
 	for _, origin := range cfg.AllowedOrigins {
 		origin = strings.TrimSpace(origin)
-		switch {
-		case origin == "":
-		case origin == "*":
+		switch origin {
+		case "":
+		case "*":
 			ns.anyOrigin = true
 		default:
 			ns.origins[strings.ToLower(strings.TrimSuffix(origin, "/"))] = true

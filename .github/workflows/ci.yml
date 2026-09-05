@@ -44,7 +44,12 @@ jobs:
           go vet ./...
 
       - name: Run tests
-        run: go test ./...
+        # -short is deliberate. internal/mcp's live provisioning tests and
+        # internal/generator's e2e tests build container images and compile
+        # scaffolded projects; both skip under -short, and both take minutes.
+        # They are developer tests against a real Docker daemon, not a gate —
+        # tools_provision_live_test.go says so at the top of the file.
+        run: go test -short ./...
 
       - name: Check internal documentation links
         # Every relative Markdown link in the repo must resolve. Fenced code

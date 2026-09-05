@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/internal/generator"
+	"github.com/nelthaarion/breeze/v2/internal/generator"
 )
 
 // autoSyncFields are the fields whose presence is asserted end to end.

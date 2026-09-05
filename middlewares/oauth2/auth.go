@@ -1,6 +1,6 @@
 package oauth2
 
-import "github.com/nelthaarion/breeze"
+import "github.com/nelthaarion/breeze/v2"
 
 // Auth returns a middleware that requires a valid session. On success it
 // populates the context (CurrentUser/CurrentToken) and calls the next handler.

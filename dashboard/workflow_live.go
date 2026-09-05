@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 // This file tracks workflow executions while they are still running.

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // wsFlushInterval is how often queued live events are flushed to clients.

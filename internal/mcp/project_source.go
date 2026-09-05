@@ -31,7 +31,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nelthaarion/breeze/internal/generator"
+	"github.com/nelthaarion/breeze/v2/internal/generator"
 )
 
 // modelsDirName is where `breeze generate model` writes. It is a literal in the

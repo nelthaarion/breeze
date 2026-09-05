@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 // span builds a span with plausible ids, so tests read as trees rather than hex.

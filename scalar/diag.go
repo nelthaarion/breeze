@@ -23,7 +23,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // diagName is the registry key. "docs" rather than "scalar", matching the

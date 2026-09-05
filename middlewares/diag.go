@@ -47,7 +47,7 @@ package middleware
 import (
 	"fmt"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // Diagnostic registry keys, matching the `breeze add` feature names.

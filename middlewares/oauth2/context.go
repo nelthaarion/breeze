@@ -1,6 +1,6 @@
 package oauth2
 
-import "github.com/nelthaarion/breeze"
+import "github.com/nelthaarion/breeze/v2"
 
 // Context store keys. Unexported so only this package can write them; readers
 // use the typed accessor functions below.

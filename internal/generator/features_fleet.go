@@ -26,10 +26,10 @@ import (
 )
 
 const (
-	fleetImport           = `"github.com/nelthaarion/breeze/fleet"`
-	fleetHTTPImport       = `"github.com/nelthaarion/breeze/fleet/transport/httptransport"`
-	fleetWSImport         = `"github.com/nelthaarion/breeze/fleet/transport/wstransport"`
-	fleetEventsImport     = `"github.com/nelthaarion/breeze/fleet/transport/eventtransport"`
+	fleetImport           = `"github.com/nelthaarion/breeze/v2/fleet"`
+	fleetHTTPImport       = `"github.com/nelthaarion/breeze/v2/fleet/transport/httptransport"`
+	fleetWSImport         = `"github.com/nelthaarion/breeze/v2/fleet/transport/wstransport"`
+	fleetEventsImport     = `"github.com/nelthaarion/breeze/v2/fleet/transport/eventtransport"`
 	fleetTransportTimeout = "2 * time.Second"
 )
 

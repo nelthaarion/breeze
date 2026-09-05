@@ -30,7 +30,7 @@ package fleet
 import (
 	"context"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // Header keys used by every transport.

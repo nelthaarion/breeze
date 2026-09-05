@@ -22,7 +22,7 @@ function-length pass, and a fence-aware Markdown link check.
 
 ## 1. Top-level layout
 
-`go.mod` is `github.com/nelthaarion/breeze`, so the repo root **is** the
+`go.mod` is `github.com/nelthaarion/breeze/v2`, so the repo root **is** the
 `breeze` package. Go convention: root and subdirectories = public API,
 `internal/` = unimportable outside the module, `cmd/` = binaries.
 
@@ -72,7 +72,7 @@ function-length pass, and a fence-aware Markdown link check.
 
 | Concern | Finding |
 |---|---|
-| **Directory ≠ package name** | `middlewares/` declares `package middleware` (singular). Every import in the repo needs an alias: `middleware "github.com/nelthaarion/breeze/middlewares"` — see `cmd/main.go:8`, `example_template/main.go:12`, `README.md:88`. This is the only such mismatch in 38 packages. Renaming either side breaks every user's import line, so it stays; it needs to be *stated* as a known wart rather than rediscovered. |
+| **Directory ≠ package name** | `middlewares/` declares `package middleware` (singular). Every import in the repo needs an alias: `middleware "github.com/nelthaarion/breeze/v2/middlewares"` — see `cmd/main.go:8`, `example_template/main.go:12`, `README.md:88`. This is the only such mismatch in 38 packages. Renaming either side breaks every user's import line, so it stays; it needs to be *stated* as a known wart rather than rediscovered. |
 | **`config.go` placement** | 6 of 24 library packages isolate config in `config.go` (`dashboard`, `events`, `fleet/aggregator`, `internal/generator`, `middlewares/oauth2`, `video`). The rest bury it in the main file: `fleet.TracerConfig` is in `fleet/tracer.go`, `client.Config` in `client/client.go`, `rpc` has `types.go` but its `Server` options are in `server.go`. |
 | **`doc.go` placement** | Only 4 packages have one (`events`, `rpc`, `video`, `workflow`). 9 packages have **no package doc comment at all**: root `.`, `binding`, `dashboard`, `middlewares`, `migrate`, `observability`, `scalar`, `internal/generator`, `fleet/contracts`. The root package — the framework's front door — is among them. |
 | **File-name case style** | `internal/mcp` (24 snake_case / 18 flat) and `internal/generator` (23/19) use `tools_provision.go`, `generate_grpc_files.go`. `events` (0/19), `fleet` (0/11), `video` (0/11), `rpc` (0/10) use `dispatch.go`, `tracer.go`. Both are idiomatic Go; the repo simply never picked one. |

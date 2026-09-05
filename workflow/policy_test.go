@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 // Retry timing and the remaining builder options are covered here.

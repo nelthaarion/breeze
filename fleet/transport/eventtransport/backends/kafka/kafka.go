@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/v2/events"
 	kafka "github.com/segmentio/kafka-go"
 )
 

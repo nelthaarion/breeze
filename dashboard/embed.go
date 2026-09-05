@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 //go:embed templates/views/*.html

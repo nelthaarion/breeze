@@ -42,7 +42,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nelthaarion/breeze/internal/mcp"
+	"github.com/nelthaarion/breeze/v2/internal/mcp"
 )
 
 // interactiveStdin reports whether stdin is a terminal.

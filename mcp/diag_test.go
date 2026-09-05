@@ -20,8 +20,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/diag"
-	"github.com/nelthaarion/breeze/mcp"
+	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/v2/mcp"
 )
 
 // TestEmbeddedEndpointRegistersItsOwnProbe is the gap this closed.

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 // StepFunc is the work a step performs. Returning an error fails the

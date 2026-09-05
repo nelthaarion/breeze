@@ -122,7 +122,7 @@ func TestCheckIdiomsFindsReflectionInAHandler(t *testing.T) {
 import (
 	"reflect"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // ShowUser is a handler, so reflect here runs once per request.
@@ -175,9 +175,9 @@ func TestCheckIdiomsFindsMiddlewareRegisteredInTheWrongOrder(t *testing.T) {
 	source := writeGo(t, root, "setup.go", `package main
 
 import (
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/dashboard"
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 func setupObservability(router *breeze.Router, c *dashboard.Collector, tr *fleet.Tracer) {
@@ -211,9 +211,9 @@ func TestCheckIdiomsAcceptsTheCorrectMiddlewareOrder(t *testing.T) {
 	writeGo(t, root, "setup.go", `package main
 
 import (
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/dashboard"
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 func setupObservability(router *breeze.Router, c *dashboard.Collector, tr *fleet.Tracer) {
@@ -273,8 +273,8 @@ func TestCheckIdiomsFindsTheDeprecatedSwaggerSpelling(t *testing.T) {
 	source := writeGo(t, root, "docs.go", `package main
 
 import (
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/middlewares"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/middlewares"
 )
 
 func setupDocs(router *breeze.Router) {
@@ -370,7 +370,7 @@ func TestCheckIdiomsReportsUnparseableFilesWithoutAbandoningTheRest(t *testing.T
 import (
 	"reflect"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 func Show(c *breeze.Context) error {
@@ -448,7 +448,7 @@ func TestCheckIdiomsToolReturnsStructuredFindings(t *testing.T) {
 import (
 	"reflect"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 func Show(c *breeze.Context) error {

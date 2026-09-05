@@ -5,7 +5,7 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // RecoveryMiddleware returns a HandlerFunc that catches panics and returns 500

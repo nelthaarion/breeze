@@ -29,7 +29,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/internal/mcp"
+	"github.com/nelthaarion/breeze/v2/internal/mcp"
 )
 
 // stderrLogger writes one line per event.

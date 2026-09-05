@@ -1,6 +1,6 @@
 package oauth2
 
-import "github.com/nelthaarion/breeze"
+import "github.com/nelthaarion/breeze/v2"
 
 // Logout returns a handler that clears the session cookie and redirects to
 // SuccessRedirect (or "/"). It also clears any lingering flow-state cookie so

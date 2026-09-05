@@ -1,7 +1,7 @@
 package contracts
 
 import (
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2/scalar"
 	"testing"
 )
 

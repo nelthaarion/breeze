@@ -26,8 +26,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/nelthaarion/breeze/internal/generator"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2/internal/generator"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 func registerKnowledgeTools(s *Server) {

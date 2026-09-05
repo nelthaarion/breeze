@@ -3,7 +3,7 @@ package oauth2
 import (
 	"sync"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // driverRegistry holds the ProviderDriver for each Provider. It is populated by

@@ -30,10 +30,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/client"
-	"github.com/nelthaarion/breeze/fleet"
-	"github.com/nelthaarion/breeze/fleet/transport/eventtransport"
-	"github.com/nelthaarion/breeze/fleet/transport/httptransport"
+	"github.com/nelthaarion/breeze/v2/client"
+	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet/transport/eventtransport"
+	"github.com/nelthaarion/breeze/v2/fleet/transport/httptransport"
 )
 
 // DefaultTimeout bounds a dial, a write and a reply read independently.

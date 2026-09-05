@@ -53,7 +53,7 @@ package breeze
 //
 // This file is part of package breeze, so the method constants (GET, POST) and
 // the request types are already in scope unqualified. Importing
-// github.com/nelthaarion/breeze here would be a self-import, which Go rejects as
+// github.com/nelthaarion/breeze/v2 here would be a self-import, which Go rejects as
 // "import cycle not allowed in test" — and because the failure is attributed to
 // the package rather than to one test, it stops the entire root package from
 // building under `go test ./...`.

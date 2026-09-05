@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // TestAnEmptySecretVerifiesAForgedToken is the vulnerability, demonstrated.

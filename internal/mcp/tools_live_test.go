@@ -35,11 +35,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/client"
-	"github.com/nelthaarion/breeze/dashboard"
-	"github.com/nelthaarion/breeze/internal/mcp"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/client"
+	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/v2/internal/mcp"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 const (

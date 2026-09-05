@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // Installation flags. Each constructor sets its own, so a probe can distinguish

@@ -37,7 +37,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/nelthaarion/breeze/binding"
+	"github.com/nelthaarion/breeze/v2/binding"
 )
 
 // ErrorHandler turns an error returned by a handler or middleware into a

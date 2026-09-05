@@ -38,10 +38,10 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/nelthaarion/breeze"
-	middleware "github.com/nelthaarion/breeze/middlewares"
-	"github.com/nelthaarion/breeze/rpc"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2"
+	middleware "github.com/nelthaarion/breeze/v2/middlewares"
+	"github.com/nelthaarion/breeze/v2/rpc"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 // testSecret is long enough to be a legitimate HMAC key. It is a test fixture, not a

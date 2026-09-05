@@ -40,25 +40,25 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/dashboard"
-	"github.com/nelthaarion/breeze/diag"
-	"github.com/nelthaarion/breeze/events"
-	"github.com/nelthaarion/breeze/fleet"
-	"github.com/nelthaarion/breeze/internal/generator"
-	"github.com/nelthaarion/breeze/migrate"
-	"github.com/nelthaarion/breeze/observability"
-	"github.com/nelthaarion/breeze/rpc"
-	"github.com/nelthaarion/breeze/video"
-	"github.com/nelthaarion/breeze/workflow"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/v2/internal/generator"
+	"github.com/nelthaarion/breeze/v2/migrate"
+	"github.com/nelthaarion/breeze/v2/observability"
+	"github.com/nelthaarion/breeze/v2/rpc"
+	"github.com/nelthaarion/breeze/v2/video"
+	"github.com/nelthaarion/breeze/v2/workflow"
 
 	// Blank imports for the packages whose probes register from init. They are
 	// the ones with no handle to construct — a middleware is a closure and the
 	// OpenAPI registry is a package global — so importing them is the whole
 	// wiring step.
-	_ "github.com/nelthaarion/breeze/middlewares"
-	_ "github.com/nelthaarion/breeze/middlewares/oauth2"
-	_ "github.com/nelthaarion/breeze/scalar"
+	_ "github.com/nelthaarion/breeze/v2/middlewares"
+	_ "github.com/nelthaarion/breeze/v2/middlewares/oauth2"
+	_ "github.com/nelthaarion/breeze/v2/scalar"
 )
 
 // diagAliases maps a feature name to the registry key its probe uses.

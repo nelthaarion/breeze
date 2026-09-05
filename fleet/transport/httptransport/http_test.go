@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 // receive captures what the transport actually put on the wire, so the tests

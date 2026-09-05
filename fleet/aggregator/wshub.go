@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/fleet"
-	"github.com/nelthaarion/breeze/fleet/transport/eventtransport"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet/transport/eventtransport"
 )
 
 const wsSnapshotInterval = 2 * time.Second

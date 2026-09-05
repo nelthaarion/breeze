@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 func invoke(t *testing.T, router *breeze.Router, method breeze.Method, target string, body []byte, headers map[string]string) *breeze.Context {

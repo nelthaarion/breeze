@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 const maxIngestBody = 32 << 20 // 32 MiB compressed or plain, before JSON decode.

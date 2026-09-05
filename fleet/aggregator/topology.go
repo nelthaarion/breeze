@@ -34,7 +34,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 // latencyBounds are the upper edges, in milliseconds, of the histogram buckets.

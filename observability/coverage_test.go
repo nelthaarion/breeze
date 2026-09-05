@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 // This file covers the paths the main suite leaves open: the remaining

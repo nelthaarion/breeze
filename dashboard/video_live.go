@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze/events"
-	"github.com/nelthaarion/breeze/video"
+	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/v2/video"
 )
 
 // This file tracks video streaming while it is happening.

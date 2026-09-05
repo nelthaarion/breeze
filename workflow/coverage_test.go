@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/events"
-	"github.com/nelthaarion/breeze/observability"
+	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/v2/observability"
 )
 
 // This file covers the paths the behavioural tests in workflow_test.go

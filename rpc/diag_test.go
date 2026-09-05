@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 func TestProbeReportsAnEmptyMethodTableAsDegraded(t *testing.T) {

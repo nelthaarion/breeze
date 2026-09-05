@@ -62,9 +62,9 @@ import (
 	"net"
 	"strings"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/diag"
-	internalmcp "github.com/nelthaarion/breeze/internal/mcp"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/diag"
+	internalmcp "github.com/nelthaarion/breeze/v2/internal/mcp"
 )
 
 // Version is reported in the MCP handshake as this endpoint's server version.

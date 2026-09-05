@@ -10,7 +10,7 @@ import (
 //
 // The framework's events package is imported as `evt` here, not under its own
 // name: the file lives in a package the user's project calls `events`, and
-// `import "github.com/nelthaarion/breeze/events"` inside a package named
+// `import "github.com/nelthaarion/breeze/v2/events"` inside a package named
 // `events` is legal but reads as a shadow and collides the moment the same file
 // wants to name both. The alias makes every reference unambiguous.
 //
@@ -37,7 +37,7 @@ func generateEvent(modulePath, name string, args []string) error {
 		return err
 	}
 
-	imports := []string{`evt "github.com/nelthaarion/breeze/events"`}
+	imports := []string{`evt "github.com/nelthaarion/breeze/v2/events"`}
 	if usesTime(fields) {
 		imports = append(imports, timeImport)
 	}

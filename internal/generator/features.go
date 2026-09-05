@@ -27,12 +27,12 @@ const callsBlockName = "calls"
 // Import lines for the framework subpackages generated code reaches for.
 // middlewareImport and scalarImport live in generate_resource.go.
 const (
-	eventsImport        = `"github.com/nelthaarion/breeze/events"`
-	workflowImport      = `"github.com/nelthaarion/breeze/workflow"`
-	dashboardImport     = `"github.com/nelthaarion/breeze/dashboard"`
-	observabilityImport = `"github.com/nelthaarion/breeze/observability"`
-	videoImport         = `"github.com/nelthaarion/breeze/video"`
-	oauth2Import        = `"github.com/nelthaarion/breeze/middlewares/oauth2"`
+	eventsImport        = `"github.com/nelthaarion/breeze/v2/events"`
+	workflowImport      = `"github.com/nelthaarion/breeze/v2/workflow"`
+	dashboardImport     = `"github.com/nelthaarion/breeze/v2/dashboard"`
+	observabilityImport = `"github.com/nelthaarion/breeze/v2/observability"`
+	videoImport         = `"github.com/nelthaarion/breeze/v2/video"`
+	oauth2Import        = `"github.com/nelthaarion/breeze/v2/middlewares/oauth2"`
 	timeImport          = `"time"`
 	logImport           = `"log"`
 	contextImport       = `"context"`
@@ -70,7 +70,7 @@ func featuresTemplate() string {
 	start, end := markersFor(featureMarkerPrefix, callsBlockName)
 	return featuresHeader + `
 import (
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // RegisterGeneratedFeatures wires every feature added with ` + "`breeze add`" + `.

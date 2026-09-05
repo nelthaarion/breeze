@@ -33,7 +33,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/nelthaarion/breeze/internal/generator"
+	"github.com/nelthaarion/breeze/v2/internal/generator"
 )
 
 func registerPlanningTools(s *Server) {

@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"github.com/andybalholm/brotli"
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // CompressionMiddleware compresses responses using supported algorithms.

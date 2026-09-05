@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/goccy/go-json"
-	"github.com/nelthaarion/breeze/binding"
+	"github.com/nelthaarion/breeze/v2/binding"
 	"github.com/panjf2000/gnet/v2"
 )
 

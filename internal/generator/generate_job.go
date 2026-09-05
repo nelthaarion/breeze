@@ -124,7 +124,7 @@ func generateJob(modulePath, name string, args []string) error {
 		Owner:  generateOwner("job"),
 		Imports: []string{
 			contextImport, logImport, timeImport,
-			`"github.com/nelthaarion/breeze/dashboard"`,
+			`"github.com/nelthaarion/breeze/v2/dashboard"`,
 		},
 		Body:       b.String(),
 		ModulePath: modulePath,
@@ -150,7 +150,7 @@ func generateJob(modulePath, name string, args []string) error {
 
 	imports := []string{
 		contextImport,
-		`"github.com/nelthaarion/breeze"`,
+		`"github.com/nelthaarion/breeze/v2"`,
 		// Aliased for the same reason `generate ws` aliases its own: the package
 		// the generated file declares is target.Package, which --package may have
 		// made something other than the directory name.

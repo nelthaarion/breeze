@@ -24,7 +24,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // noDialConnector is a *sql.DB that has never been connected and must not be.

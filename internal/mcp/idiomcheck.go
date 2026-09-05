@@ -43,7 +43,7 @@ import (
 // these rather than off the local identifier, so an alias or a same-named
 // package from somewhere else cannot produce a false finding.
 const (
-	breezeModulePath = "github.com/nelthaarion/breeze"
+	breezeModulePath = "github.com/nelthaarion/breeze/v2"
 	fleetPath        = breezeModulePath + "/fleet"
 	dashboardPath    = breezeModulePath + "/dashboard"
 	middlewaresPath  = breezeModulePath + "/middlewares"

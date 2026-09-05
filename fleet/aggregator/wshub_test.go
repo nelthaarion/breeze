@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/fleet"
-	"github.com/nelthaarion/breeze/fleet/transport/eventtransport"
+	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet/transport/eventtransport"
 )
 
 func TestWSAuthRolesAndPublishDecode(t *testing.T) {

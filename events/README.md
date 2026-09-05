@@ -22,7 +22,7 @@
 ## Installation
 
 ```bash
-go get github.com/nelthaarion/breeze/events
+go get github.com/nelthaarion/breeze/v2/events
 ```
 
 ## Quick Start
@@ -32,7 +32,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 type UserCreated struct {

@@ -30,11 +30,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/client"
-	"github.com/nelthaarion/breeze/fleet"
-	"github.com/nelthaarion/breeze/fleet/aggregator"
-	"github.com/nelthaarion/breeze/fleet/contracts"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/client"
+	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet/aggregator"
+	"github.com/nelthaarion/breeze/v2/fleet/contracts"
 )
 
 const (

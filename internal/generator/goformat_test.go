@@ -298,20 +298,20 @@ func TestConditionalTemplateBranchesLeaveNoUnusedImport(t *testing.T) {
 		{
 			name:    "list only",
 			args:    []string{"resource", "Widget", "name:string", "--methods=list"},
-			absent:  []string{`"errors"`, `"fmt"`, `"github.com/nelthaarion/breeze/binding"`},
-			present: []string{`"sync"`, `"github.com/nelthaarion/breeze"`},
+			absent:  []string{`"errors"`, `"fmt"`, `"github.com/nelthaarion/breeze/v2/binding"`},
+			present: []string{`"sync"`, `"github.com/nelthaarion/breeze/v2"`},
 		},
 		{
 			name: "create needs binding and fmt",
 			args: []string{"resource", "Widget", "name:string", "--methods=create"},
 			// name:string infers `required`, so the 422 branch and errors are live.
-			present: []string{`"errors"`, `"fmt"`, `"github.com/nelthaarion/breeze/binding"`},
+			present: []string{`"errors"`, `"fmt"`, `"github.com/nelthaarion/breeze/v2/binding"`},
 		},
 		{
 			name:    "no validation means no errors import",
 			args:    []string{"resource", "Widget", "age:int", "--methods=create"},
 			absent:  []string{`"errors"`},
-			present: []string{`"github.com/nelthaarion/breeze/binding"`},
+			present: []string{`"github.com/nelthaarion/breeze/v2/binding"`},
 		},
 		{
 			name:    "a time field pulls time in",
@@ -374,8 +374,8 @@ func TestUnusedImportIsDroppedEvenWhenAGeneratorAsksForIt(t *testing.T) {
 		// import is included too, since those must survive: they exist for their
 		// side effects, so being unreferenced is their normal state.
 		Imports: []string{
-			timeImport, `"sync"`, `"github.com/nelthaarion/breeze/dashboard"`,
-			`_ "github.com/nelthaarion/breeze/events"`,
+			timeImport, `"sync"`, `"github.com/nelthaarion/breeze/v2/dashboard"`,
+			`_ "github.com/nelthaarion/breeze/v2/events"`,
 		},
 		Body:       "// Probe is a fixture.\ntype Probe struct {\n\tAt time.Time\n}\n",
 		ModulePath: "example.com/proj",
@@ -394,12 +394,12 @@ func TestUnusedImportIsDroppedEvenWhenAGeneratorAsksForIt(t *testing.T) {
 	if !strings.Contains(got, `"time"`) {
 		t.Errorf("the used import was dropped:\n%s", got)
 	}
-	for _, unwanted := range []string{`"sync"`, `"github.com/nelthaarion/breeze/dashboard"`} {
+	for _, unwanted := range []string{`"sync"`, `"github.com/nelthaarion/breeze/v2/dashboard"`} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("%s survived although nothing references it:\n%s", unwanted, got)
 		}
 	}
-	if !strings.Contains(got, `_ "github.com/nelthaarion/breeze/events"`) {
+	if !strings.Contains(got, `_ "github.com/nelthaarion/breeze/v2/events"`) {
 		t.Errorf("a blank import was pruned; those are there for their side effects:\n%s", got)
 	}
 	assertCanonical(t, path)

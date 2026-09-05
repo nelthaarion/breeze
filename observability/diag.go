@@ -17,7 +17,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // diagName is the registry key. "observability" matches the feature name.

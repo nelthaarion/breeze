@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // clientKey returns the request's client IP, stripping the ephemeral source

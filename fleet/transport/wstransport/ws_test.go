@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 // The stub server below is deliberately a raw net.Listener speaking RFC 6455 by

@@ -86,7 +86,7 @@
 //
 // The engine publishes through the Breeze event bus — it does not own
 // one. Every lifecycle moment is an event in
-// [github.com/nelthaarion/breeze/events], from WorkflowStarted to
+// [github.com/nelthaarion/breeze/v2/events], from WorkflowStarted to
 // WorkflowCompensationFailed, so the dashboard and any listener see
 // workflow activity with no extra wiring.
 //

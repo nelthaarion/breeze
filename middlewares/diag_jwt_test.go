@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // longSecret is 32 bytes — the minimum the probe accepts without comment.

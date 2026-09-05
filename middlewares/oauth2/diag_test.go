@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // resetFlows clears the per-provider registry so each test starts from nothing.

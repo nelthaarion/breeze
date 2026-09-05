@@ -45,7 +45,7 @@ func generateTestResourceFileWith(t *testing.T, args []string) string {
 // binding.Bind reads those tags.
 func TestResourceHandlerBindsThroughBindingPackage(t *testing.T) {
 	src := generateTestResourceFile(t)
-	if !strings.Contains(src, `"github.com/nelthaarion/breeze/binding"`) {
+	if !strings.Contains(src, `"github.com/nelthaarion/breeze/v2/binding"`) {
 		t.Error("generated handler does not import the binding package")
 	}
 	if !strings.Contains(src, "binding.Bind(&req, binding.JSONBody(ctx.Req.Body))") {
@@ -222,7 +222,7 @@ func TestResourceRoutesUseScalarPackage(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(routes)
-	if !strings.Contains(src, `"github.com/nelthaarion/breeze/scalar"`) || !strings.Contains(src, "scalar.RouteDoc") {
+	if !strings.Contains(src, `"github.com/nelthaarion/breeze/v2/scalar"`) || !strings.Contains(src, "scalar.RouteDoc") {
 		t.Errorf("routes must use the scalar package (middleware.Doc* takes scalar.RouteDoc), got:\n%s", src)
 	}
 	if strings.Contains(src, "swagger.") {

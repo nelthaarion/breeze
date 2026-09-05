@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/events"
-	"github.com/nelthaarion/breeze/fleet"
-	"github.com/nelthaarion/breeze/fleet/transport/eventtransport"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/events"
+	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet/transport/eventtransport"
 )
 
 func TestAggregatorConsumesSignedInProcessEvents(t *testing.T) {

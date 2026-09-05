@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 // Middleware returns a Breeze middleware that instruments every request for

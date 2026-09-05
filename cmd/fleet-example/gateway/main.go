@@ -20,11 +20,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/dashboard"
-	"github.com/nelthaarion/breeze/fleet"
-	"github.com/nelthaarion/breeze/fleet/transport/httptransport"
-	"github.com/nelthaarion/breeze/mcp"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet/transport/httptransport"
+	"github.com/nelthaarion/breeze/v2/mcp"
 )
 
 func main() {

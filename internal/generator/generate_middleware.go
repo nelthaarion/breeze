@@ -15,7 +15,7 @@ import (
 //     of the chain would put it inside auth and rate limiting, which is wrong
 //     for most of what people write.
 //   - A local package named `middleware` collides with the framework's
-//     `middleware "github.com/nelthaarion/breeze/middlewares"` alias in any
+//     `middleware "github.com/nelthaarion/breeze/v2/middlewares"` alias in any
 //     generated file that imports both â€” and features_generated.go imports the
 //     framework one for nine of its features.
 //
@@ -66,7 +66,7 @@ func generateMiddleware(modulePath, name string, args []string) error {
 	if err := writeGeneratedGoFile(generatedFile{
 		Target:     target,
 		Owner:      generateOwner("middleware"),
-		Imports:    []string{`"github.com/nelthaarion/breeze"`},
+		Imports:    []string{`"github.com/nelthaarion/breeze/v2"`},
 		Body:       b.String(),
 		ModulePath: modulePath,
 		Force:      *force,

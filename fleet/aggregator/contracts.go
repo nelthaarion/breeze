@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/nelthaarion/breeze/fleet"
-	"github.com/nelthaarion/breeze/fleet/contracts"
+	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet/contracts"
 )
 
 const contractQueueSize = 2048

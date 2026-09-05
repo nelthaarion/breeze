@@ -26,8 +26,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nelthaarion/breeze/internal/mcp"
-	"github.com/nelthaarion/breeze/rpc"
+	"github.com/nelthaarion/breeze/v2/internal/mcp"
+	"github.com/nelthaarion/breeze/v2/rpc"
 )
 
 // TokenEnv is the environment variable a bearer token may be supplied through.

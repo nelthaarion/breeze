@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/v2"
 )
 
 func testI18n(t *testing.T) *breeze.I18n {

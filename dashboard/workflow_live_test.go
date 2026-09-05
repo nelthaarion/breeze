@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/events"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 // These tests drive the live tracker through a real bus rather than

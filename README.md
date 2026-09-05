@@ -7,7 +7,7 @@ throughput, minimal allocations, native WebSockets, and a batteries‑included
 path to production.
 
 [![Documentation](https://img.shields.io/badge/Documentation-Latest-blue?style=for-the-badge)](https://nelthaarion.github.io/breeze)
-[![GitHub](https://img.shields.io/badge/GitHub-nelthaarion%2Fbreeze-181717?style=for-the-badge&logo=github)](https://github.com/nelthaarion/breeze)
+[![GitHub](https://img.shields.io/badge/GitHub-nelthaarion%2Fbreeze-181717?style=for-the-badge&logo=github)](https://github.com/nelthaarion/breeze/v2)
 [![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](./LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge)](./CONTRIBUTING.md)
@@ -92,7 +92,7 @@ on as an afterthought.
 Requires **Go 1.25.13** or later.
 
 ```bash
-go get github.com/nelthaarion/breeze
+go get github.com/nelthaarion/breeze/v2
 ```
 
 Pulls in **gnet v2** for the event loop, **go‑json** for fast marshaling,
@@ -109,8 +109,8 @@ package main
 import (
 	"runtime"
 
-	"github.com/nelthaarion/breeze"
-	middleware "github.com/nelthaarion/breeze/middlewares"
+	"github.com/nelthaarion/breeze/v2"
+	middleware "github.com/nelthaarion/breeze/v2/middlewares"
 )
 
 func main() {
@@ -159,7 +159,7 @@ A `rails`‑style CLI: **`new`** scaffolds a project, **`generate`** writes code
 you edit, **`add`** wires in a framework feature that already exists.
 
 ```bash
-go install github.com/nelthaarion/breeze/cmd/breeze@latest
+go install github.com/nelthaarion/breeze/v2/cmd/breeze@latest
 
 breeze new myapp                       # minimal REST API
 breeze new myapp --template=views      # + templates, layouts, components
@@ -335,7 +335,7 @@ Twelve built‑ins, composed once at registration — a route with no `:params`
 costs **zero** allocations to dispatch.
 
 ```go
-import middleware "github.com/nelthaarion/breeze/middlewares"
+import middleware "github.com/nelthaarion/breeze/v2/middlewares"
 
 router.Use(middleware.RecoveryMiddleware())   // outermost
 router.Use(middleware.LoggingMiddleware())
@@ -358,7 +358,7 @@ Zero‑config social login under `middlewares/oauth2` — only `ClientID` and
 `ClientSecret` are required.
 
 ```go
-import "github.com/nelthaarion/breeze/middlewares/oauth2"
+import "github.com/nelthaarion/breeze/v2/middlewares/oauth2"
 
 cfg := oauth2.Config{
 	Provider:     oauth2.Google,
@@ -392,7 +392,7 @@ The framework's internal nervous system — a typed, reflection‑free
 publish/subscribe bus every subsystem uses to talk to your code.
 
 ```go
-import "github.com/nelthaarion/breeze/events"
+import "github.com/nelthaarion/breeze/v2/events"
 
 type UserCreated struct{ UserID uint64 }
 
@@ -415,7 +415,7 @@ Durable, in‑process orchestration — retries, timeouts, parallelism, Saga
 rollback and crash recovery, with **no broker and no required database**.
 
 ```go
-import "github.com/nelthaarion/breeze/workflow"
+import "github.com/nelthaarion/breeze/v2/workflow"
 
 def := workflow.New("order-processing").
 	Step("validate", ValidateOrder).
@@ -524,7 +524,7 @@ One endpoint that answers **"what is every subsystem of this process doing
 right now?"** — zero cost until read.
 
 ```go
-import "github.com/nelthaarion/breeze/diag"
+import "github.com/nelthaarion/breeze/v2/diag"
 
 diag.Register("billing", func() diag.Report {
 	if !gateway.Configured() {

@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-const middlewareImport = `middleware "github.com/nelthaarion/breeze/middlewares"`
-const scalarImport = `"github.com/nelthaarion/breeze/scalar"`
+const middlewareImport = `middleware "github.com/nelthaarion/breeze/v2/middlewares"`
+const scalarImport = `"github.com/nelthaarion/breeze/v2/scalar"`
 
 func generateResource(modulePath, name string, args []string) error {
 	fs := flag.NewFlagSet("generate resource", flag.ContinueOnError)
@@ -117,7 +117,7 @@ func writeResourceHandlerFileTo(target outputTarget, modulePath, name, plural, p
 	validated := needsBinding && usesValidation(fields)
 	needsFmt := want["create"]
 
-	imports := []string{`"sync"`, `"github.com/nelthaarion/breeze"`}
+	imports := []string{`"sync"`, `"github.com/nelthaarion/breeze/v2"`}
 	if validated {
 		imports = append(imports, `"errors"`)
 	}
@@ -128,7 +128,7 @@ func writeResourceHandlerFileTo(target outputTarget, modulePath, name, plural, p
 		imports = append(imports, timeImport)
 	}
 	if needsBinding {
-		imports = append(imports, `"github.com/nelthaarion/breeze/binding"`)
+		imports = append(imports, `"github.com/nelthaarion/breeze/v2/binding"`)
 	}
 
 	var b strings.Builder

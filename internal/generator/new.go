@@ -28,7 +28,7 @@ const fallbackGoDirective = "1.25.13"
 
 // breezeModulePath is the framework's import path, needed both as a go.mod
 // require and as the anchor ensureImports keys off.
-const breezeModulePath = "github.com/nelthaarion/breeze"
+const breezeModulePath = "github.com/nelthaarion/breeze/v2"
 
 type newProjectData struct {
 	Name   string

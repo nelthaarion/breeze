@@ -183,7 +183,7 @@ func TestGeneratedSourceIsValidGo(t *testing.T) {
 	}
 
 	// The block is a fragment, so it needs a package clause to parse.
-	whole := "package main\n\nimport (\n\t\"log\"\n\t\"runtime\"\n\n\t\"github.com/nelthaarion/breeze\"\n\t\"github.com/nelthaarion/breeze/rpc\"\n)\n\n" + out.Body + "\n"
+	whole := "package main\n\nimport (\n\t\"log\"\n\t\"runtime\"\n\n\t\"github.com/nelthaarion/breeze/v2\"\n\t\"github.com/nelthaarion/breeze/v2/rpc\"\n)\n\n" + out.Body + "\n"
 	if _, err := format.Source([]byte(whole)); err != nil {
 		t.Errorf("the generated block is not valid Go: %v\n%s", err, whole)
 	}

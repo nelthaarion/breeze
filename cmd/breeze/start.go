@@ -26,7 +26,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nelthaarion/breeze/internal/mcpcmd"
+	"github.com/nelthaarion/breeze/v2/internal/mcpcmd"
 )
 
 // startTargets are the things `breeze start` can start, for the error message.

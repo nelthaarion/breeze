@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
 // Benchmarks for the export hot path: marshal the envelope, mask the payload,

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nelthaarion/breeze/client"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2/client"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 const maxOpenAPIDocument = 8 << 20

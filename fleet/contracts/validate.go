@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nelthaarion/breeze/fleet"
-	"github.com/nelthaarion/breeze/scalar"
+	"github.com/nelthaarion/breeze/v2/fleet"
+	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
 // Validate checks the focused JSON-Schema subset Breeze itself emits:

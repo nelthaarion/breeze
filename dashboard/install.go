@@ -5,8 +5,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/diag"
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // Install wires the Developer Dashboard into a Breeze application.

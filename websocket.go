@@ -294,7 +294,7 @@ func (wc *WSConn) Close(code uint16, reason string) {
 	binary.BigEndian.PutUint16(payload, code)
 	copy(payload[2:], reason)
 	_ = wc.conn.AsyncWrite(buildWSFrame(wsOpClose, payload), nil)
-	wc._ = conn.Close()
+	wc.conn.Close()
 }
 
 // RemoteAddr returns the remote address string.

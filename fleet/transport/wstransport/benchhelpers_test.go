@@ -36,7 +36,7 @@ func newBenchStubServer(b *testing.B) *stubServer {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				defer _ = conn.Close()
+				defer conn.Close()
 				benchHandle(conn)
 			}()
 		}

@@ -185,7 +185,7 @@ contributor does not "fix" them into inconsistency with themselves.
 a comment saying why, so the decision is visible:
 
 ```go
-_ = conn.Close() // response already written; a close error changes nothing
+_ = _ = conn.Close() // response already written; a close error changes nothing
 ```
 
 Current state per package, so drift is measurable rather than argued about:

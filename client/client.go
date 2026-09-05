@@ -480,7 +480,7 @@ func (c *Client) getConn(addr, hostname string, secure bool) (gnet.Conn, *connCo
 			// Should not happen; a connection always has its context set at
 			// dial time. Rather than risk a nil dereference on the event
 			// loop, drop this connection and dial a fresh one.
-			conn.Close()
+			_ = conn.Close()
 			break
 		}
 		// Discard any result left by a previous abandoned request so this
@@ -538,7 +538,7 @@ func (c *Client) putConn(addr string, conn gnet.Conn) {
 	case p.idle <- conn:
 	default:
 		// Pool is full; close the excess connection.
-		conn.Close()
+		_ = conn.Close()
 	}
 }
 
@@ -585,7 +585,7 @@ func (c *Client) Do(req *ClientRequest) (*Response, error) {
 	// to flush. The nil callback means "fire-and-forget"; errors surface via
 	// the response channel (connection close → OnClose → error in respCh).
 	if err := conn.AsyncWrite(reqBytes, nil); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		if !fromPool {
 			return nil, fmt.Errorf("client: write to %s: %w", addr, err)
 		}
@@ -596,7 +596,7 @@ func (c *Client) Do(req *ClientRequest) (*Response, error) {
 			return nil, err
 		}
 		if err := conn.AsyncWrite(reqBytes, nil); err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil, fmt.Errorf("client: write to %s: %w", addr, err)
 		}
 	}
@@ -610,16 +610,16 @@ func (c *Client) Do(req *ClientRequest) (*Response, error) {
 	case result := <-state.respCh:
 		if result.err != nil {
 			// Do not return to pool; connection is broken.
-			conn.Close()
+			_ = conn.Close()
 			return nil, result.err
 		}
 		c.putConn(addr, conn)
 		return result.resp, nil
 	case <-ctx.Done():
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("client: %w", ctx.Err())
 	case <-timer.C:
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("client: timeout waiting for response from %s", addr)
 	}
 }

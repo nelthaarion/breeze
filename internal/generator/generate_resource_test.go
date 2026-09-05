@@ -45,7 +45,7 @@ func generateTestResourceFileWith(t *testing.T, args []string) string {
 // binding.Bind reads those tags.
 func TestResourceHandlerBindsThroughBindingPackage(t *testing.T) {
 	src := generateTestResourceFile(t)
-	if !strings.Contains(src, `"github.com/nelthaarion/breeze/v2binding"`) {
+	if !strings.Contains(src, `"github.com/nelthaarion/breeze/v2/binding"`) {
 		t.Error("generated handler does not import the binding package")
 	}
 	if !strings.Contains(src, "binding.Bind(&req, binding.JSONBody(ctx.Req.Body))") {

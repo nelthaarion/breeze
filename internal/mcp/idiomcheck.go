@@ -218,11 +218,14 @@ func importedAs(file *ast.File) map[string]string {
 		case spec.Name != nil:
 			name = spec.Name.Name
 		default:
-			// The default local name is the last path segment. This is right for
-			// every package in this repository; a package whose clause differs
-			// from its directory would be missed, which errs toward silence
-			// rather than toward a wrong finding.
-			name = path[strings.LastIndexByte(path, '/')+1:]
+			// The default local name is the last path segment, except for a
+			// major-version suffix: `github.com/nelthaarion/breeze/v2` declares
+			// `package breeze`, so reading "v2" literally would mean no rule ever
+			// recognised the framework's own import and every check silently
+			// found nothing. This is right for every package in this repository;
+			// a package whose clause differs from its directory would be missed,
+			// which errs toward silence rather than toward a wrong finding.
+			name = defaultLocalName(path)
 		}
 		if name == "_" || name == "." {
 			continue
@@ -384,6 +387,36 @@ func takesBreezeContext(imports map[string]string, sig *ast.FuncType) bool {
 		}
 	}
 	return false
+}
+
+// defaultLocalName returns the identifier an unaliased import is referred to by.
+//
+// Normally the last path segment. A "vN" major-version suffix (N >= 2) is skipped
+// because semantic import versioning does not change the package clause:
+// `github.com/nelthaarion/breeze/v2` is still `package breeze`. v0 and v1 are
+// never spelled in an import path, so a directory actually named v1 is treated as
+// an ordinary package; every character after the "v" must be a digit, so "v2beta"
+// is not mistaken for a version either.
+func defaultLocalName(path string) string {
+	last := path[strings.LastIndexByte(path, '/')+1:]
+	if !isMajorVersion(last) {
+		return last
+	}
+	rest := path[:len(path)-len(last)-1]
+	return rest[strings.LastIndexByte(rest, '/')+1:]
+}
+
+// isMajorVersion reports whether a path segment is a vN major-version suffix.
+func isMajorVersion(segment string) bool {
+	if len(segment) < 2 || segment[0] != 'v' {
+		return false
+	}
+	for i := 1; i < len(segment); i++ {
+		if segment[i] < '0' || segment[i] > '9' {
+			return false
+		}
+	}
+	return segment != "v0" && segment != "v1"
 }
 
 // pathLocalName returns the identifier a file refers to an import path by.

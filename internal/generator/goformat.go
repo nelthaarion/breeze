@@ -268,15 +268,48 @@ func importIsNeeded(imp *ast.ImportSpec, used map[string]bool) bool {
 // last element is not a valid identifier — "yaml.v3", "go-json" — the real
 // package name is declared in source this has no access to, and "" is the
 // honest answer.
+//
+// A major-version suffix is the one systematic exception. Under semantic import
+// versioning `github.com/nelthaarion/breeze/v2` declares `package breeze`, not
+// `package v2`, so the last element is the wrong answer for every v2+ module —
+// including this one. Reading it literally made the import writer decide the
+// framework's own import was unreferenced and prune it out of every generated
+// handler, which does not fail here but fails to compile in the user's project.
 func packageNameFor(path string) string {
 	last := path
 	if i := strings.LastIndex(path, "/"); i >= 0 {
 		last = path[i+1:]
 	}
+	if isMajorVersionSegment(last) {
+		rest := path[:len(path)-len(last)-1]
+		last = rest
+		if i := strings.LastIndex(rest, "/"); i >= 0 {
+			last = rest[i+1:]
+		}
+	}
 	if last == "" || !token.IsIdentifier(last) {
 		return ""
 	}
 	return last
+}
+
+// isMajorVersionSegment reports whether a path element is a "vN" major-version
+// suffix, N >= 2.
+//
+// v0 and v1 are excluded because they are never spelled in an import path; a
+// directory genuinely named v1 would be an ordinary package. Everything after
+// the "v" must be a digit, so "v2beta" — a plausible real directory name — is
+// not mistaken for one.
+func isMajorVersionSegment(segment string) bool {
+	if len(segment) < 2 || segment[0] != 'v' {
+		return false
+	}
+	for i := 1; i < len(segment); i++ {
+		if segment[i] < '0' || segment[i] > '9' {
+			return false
+		}
+	}
+	return segment != "v0" && segment != "v1"
 }
 
 // referencedPackages collects every identifier used as a qualifier.

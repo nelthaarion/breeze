@@ -28,10 +28,10 @@ const callsBlockName = "calls"
 // middlewareImport and scalarImport live in generate_resource.go.
 const (
 	eventsImport        = `"github.com/nelthaarion/breeze/v2/events"`
-	workflowImport      = `"github.com/nelthaarion/breeze/v2workflow"`
-	dashboardImport     = `"github.com/nelthaarion/breeze/v2dashboard"`
-	observabilityImport = `"github.com/nelthaarion/breeze/v2observability"`
-	videoImport         = `"github.com/nelthaarion/breeze/v2video"`
+	workflowImport      = `"github.com/nelthaarion/breeze/v2/workflow"`
+	dashboardImport     = `"github.com/nelthaarion/breeze/v2/dashboard"`
+	observabilityImport = `"github.com/nelthaarion/breeze/v2/observability"`
+	videoImport         = `"github.com/nelthaarion/breeze/v2/video"`
 	oauth2Import        = `"github.com/nelthaarion/breeze/v2/middlewares/oauth2"`
 	timeImport          = `"time"`
 	logImport           = `"log"`

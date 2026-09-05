@@ -374,7 +374,7 @@ func TestUnusedImportIsDroppedEvenWhenAGeneratorAsksForIt(t *testing.T) {
 		// import is included too, since those must survive: they exist for their
 		// side effects, so being unreferenced is their normal state.
 		Imports: []string{
-			timeImport, `"sync"`, `"github.com/nelthaarion/breeze/v2dashboard"`,
+			timeImport, `"sync"`, `"github.com/nelthaarion/breeze/v2/dashboard"`,
 			`_ "github.com/nelthaarion/breeze/v2/events"`,
 		},
 		Body:       "// Probe is a fixture.\ntype Probe struct {\n\tAt time.Time\n}\n",
@@ -394,7 +394,7 @@ func TestUnusedImportIsDroppedEvenWhenAGeneratorAsksForIt(t *testing.T) {
 	if !strings.Contains(got, `"time"`) {
 		t.Errorf("the used import was dropped:\n%s", got)
 	}
-	for _, unwanted := range []string{`"sync"`, `"github.com/nelthaarion/breeze/v2dashboard"`} {
+	for _, unwanted := range []string{`"sync"`, `"github.com/nelthaarion/breeze/v2/dashboard"`} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("%s survived although nothing references it:\n%s", unwanted, got)
 		}

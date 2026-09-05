@@ -176,7 +176,7 @@ func TestCheckIdiomsFindsMiddlewareRegisteredInTheWrongOrder(t *testing.T) {
 
 import (
 	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2dashboard"
+	"github.com/nelthaarion/breeze/v2/dashboard"
 	"github.com/nelthaarion/breeze/v2/fleet"
 )
 
@@ -212,7 +212,7 @@ func TestCheckIdiomsAcceptsTheCorrectMiddlewareOrder(t *testing.T) {
 
 import (
 	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/breeze/v2dashboard"
+	"github.com/nelthaarion/breeze/v2/dashboard"
 	"github.com/nelthaarion/breeze/v2/fleet"
 )
 

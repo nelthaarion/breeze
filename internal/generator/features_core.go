@@ -431,7 +431,7 @@ import (
 
 	_ "__DRIVER_IMPORT__"
 
-	"github.com/nelthaarion/breeze/v2migrate"
+	"github.com/nelthaarion/breeze/v2/migrate"
 )
 
 func main() {

@@ -124,7 +124,7 @@ func generateJob(modulePath, name string, args []string) error {
 		Owner:  generateOwner("job"),
 		Imports: []string{
 			contextImport, logImport, timeImport,
-			`"github.com/nelthaarion/breeze/v2dashboard"`,
+			`"github.com/nelthaarion/breeze/v2/dashboard"`,
 		},
 		Body:       b.String(),
 		ModulePath: modulePath,

@@ -114,7 +114,7 @@ func scaffoldE2E(t *testing.T, name string) {
 	// A released build of the CLI already pins a version; a dev build does not,
 	// and a replace with no require is not enough to resolve the module.
 	if !strings.Contains(string(content), "require "+breezeModulePath) {
-		b.WriteString("\nrequire " + breezeModulePath + " v0.0.0\n")
+		b.WriteString("\nrequire " + breezeModulePath + " v2.0.2\n")
 	}
 	b.WriteString("\nreplace " + breezeModulePath + " => ")
 	b.WriteString(filepath.ToSlash(repoRoot))

@@ -133,7 +133,7 @@ func copyFileTo(src, dst string) error {
 // than anything about the replace.
 //
 // The version on the require line is irrelevant once replaced — nothing fetches it — but
-// it has to be syntactically valid, so v0.0.0 stands in.
+// it has to be syntactically valid, so 2.0.2 stands in.
 func rewriteGoModForVendoredBreeze(projectDir string) error {
 	path := filepath.Join(projectDir, "go.mod")
 	data, err := os.ReadFile(path)
@@ -144,7 +144,7 @@ func rewriteGoModForVendoredBreeze(projectDir string) error {
 	content := string(data)
 	if !strings.Contains(content, breezeModulePath+" ") {
 		content = strings.TrimRight(content, "\n") +
-			"\n\nrequire " + breezeModulePath + " v0.0.0\n"
+			"\n\nrequire " + breezeModulePath + " v2.0.2\n"
 	}
 
 	content = strings.TrimRight(content, "\n") + "\n\n" +

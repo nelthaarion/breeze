@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/diag"
 )
 
 // Install wires the Developer Dashboard into a Breeze application.
@@ -60,7 +61,15 @@ func Install(app *breeze.Breeze, router *breeze.Router, cfg Config) *Collector {
 	}
 
 	c := newCollector(cfg, router)
+	c.app = app
 	c.hub = newWSHub(c)
+
+	// Counted diagnostics on. A process that installed the dashboard has already
+	// accepted per-request instrumentation — that is what the dashboard is — so
+	// the middleware counters that are gated off by default are exactly the
+	// numbers its operator wants. See diag/counters.go for the gate's cost.
+	diag.EnableCounters()
+	c.registerDiagnostics()
 
 	// ── Initialize storage and load persisted state ──────────────────────
 	c.storage = newStorage(cfg)
@@ -129,7 +138,7 @@ func (c *Collector) PushQuery(sql string, args []any, durationUS int64, rows int
 	}
 	c.RecordQuery(q)
 	if c.hub != nil {
-		c.hub.pushEvent("query", q)
+		pushEvent(c.hub, "query", q)
 	}
 }
 
@@ -178,7 +187,6 @@ func (c *Collector) PushLogCtx(ctx *breeze.Context, level, message, source strin
 		TraceID: traceID,
 	})
 }
-
 
 // PushQueueJob records a queued job.
 func (c *Collector) PushQueueJob(j QueueJob) { c.RegisterJob(j) }

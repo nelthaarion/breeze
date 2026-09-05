@@ -749,7 +749,7 @@ func TestDescribePayloadShapes(t *testing.T) {
 // ─── Observer resilience ─────────────────────────────────────────────────
 
 // panickyObserver models a buggy third-party observer.
-type panickyObserver struct{ calls int }
+type panickyObserver struct{}
 
 func (o *panickyObserver) OnEventStart(events.DispatchInfo)     { panic("observer start boom") }
 func (o *panickyObserver) OnEventEnd(events.DispatchResult)     { panic("observer end boom") }
@@ -1055,8 +1055,45 @@ func TestRateWindow(t *testing.T) {
 	}
 }
 
+// TestDefaultCollectorIsStable pins the package-level collector to one instance.
+//
+// The two calls are bound to variables before the comparison rather than
+// compared inline. `Default() != Default()` is SA4000 — staticcheck reads the
+// identical expressions on both sides as a probable typo, and it is right to:
+// an assertion written that way tells a reader nothing about which call is
+// expected to differ. Naming them makes the claim explicit and makes the failure
+// message able to say what it got.
+//
+// The concurrent half is the part that would actually catch a regression. A
+// Default() built on a plain nil check instead of sync.Once passes the
+// sequential comparison every time — the race only appears when two goroutines
+// reach the check before either assigns.
 func TestDefaultCollectorIsStable(t *testing.T) {
-	if Default() != Default() {
-		t.Error("Default() returned different collectors")
+	first := Default()
+	second := Default()
+
+	if first == nil {
+		t.Fatal("Default() = nil, want a collector")
+	}
+	if first != second {
+		t.Errorf("Default() returned %p then %p, want the same collector", first, second)
+	}
+
+	const goroutines = 16
+	got := make([]*Collector, goroutines)
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got[i] = Default()
+		}(i)
+	}
+	wg.Wait()
+
+	for i, c := range got {
+		if c != first {
+			t.Errorf("goroutine %d got %p, want %p — Default() is not race-safe", i, c, first)
+		}
 	}
 }

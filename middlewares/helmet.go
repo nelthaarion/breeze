@@ -22,7 +22,9 @@ type SecurityOptions struct {
 
 // SecurityMiddleware returns a Breeze HandlerFunc that applies security headers
 func SecurityMiddleware(opts SecurityOptions) breeze.HandlerFunc {
-	return func(ctx *breeze.Context) {
+	securityInstalled.Store(true)
+	securityConfig.Store(&opts)
+	return func(ctx *breeze.Context) error {
 		if opts.ContentSecurityPolicy != "" {
 			ctx.SetHeader("Content-Security-Policy", opts.ContentSecurityPolicy)
 		}
@@ -59,7 +61,8 @@ func SecurityMiddleware(opts SecurityOptions) breeze.HandlerFunc {
 		if opts.CacheControl != "" {
 			ctx.SetHeader("Cache-Control", opts.CacheControl)
 		}
-		ctx.Next()
+		securityCounter.Hit()
+		return ctx.Next()
 	}
 }
 

@@ -12,7 +12,7 @@
     (function(){try{var t=localStorage.getItem('breeze-theme');
       if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
   </script>
-  <link rel="stylesheet" href="{{.Data.AssetsPath}}/dashboard.css">
+  <link rel="stylesheet" href="{{.Data.AssetsPath}}/{{.Data.StyleFile}}">
 
 </head>
 <body>
@@ -48,7 +48,7 @@
       </div>
     </main>
   </div>
-  <script src="{{.Data.AssetsPath}}/dashboard.js"></script>
+  <script src="{{.Data.AssetsPath}}/{{.Data.ScriptFile}}"></script>
 </body>
 </html>
 {{end}}

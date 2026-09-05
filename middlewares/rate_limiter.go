@@ -89,7 +89,14 @@ func NewRateLimiter(opts RateLimiterOptions) breeze.HandlerFunc {
 
 	go rl.prune()
 
-	return func(ctx *breeze.Context) {
+	// Recorded for the probe: the limit and window it will report, and the
+	// instance whose client map it will size.
+	rateLimitInstalled.Store(true)
+	opts.Message = rl.limitMsg
+	rateLimitConfig.Store(&opts)
+	rateLimiterHandle.Store(rl)
+
+	return func(ctx *breeze.Context) error {
 		// Use IP as key (port stripped so reconnects share a counter).
 		clientIP := clientKey(ctx.Conn.RemoteAddr().String())
 
@@ -115,11 +122,13 @@ func NewRateLimiter(opts RateLimiterOptions) breeze.HandlerFunc {
 
 		if exceeded {
 			ctx.Status(429)
-			ctx.WriteString(rl.limitMsg)
-			return
+			rateLimitCounter.Miss()
+			return ctx.WriteString(rl.limitMsg)
 		}
 
+		rateLimitCounter.Hit()
+
 		// Handler runs lock-free — the WorkerPool can fully parallelize.
-		ctx.Next()
+		return ctx.Next()
 	}
 }

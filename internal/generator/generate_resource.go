@@ -3,9 +3,6 @@ package generator
 import (
 	"flag"
 	"fmt"
-	"go/format"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -19,6 +16,7 @@ func generateResource(modulePath, name string, args []string) error {
 	methods := parseMethodsFlag(fs)
 	noValidate := fs.Bool("no-validate", false, "do not infer validate tags for string fields")
 	force := fs.Bool("force", false, "overwrite an existing handler file")
+	out := registerOutputFlags(fs)
 
 	flagArgs, positional := splitFlagsAndPositional(fs, args)
 	if err := parseFlags(fs, flagArgs); err != nil {
@@ -55,7 +53,12 @@ func generateResource(modulePath, name string, args []string) error {
 		return err
 	}
 
-	if err := writeResourceHandlerFile(name, plural, pathBase, fields, actions, *force); err != nil {
+	target, err := out.target("handlers", strings.ToLower(name))
+	if err != nil {
+		return err
+	}
+
+	if err := writeResourceHandlerFileTo(target, modulePath, name, plural, pathBase, fields, actions, *force); err != nil {
 		return err
 	}
 
@@ -67,21 +70,39 @@ func generateResource(modulePath, name string, args []string) error {
 	return registerActionRoutes(modulePath, name, pathBase, actions, docArgs, middlewareImport, scalarImport)
 }
 
+// writeResourceHandlerFile writes the handler file to the destination the
+// defaults derive, which is what a caller with no overrides in hand wants.
+//
+// It exists alongside the ...To form because the two callers differ in what they
+// know: generateResource has already parsed --filename/--package and must resolve
+// the destination before writing anything, while a caller that only has a
+// resource name should not have to reconstruct the default derivation to get the
+// same answer. Both end up in the same writer.
 func writeResourceHandlerFile(name, plural, pathBase string, fields []field, actions []action, force bool) error {
-	if err := os.MkdirAll("handlers", 0o755); err != nil {
+	target, err := (*outputFlags)(nil).target("handlers", strings.ToLower(name))
+	if err != nil {
 		return err
 	}
+	return writeResourceHandlerFileTo(target, "", name, plural, pathBase, fields, actions, force)
+}
 
-	path := filepath.Join("handlers", strings.ToLower(name)+".go")
-	if _, err := os.Stat(path); err == nil && !force {
-		return fmt.Errorf("%s already exists â€” pass --force to overwrite", path)
-	}
+// writeResourceHandlerFile writes the handler file to the destination the
+// generator resolved.
+//
+// The default-destination form is writeResourceHandlerFileForName below; this
+// one takes the resolved target because generateResource has to resolve it
+// before writing anything, so that a bad --package or a filename another feature
+// owns fails before the route block is touched.
+func writeResourceHandlerFileTo(target outputTarget, modulePath, name, plural, pathBase string,
+	fields []field, actions []action, force bool) error {
 
 	nameLower := strings.ToLower(name)
 
 	// Which handlers get emitted decides which imports are used. Emitting an
 	// import for a handler that --methods excluded is a compile error in the
-	// generated project, so this is derived rather than fixed.
+	// generated project, so this is derived rather than fixed — and the writer
+	// prunes anything the finished body does not reference, so a wrong condition
+	// here cannot produce an unused import either.
 	want := make(map[string]bool, len(actions))
 	for _, a := range actions {
 		want[a.Name] = true
@@ -96,24 +117,21 @@ func writeResourceHandlerFile(name, plural, pathBase string, fields []field, act
 	validated := needsBinding && usesValidation(fields)
 	needsFmt := want["create"]
 
-	var b strings.Builder
-	b.WriteString("package handlers\n\n")
-	b.WriteString("import (\n")
+	imports := []string{`"sync"`, `"github.com/nelthaarion/breeze"`}
 	if validated {
-		b.WriteString("\t\"errors\"\n")
+		imports = append(imports, `"errors"`)
 	}
 	if needsFmt {
-		b.WriteString("\t\"fmt\"\n")
+		imports = append(imports, `"fmt"`)
 	}
-	b.WriteString("\t\"sync\"\n")
 	if usesTime(fields) {
-		b.WriteString("\t\"time\"\n")
+		imports = append(imports, timeImport)
 	}
-	b.WriteString("\n\t\"github.com/nelthaarion/breeze\"\n")
 	if needsBinding {
-		b.WriteString("\t\"github.com/nelthaarion/breeze/binding\"\n")
+		imports = append(imports, `"github.com/nelthaarion/breeze/binding"`)
 	}
-	b.WriteString(")\n\n")
+
+	var b strings.Builder
 
 	if needsBinding {
 		if want["create"] {
@@ -134,7 +152,9 @@ func writeResourceHandlerFile(name, plural, pathBase string, fields []field, act
 
 	if want["get"] || want["update"] || want["delete"] {
 		fmt.Fprintf(&b, "type %sPathParams struct {\n", name)
-		b.WriteString("\tID string `json:\"id\" description:\"" + name + " ID\"`\n")
+		b.WriteString("\tID string `json:\"id\" description:\"")
+		b.WriteString(name)
+		b.WriteString(" ID\"`\n")
 		b.WriteString("}\n\n")
 	}
 
@@ -146,20 +166,20 @@ func writeResourceHandlerFile(name, plural, pathBase string, fields []field, act
 	b.WriteString(")\n\n")
 
 	if want["list"] {
-		fmt.Fprintf(&b, "// List%s handles GET %s.\nfunc List%s(ctx *breeze.Context) {\n", plural, pathBase, plural)
+		fmt.Fprintf(&b, "// List%s handles GET %s.\nfunc List%s(ctx *breeze.Context) error {\n", plural, pathBase, plural)
 		fmt.Fprintf(&b, "\t%sMu.RLock()\n\tdefer %sMu.RUnlock()\n", nameLower, nameLower)
-		fmt.Fprintf(&b, "\tctx.JSON(%sListResponse{%s: %sStore, Total: len(%sStore)})\n}\n\n", name, plural, nameLower, nameLower)
+		fmt.Fprintf(&b, "\treturn ctx.JSON(%sListResponse{%s: %sStore, Total: len(%sStore)})\n}\n\n", name, plural, nameLower, nameLower)
 	}
 
 	if want["get"] {
-		fmt.Fprintf(&b, "// Get%s handles GET %s/:id.\nfunc Get%s(ctx *breeze.Context) {\n", name, pathBase, name)
+		fmt.Fprintf(&b, "// Get%s handles GET %s/:id.\nfunc Get%s(ctx *breeze.Context) error {\n", name, pathBase, name)
 		fmt.Fprintf(&b, "\tid := ctx.GetParam(\"id\")\n\t%sMu.RLock()\n\tdefer %sMu.RUnlock()\n", nameLower, nameLower)
-		fmt.Fprintf(&b, "\tfor _, item := range %sStore {\n\t\tif item.ID == id {\n\t\t\tctx.JSON(item)\n\t\t\treturn\n\t\t}\n\t}\n", nameLower)
+		fmt.Fprintf(&b, "\tfor _, item := range %sStore {\n\t\tif item.ID == id {\n\t\t\treturn ctx.JSON(item)\n\t\t}\n\t}\n", nameLower)
 		writeNotFound(&b, nameLower)
 	}
 
 	if want["create"] {
-		fmt.Fprintf(&b, "// Create%s handles POST %s.\nfunc Create%s(ctx *breeze.Context) {\n", name, pathBase, name)
+		fmt.Fprintf(&b, "// Create%s handles POST %s.\nfunc Create%s(ctx *breeze.Context) error {\n", name, pathBase, name)
 		fmt.Fprintf(&b, "\tvar req Create%sRequest\n\tif err := binding.Bind(&req, binding.JSONBody(ctx.Req.Body)); err != nil {\n", name)
 		writeBindFailure(&b, nameLower, validated)
 		fmt.Fprintf(&b, "\t%sMu.Lock()\n\tid := fmt.Sprintf(\"%%d\", %sNextID)\n\t%sNextID++\n", nameLower, nameLower, nameLower)
@@ -169,11 +189,11 @@ func writeResourceHandlerFile(name, plural, pathBase string, fields []field, act
 		}
 		b.WriteString("}\n")
 		fmt.Fprintf(&b, "\t%sStore = append(%sStore, item)\n\t%sMu.Unlock()\n\n", nameLower, nameLower, nameLower)
-		b.WriteString("\tctx.Status(201)\n\tctx.JSON(item)\n}\n\n")
+		b.WriteString("\tctx.Status(201)\n\treturn ctx.JSON(item)\n}\n\n")
 	}
 
 	if want["update"] {
-		fmt.Fprintf(&b, "// Update%s handles PUT %s/:id.\nfunc Update%s(ctx *breeze.Context) {\n", name, pathBase, name)
+		fmt.Fprintf(&b, "// Update%s handles PUT %s/:id.\nfunc Update%s(ctx *breeze.Context) error {\n", name, pathBase, name)
 		fmt.Fprintf(&b, "\tvar req Update%sRequest\n\tif err := binding.Bind(&req, binding.JSONBody(ctx.Req.Body)); err != nil {\n", name)
 		writeBindFailure(&b, nameLower, validated)
 		b.WriteString("\tid := ctx.GetParam(\"id\")\n")
@@ -182,15 +202,15 @@ func writeResourceHandlerFile(name, plural, pathBase string, fields []field, act
 		for _, f := range fields {
 			fmt.Fprintf(&b, "\t\t\t%sStore[i].%s = req.%s\n", nameLower, f.Name, f.Name)
 		}
-		fmt.Fprintf(&b, "\t\t\tctx.JSON(%sStore[i])\n\t\t\treturn\n\t\t}\n\t}\n", nameLower)
+		fmt.Fprintf(&b, "\t\t\treturn ctx.JSON(%sStore[i])\n\t\t}\n\t}\n", nameLower)
 		writeNotFound(&b, nameLower)
 	}
 
 	if want["delete"] {
-		fmt.Fprintf(&b, "// Delete%s handles DELETE %s/:id.\nfunc Delete%s(ctx *breeze.Context) {\n", name, pathBase, name)
+		fmt.Fprintf(&b, "// Delete%s handles DELETE %s/:id.\nfunc Delete%s(ctx *breeze.Context) error {\n", name, pathBase, name)
 		b.WriteString("\tid := ctx.GetParam(\"id\")\n")
 		fmt.Fprintf(&b, "\t%sMu.Lock()\n\tdefer %sMu.Unlock()\n", nameLower, nameLower)
-		fmt.Fprintf(&b, "\tfor i, item := range %sStore {\n\t\tif item.ID == id {\n\t\t\t%sStore = append(%sStore[:i], %sStore[i+1:]...)\n\t\t\tctx.Status(204)\n\t\t\treturn\n\t\t}\n\t}\n",
+		fmt.Fprintf(&b, "\tfor i, item := range %sStore {\n\t\tif item.ID == id {\n\t\t\t%sStore = append(%sStore[:i], %sStore[i+1:]...)\n\t\t\tctx.Status(204)\n\t\t\treturn nil\n\t\t}\n\t}\n",
 			nameLower, nameLower, nameLower, nameLower)
 		writeNotFound(&b, nameLower)
 	}
@@ -202,17 +222,20 @@ func writeResourceHandlerFile(name, plural, pathBase string, fields []field, act
 	// shared `errorResponse` would be redeclared by the second one.
 	fmt.Fprintf(&b, "type %sError struct {\n\tError string `json:\"error\"`\n}\n", nameLower)
 
-	formatted, err := format.Source([]byte(b.String()))
-	if err != nil {
-		return fmt.Errorf("formatting %s: %w", path, err)
-	}
-	return os.WriteFile(path, formatted, 0o644)
+	return writeGeneratedGoFile(generatedFile{
+		Target:     target,
+		Owner:      generateOwner("resource"),
+		Imports:    imports,
+		Body:       b.String(),
+		ModulePath: modulePath,
+		Force:      force,
+	})
 }
 
 // writeNotFound and writeBindFailure emit the two error tails shared by the
 // generated handlers, so the per-resource error type name is spelled once.
 func writeNotFound(b *strings.Builder, nameLower string) {
-	fmt.Fprintf(b, "\tctx.Status(404)\n\tctx.JSON(%sError{Error: \"not found\"})\n}\n\n", nameLower)
+	fmt.Fprintf(b, "\tctx.Status(404)\n\treturn ctx.JSON(%sError{Error: \"not found\"})\n}\n\n", nameLower)
 }
 
 // writeBindFailure emits the error branch of a binding.Bind call.
@@ -230,11 +253,10 @@ func writeBindFailure(b *strings.Builder, nameLower string, validated bool) {
 		b.WriteString("\t\tvar ve *binding.ValidationError\n")
 		b.WriteString("\t\tif errors.As(err, &ve) {\n")
 		b.WriteString("\t\t\tctx.Status(422)\n")
-		b.WriteString("\t\t\tctx.JSON(ve.ToProblemJSON())\n")
-		b.WriteString("\t\t\treturn\n")
+		b.WriteString("\t\t\treturn ctx.JSON(ve.ToProblemJSON())\n")
 		b.WriteString("\t\t}\n")
 	}
-	fmt.Fprintf(b, "\t\tctx.Status(400)\n\t\tctx.JSON(%sError{Error: \"invalid body\"})\n\t\treturn\n\t}\n\n", nameLower)
+	fmt.Fprintf(b, "\t\tctx.Status(400)\n\t\treturn ctx.JSON(%sError{Error: \"invalid body\"})\n\t}\n\n", nameLower)
 }
 
 // writeStruct emits a request struct. A field's validate tag is included when

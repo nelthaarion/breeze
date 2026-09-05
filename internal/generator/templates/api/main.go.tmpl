@@ -15,11 +15,11 @@ func main() {
         router.Use(middleware.RecoveryMiddleware())
         router.Use(middleware.LoggingMiddleware())
 
-        router.Handle(breeze.GET, "/", func(ctx *breeze.Context) {
+        router.Handle(breeze.GET, "/", func(ctx *breeze.Context) error {
                 // A named struct, not map[string]string: marshalling a one-key
                 // map costs several times what the equivalent struct does, and
                 // on this framework that is more than the entire request path.
-                ctx.JSON(statusResponse{Status: "ok"})
+                return ctx.JSON(statusResponse{Status: "ok"})
         })
 
         pool := breeze.NewEventLoopWorkerPool(runtime.NumCPU())

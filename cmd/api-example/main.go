@@ -172,7 +172,7 @@ func main() {
 		}),
 	)
 
-	router.Handle(breeze.GET, "/ws/stats", func(ctx *breeze.Context) {
+	router.Handle(breeze.GET, "/ws/stats", func(ctx *breeze.Context) error {
 		count := int64(0)
 		if h := app.Hub(); h != nil {
 			count = h.Count()
@@ -183,11 +183,11 @@ func main() {
 		// written. That is ~780ns against ~170ns for identical output — more
 		// than the framework's entire request path either way. See
 		// BenchmarkZZJSONMapHandler.
-		ctx.JSON(wsStats{Connections: count})
+		return ctx.JSON(wsStats{Connections: count})
 	})
 
-	router.Handle(breeze.GET, "/", func(ctx *breeze.Context) {
-		ctx.WriteString("Breeze — HTTP + WebSocket server")
+	router.Handle(breeze.GET, "/", func(ctx *breeze.Context) error {
+		return ctx.WriteString("Breeze — HTTP + WebSocket server")
 	})
 
 	fmt.Println("Breeze listening on :3000")
@@ -199,27 +199,29 @@ func main() {
 
 // ─── HTTP handlers ────────────────────────────────────────────────────────────
 
-func listUsers(ctx *breeze.Context) {
-	ctx.JSON(UserListResponse{
+func listUsers(ctx *breeze.Context) error {
+	return ctx.JSON(UserListResponse{
 		Users: []UserResponse{{ID: "1", Name: "Alice", Email: "alice@example.com"}},
 		Total: 1,
 	})
 }
 
-func createUser(ctx *breeze.Context) {
+func createUser(ctx *breeze.Context) error {
 	ctx.Status(201)
-	ctx.JSON(UserResponse{ID: "2", Name: "Bob", Email: "bob@example.com"})
+	return ctx.JSON(UserResponse{ID: "2", Name: "Bob", Email: "bob@example.com"})
 }
 
-func getUser(ctx *breeze.Context) {
+func getUser(ctx *breeze.Context) error {
 
-	ctx.JSON(UserResponse{
+	return ctx.JSON(UserResponse{
 		ID:    ctx.GetParam("id"),
 		Name:  "Alice",
 		Email: "alice@example.com",
 	})
 }
 
-func deleteUser(ctx *breeze.Context) {
+func deleteUser(ctx *breeze.Context) error {
 	ctx.Status(204)
+
+	return nil
 }

@@ -348,9 +348,10 @@ func mapGoTypeToProto(goType string) (protoType string, isMessage bool, repeated
 		depth := 1
 		i := 4
 		for i < len(goType) && depth > 0 {
-			if goType[i] == '[' {
+			switch goType[i] {
+			case '[':
 				depth++
-			} else if goType[i] == ']' {
+			case ']':
 				depth--
 			}
 			if depth > 0 {

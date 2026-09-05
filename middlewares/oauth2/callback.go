@@ -20,24 +20,24 @@ import (
 // oauth2.CurrentToken(ctx), because the callback also populates the context
 // before finishing.
 func Callback(cfg Config) breeze.HandlerFunc {
-	c := prepareConfig(cfg)
+	c, counts := prepareConfig(cfg)
 
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 		// (1) Provider-side error (user denied consent, etc.).
 		if e := ctx.Query("error"); e != "" {
-			fail(ctx, c, 401, ErrProviderError)
-			return
+			counts.failCallback(ctx, c, 401, ErrProviderError)
+			return nil
 		}
 
 		code := ctx.Query("code")
 		returnedState := ctx.Query("state")
 		if code == "" {
-			fail(ctx, c, 400, ErrMissingCode)
-			return
+			counts.failCallback(ctx, c, 400, ErrMissingCode)
+			return nil
 		}
 		if returnedState == "" {
-			fail(ctx, c, 400, ErrMissingState)
-			return
+			counts.failCallback(ctx, c, 400, ErrMissingState)
+			return nil
 		}
 
 		// (2) Load + validate flow state (signed, unexpired) and compare the
@@ -45,13 +45,13 @@ func Callback(cfg Config) breeze.HandlerFunc {
 		// it immediately so a replayed callback cannot succeed.
 		fs, err := loadFlowState(ctx, c)
 		if err != nil {
-			fail(ctx, c, 401, err)
-			return
+			counts.failCallback(ctx, c, 401, err)
+			return nil
 		}
 		clearFlowState(ctx, c)
 		if subtle.ConstantTimeCompare([]byte(fs.State), []byte(returnedState)) != 1 {
-			fail(ctx, c, 401, ErrStateMismatch)
-			return
+			counts.failCallback(ctx, c, 401, ErrStateMismatch)
+			return nil
 		}
 
 		reqCtx, cancel := reqContext()
@@ -60,8 +60,8 @@ func Callback(cfg Config) breeze.HandlerFunc {
 		// (3) Exchange the code (+ PKCE verifier) for tokens.
 		tok, err := c.driver.Exchange(reqCtx, c, code, fs.Verifier)
 		if err != nil {
-			fail(ctx, c, 502, err)
-			return
+			counts.failCallback(ctx, c, 502, err)
+			return nil
 		}
 
 		// (3b) If the provider returned an id_token, verify its nonce claim
@@ -69,22 +69,22 @@ func Callback(cfg Config) breeze.HandlerFunc {
 		if tok.IDToken != "" {
 			nonce, err := idTokenNonce(tok.IDToken)
 			if err != nil || subtle.ConstantTimeCompare([]byte(nonce), []byte(fs.Nonce)) != 1 {
-				fail(ctx, c, 401, ErrNonceMismatch)
-				return
+				counts.failCallback(ctx, c, 401, ErrNonceMismatch)
+				return nil
 			}
 		}
 
 		// (4) Fetch + normalize the user profile.
 		user, err := c.driver.UserInfo(reqCtx, c, tok)
 		if err != nil {
-			fail(ctx, c, 502, err)
-			return
+			counts.failCallback(ctx, c, 502, err)
+			return nil
 		}
 
 		// (5) Persist the session (rotated) and expose it on the context.
 		if err := writeSession(ctx, c, user, tok); err != nil {
-			fail(ctx, c, 500, err)
-			return
+			counts.failCallback(ctx, c, 500, err)
+			return nil
 		}
 		setContext(ctx, &session{User: user, Token: tok})
 
@@ -94,5 +94,8 @@ func Callback(cfg Config) breeze.HandlerFunc {
 			dest = fs.Redirect
 		}
 		redirect(ctx, dest)
+
+		counts.callbacksOK.Add(1)
+		return nil
 	}
 }

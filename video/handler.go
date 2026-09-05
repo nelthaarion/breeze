@@ -58,7 +58,7 @@ func Handler(cfg Config) (breeze.HandlerFunc, error) {
 
 // handler builds the request handler for this mount.
 func (m *mount) handler() breeze.HandlerFunc {
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 		started := time.Now()
 		out := &connSink{conn: ctx.Conn, bufs: m.bufs}
 
@@ -71,6 +71,8 @@ func (m *mount) handler() breeze.HandlerFunc {
 		name, status, sent, err := m.serve(ctx, out)
 
 		m.report(ctx, name, status, sent, time.Since(started), err)
+
+		return nil
 	}
 }
 
@@ -281,6 +283,24 @@ func (m *mount) report(ctx *breeze.Context, name string, status int, sent int64,
 	// A disconnect is not a failure of the server. Counting it as one
 	// would make a normal seek-heavy session look like an outage.
 	failed := err != nil && !gone
+
+	// Counted here rather than in serve, for the same reason the telemetry is:
+	// this is the one place every exit path passes through, so a new early
+	// return cannot escape the count.
+	m.served.Add(1)
+	if status == 206 {
+		m.partial.Add(1)
+	}
+	if failed {
+		m.failedReqs.Add(1)
+	}
+	if gone {
+		m.disconnects.Add(1)
+	}
+	if sent > 0 {
+		m.bytesSent.Add(uint64(sent))
+	}
+	m.lastServedNs.Store(time.Now().UnixNano())
 
 	if m.onError != nil && err != nil {
 		m.onError(ctx, name, err)

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-
 	"github.com/nelthaarion/breeze"
 	"github.com/nelthaarion/breeze/fleet"
 )
@@ -21,12 +20,14 @@ const maxIngestBody = 32 << 20 // 32 MiB compressed or plain, before JSON decode
 func (a *Aggregator) registerRoutes(router *breeze.Router) {
 	base := strings.TrimSuffix(a.cfg.BasePath, "/")
 	ingest := func(next breeze.HandlerFunc) breeze.HandlerFunc {
-		return func(ctx *breeze.Context) {
+		return func(ctx *breeze.Context) error {
 			if !ingestAuthorized(ctx, a.cfg.IngestToken) {
 				writeJSON(ctx, 401, map[string]string{"error": "unauthorized"})
-				return
+				return nil
 			}
 			next(ctx)
+
+			return nil
 		}
 	}
 
@@ -45,21 +46,23 @@ func (a *Aggregator) registerRoutes(router *breeze.Router) {
 	router.Handle(breeze.GET, base+"/api/stats", a.stats, auth)
 }
 
-func (a *Aggregator) ingestSpans(ctx *breeze.Context) {
+func (a *Aggregator) ingestSpans(ctx *breeze.Context) error {
 	data, ok := ingestBody(ctx)
 	if !ok {
-		return
+		return nil
 	}
 	var spans []fleet.Span
 	if err := json.Unmarshal(data, &spans); err != nil {
 		writeJSON(ctx, 400, map[string]string{"error": "malformed span batch"})
-		return
+		return nil
 	}
 	if err := a.AcceptSpans(spans); err != nil {
 		writeJSON(ctx, 400, map[string]string{"error": err.Error()})
-		return
+		return nil
 	}
 	writeJSON(ctx, 202, map[string]int{"accepted": len(spans)})
+
+	return nil
 }
 
 // AcceptSpans validates and stores one transport-independent batch. HTTP,
@@ -137,21 +140,23 @@ func collectSpanServices(node *SpanNode, dst map[string]string) {
 	}
 }
 
-func (a *Aggregator) ingestHeartbeat(ctx *breeze.Context) {
+func (a *Aggregator) ingestHeartbeat(ctx *breeze.Context) error {
 	data, ok := ingestBody(ctx)
 	if !ok {
-		return
+		return nil
 	}
 	var hb fleet.Heartbeat
 	if err := json.Unmarshal(data, &hb); err != nil || hb.Service == "" {
 		writeJSON(ctx, 400, map[string]string{"error": "malformed heartbeat"})
-		return
+		return nil
 	}
 	if err := a.AcceptHeartbeat(hb); err != nil {
 		writeJSON(ctx, 400, map[string]string{"error": err.Error()})
-		return
+		return nil
 	}
 	writeJSON(ctx, 202, map[string]string{"status": "accepted"})
+
+	return nil
 }
 
 // AcceptHeartbeat is the transport-independent heartbeat sink.
@@ -192,11 +197,13 @@ func ingestBody(ctx *breeze.Context) ([]byte, bool) {
 	return data, true
 }
 
-func (a *Aggregator) services(ctx *breeze.Context) {
+func (a *Aggregator) services(ctx *breeze.Context) error {
 	writeJSON(ctx, 200, a.registry.Snapshot(time.Now()))
+
+	return nil
 }
 
-func (a *Aggregator) traces(ctx *breeze.Context) {
+func (a *Aggregator) traces(ctx *breeze.Context) error {
 	q := ctx.Req.Query
 	filter := TraceQuery{Service: q.Get("service"), Limit: intValue(q.Get("limit")), Cursor: q.Get("cursor")}
 	filter.MinServices = intValue(q.Get("min_services"))
@@ -220,23 +227,27 @@ func (a *Aggregator) traces(ctx *breeze.Context) {
 	_, paged := q["page_size"]
 	if !paged && filter.Cursor == "" {
 		writeJSON(ctx, 200, page.Traces)
-		return
+		return nil
 	}
 	writeJSON(ctx, 200, page)
+
+	return nil
 }
 
-func (a *Aggregator) trace(ctx *breeze.Context) {
+func (a *Aggregator) trace(ctx *breeze.Context) error {
 	id := ctx.Param("id")
 	if len(id) != 32 {
 		writeJSON(ctx, 400, map[string]string{"error": "invalid trace id"})
-		return
+		return nil
 	}
 	tr, ok := a.store.Trace(id)
 	if !ok {
 		writeJSON(ctx, 404, map[string]string{"error": "trace not found"})
-		return
+		return nil
 	}
 	writeJSON(ctx, 200, tr)
+
+	return nil
 }
 
 // traceLogs serves GET /fleet/api/traces/:id/logs (§9C.2).
@@ -245,16 +256,16 @@ func (a *Aggregator) trace(ctx *breeze.Context) {
 // who to ask — the aggregator holds no index of "which services logged for this
 // trace", and building one would mean storing log metadata it deliberately does
 // not keep.
-func (a *Aggregator) traceLogs(ctx *breeze.Context) {
+func (a *Aggregator) traceLogs(ctx *breeze.Context) error {
 	id := ctx.Param("id")
 	if len(id) != 32 {
 		writeJSON(ctx, 400, map[string]string{"error": "invalid trace id"})
-		return
+		return nil
 	}
 	tr, ok := a.store.Trace(id)
 	if !ok {
 		writeJSON(ctx, 404, map[string]string{"error": "trace not found"})
-		return
+		return nil
 	}
 	if a.logs == nil {
 		// No ServiceToken configured. Reported as an explicit disabled
@@ -267,7 +278,7 @@ func (a *Aggregator) traceLogs(ctx *breeze.Context) {
 			Disabled: "log stitching is disabled: set the aggregator's service_token " +
 				"and each service's dashboard service_token to the same value",
 		})
-		return
+		return nil
 	}
 
 	// The fan-out is bounded by its own per-service timeout; this ceiling
@@ -276,17 +287,29 @@ func (a *Aggregator) traceLogs(ctx *breeze.Context) {
 	reqCtx, cancel := context.WithTimeout(context.Background(), logFanoutTimeout+time.Second)
 	defer cancel()
 	writeJSON(ctx, 200, a.logs.Collect(reqCtx, tr, a.logEndpoints(tr.Services)))
+
+	return nil
 }
 
-func (a *Aggregator) topologySnapshot(ctx *breeze.Context) {
+func (a *Aggregator) topologySnapshot(ctx *breeze.Context) error {
 
 	writeJSON(ctx, 200, a.topology.Snapshot())
+
+	return nil
 }
-func (a *Aggregator) incidentSnapshot(ctx *breeze.Context) {
+func (a *Aggregator) incidentSnapshot(ctx *breeze.Context) error {
 	writeJSON(ctx, 200, Incidents(a.topology, a.cfg, time.Now()))
+
+	return nil
 }
-func (a *Aggregator) stats(ctx *breeze.Context)             { writeJSON(ctx, 200, a.store.Stats()) }
-func (a *Aggregator) violationSnapshot(ctx *breeze.Context) { writeJSON(ctx, 200, a.Violations()) }
+func (a *Aggregator) stats(ctx *breeze.Context) error {
+	writeJSON(ctx, 200, a.store.Stats())
+	return nil
+}
+func (a *Aggregator) violationSnapshot(ctx *breeze.Context) error {
+	writeJSON(ctx, 200, a.Violations())
+	return nil
+}
 
 func intValue(s string) int { n, _ := strconv.Atoi(s); return n }
 

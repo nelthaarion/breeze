@@ -61,7 +61,6 @@ type Config struct {
 	// this feature moves, so the default is to not move them.
 	ServiceToken string
 
-
 	// TransportsEnabled lists ingestion transports the process exposes. HTTP
 	// is always available as the polyglot correctness baseline; events is the
 	// framework default. Unknown names are ignored by the base package so an

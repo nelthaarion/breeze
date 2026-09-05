@@ -144,6 +144,9 @@ func runMakeMigration(args []string) error {
 	}
 
 	migrationsDir := *dir
+	if err := validatePathFlag("dir", migrationsDir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
 		return fmt.Errorf("creating %s: %w", migrationsDir, err)
 	}

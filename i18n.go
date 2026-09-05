@@ -84,6 +84,8 @@ func NewI18n(cfg I18nConfig) (*I18n, error) {
 	if err := i.Reload(); err != nil {
 		return nil, err
 	}
+	// One registry append, at construction; see diag.go.
+	i.registerDiagnostics()
 	return i, nil
 }
 

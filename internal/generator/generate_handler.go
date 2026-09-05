@@ -3,20 +3,20 @@ package generator
 import (
 	"flag"
 	"fmt"
-	"go/format"
-	"os"
-	"path/filepath"
 	"strings"
 	"text/template"
 )
 
-var handlerStubTemplate = template.Must(template.New("handler").Parse(`package handlers
-
-import "github.com/nelthaarion/breeze"
-{{range .Actions}}
+// handlerStubTemplate is the stub `breeze generate handler` writes.
+//
+// The `error` result and the trailing `return nil` are the new HandlerFunc signature.
+// A stub without them does not compile at its registration site, which would make a
+// freshly generated project broken on arrival — the one thing a scaffold must never be.
+var handlerStubTemplate = template.Must(template.New("handler").Parse(`{{range .Actions}}
 // {{.FuncName}} handles {{.Verb}} {{.Path}}.
-func {{.FuncName}}(ctx *breeze.Context) {
+func {{.FuncName}}(ctx *breeze.Context) error {
 	// TODO: implement
+	return nil
 }
 {{end}}`))
 
@@ -26,6 +26,7 @@ func generateHandler(modulePath, name string, args []string) error {
 	force := fs.Bool("force", false, "overwrite an existing handler file")
 	pluralOverride := fs.String("plural", "", "override the pluralized handler name (e.g. --plural=people)")
 	pathOverride := fs.String("path", "", "route prefix (default /<plural>, e.g. --path=/api/v1/users)")
+	out := registerOutputFlags(fs)
 
 	flagArgs, _ := splitFlagsAndPositional(fs, args)
 	if err := parseFlags(fs, flagArgs); err != nil {
@@ -46,7 +47,16 @@ func generateHandler(modulePath, name string, args []string) error {
 		return err
 	}
 
-	if err := writeHandlerFile(name, actions, pathBase, handlerStubTemplate, *force); err != nil {
+	// The handler file's default stem is the lowercased name rather than the
+	// snake_case slug the other kinds use. That is the existing convention for
+	// this kind and is preserved: changing it here would rename files in projects
+	// that already have them.
+	target, err := out.target("handlers", strings.ToLower(name))
+	if err != nil {
+		return err
+	}
+
+	if err := writeHandlerFile(target, modulePath, name, actions, pathBase, handlerStubTemplate, *force); err != nil {
 		return err
 	}
 
@@ -84,15 +94,8 @@ type actionWithPath struct {
 	Verb string
 }
 
-func writeHandlerFile(name string, actions []action, pathBase string, tmpl *template.Template, force bool) error {
-	if err := os.MkdirAll("handlers", 0o755); err != nil {
-		return err
-	}
-
-	path := filepath.Join("handlers", strings.ToLower(name)+".go")
-	if _, err := os.Stat(path); err == nil && !force {
-		return fmt.Errorf("%s already exists â€” pass --force to overwrite", path)
-	}
+func writeHandlerFile(target outputTarget, modulePath, name string, actions []action, pathBase string,
+	tmpl *template.Template, force bool) error {
 
 	withPaths := make([]actionWithPath, len(actions))
 	for i, a := range actions {
@@ -111,12 +114,18 @@ func writeHandlerFile(name string, actions []action, pathBase string, tmpl *temp
 		return err
 	}
 
-	formatted, err := format.Source([]byte(buf.String()))
-	if err != nil {
-		return fmt.Errorf("formatting %s: %w", path, err)
-	}
-
-	return os.WriteFile(path, formatted, 0o644)
+	// The package clause and the import block are not in the template any more:
+	// they are the writer's business, which is what lets --package change one and
+	// the unused-import prune change the other. The template is now only the
+	// declarations.
+	return writeGeneratedGoFile(generatedFile{
+		Target:     target,
+		Owner:      generateOwner("handler"),
+		Imports:    []string{`"github.com/nelthaarion/breeze"`},
+		Body:       buf.String(),
+		ModulePath: modulePath,
+		Force:      force,
+	})
 }
 
 // registerActionRoutes writes a routes_generated.go block registering one

@@ -91,6 +91,7 @@ func NewServer(reg *Registry) *Server {
 		maxMessageBytes:    defaultMaxMessageBytes,
 	}
 	s.RefreshBlocking()
+	s.registerDiagnostics()
 	return s
 }
 

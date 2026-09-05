@@ -4,6 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/nelthaarion/breeze/diag"
 	"github.com/panjf2000/gnet/v2"
 )
 
@@ -47,29 +48,32 @@ const (
 // We use a separate sync.Map (not the HTTP bufs map) so the two code paths
 // never interfere and the WebSocket fast path avoids touching HTTP state.
 //
-// WSHub is the shared hub exposed via b.WSHub for broadcast operations.
+// WSHub is the shared hub exposed via s.WSHub for broadcast operations.
 //
 // wsHandlers maps a route pattern (e.g. "/ws") to the WSHandler registered
-// via b.WebSocket(). Looked up once per upgrade to avoid repeated router calls.
+// via s.WebSocket(). Looked up once per upgrade to avoid repeated router calls.
 
 // initWS lazily initialises WebSocket fields on the Breeze engine.
 // Called by WebSocket() before the server starts, not on the hot path.
-func (b *Breeze) initWS() {
-	if b.wsHub == nil {
-		b.wsHub = newWSHub(b.Pool)
+func (s *Breeze) initWS() {
+	if s.wsHub == nil {
+		s.wsHub = newWSHub(s.Pool)
+		// The hub only exists once a WebSocket endpoint has been declared, so
+		// this is the first moment there is anything to report.
+		diag.Register(diagWebSocket, s.webSocketProbe)
 	}
-	if b.wsHandlers == nil {
-		b.wsHandlers = make(map[string]WSHandler)
+	if s.wsHandlers == nil {
+		s.wsHandlers = make(map[string]WSHandler)
 	}
 }
 
 // WebSocket registers a WebSocket endpoint at the given path and returns
 // the shared WSHub, which is created on the first call and reused for all
 // subsequent WebSocket routes.
-func (b *Breeze) WebSocket(path string, handler WSHandler) *WSHub {
-	b.initWS()
-	b.wsHandlers[path] = handler
-	// upgradeHandler reads from b.wsHandlers at call time, so updating the
+func (s *Breeze) WebSocket(path string, handler WSHandler) *WSHub {
+	s.initWS()
+	s.wsHandlers[path] = handler
+	// upgradeHandler reads from s.wsHandlers at call time, so updating the
 	// map above is sufficient for re-registrations on the same path.
 	// We always append to the router; Find() returns the first match, so only
 	// the first registration is actually reachable unless paths differ.
@@ -80,14 +84,14 @@ func (b *Breeze) WebSocket(path string, handler WSHandler) *WSHub {
 	// otherwise block. Running that inline would stall every connection pinned
 	// to that reactor for its duration. Upgrades happen once per connection, so
 	// the pool hop costs nothing measurable.
-	b.Router.HandleBlocking(GET, path, b.upgradeHandler(path, handler))
-	return b.wsHub
+	s.Router.HandleBlocking(GET, path, s.upgradeHandler(path, handler))
+	return s.wsHub
 }
 
 // Hub returns the shared WSHub for broadcast / count operations.
 // Returns nil if no WebSocket routes have been registered.
-func (b *Breeze) Hub() *WSHub {
-	return b.wsHub
+func (s *Breeze) Hub() *WSHub {
+	return s.wsHub
 }
 
 // ─── Upgrade handler ─────────────────────────────────────────────────────────
@@ -104,41 +108,38 @@ func (b *Breeze) Hub() *WSHub {
 // We deliberately do NOT check the Origin header here — that is application
 // policy. Register a CORS/Origin middleware before calling WebSocket() if
 // you need it.
-func (b *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
-	return func(ctx *Context) {
+func (s *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
+	return func(ctx *Context) error {
 		req := ctx.Req
 
 		upgrade := req.Header["upgrade"]
 		if upgrade != "websocket" {
 			ctx.Status(400)
-			ctx.WriteString("Bad Request: expected Upgrade: websocket")
-			return
+			return ctx.WriteString("Bad Request: expected Upgrade: websocket")
 		}
 		conn2 := req.Header["connection"]
 		if conn2 != "Upgrade" && conn2 != "keep-alive, Upgrade" {
 			ctx.Status(400)
-			ctx.WriteString("Bad Request: expected Connection: Upgrade")
-			return
+			return ctx.WriteString("Bad Request: expected Connection: Upgrade")
 		}
 		key := req.Header["sec-websocket-key"]
 		if key == "" {
 			ctx.Status(400)
-			ctx.WriteString("Bad Request: missing Sec-WebSocket-Key")
-			return
+			return ctx.WriteString("Bad Request: missing Sec-WebSocket-Key")
 		}
 
 		wc := &WSConn{
 			conn: ctx.Conn,
-			hub:  b.wsHub,
+			hub:  s.wsHub,
 		}
 		state := &wsConnState{
 			wc:         wc,
 			handler:    handler,
 			maxPayload: wsMaxPayloadDefault,
 		}
-		b.wsConns.Store(ctx.Conn.Fd(), state)
-		b.wsCount.Add(1)
-		b.wsHub.register(wc)
+		s.wsConns.Store(ctx.Conn.Fd(), state)
+		s.wsCount.Add(1)
+		s.wsHub.register(wc)
 
 		// Send 101 Switching Protocols — suppress normal response path.
 		handshake := wsHandshakeResponse(key)
@@ -147,6 +148,8 @@ func (b *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
 
 		// Notify the handler (runs in the worker pool via the normal exec path).
 		handler.OnConnect(wc)
+
+		return nil
 	}
 }
 
@@ -157,8 +160,8 @@ func (b *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
 // Callers on the request path must gate this behind a wsCount check — the
 // sync.Map Load boxes fd into an interface and allocates for any descriptor
 // above 255.
-func (b *Breeze) isWSConn(fd int) (*wsConnState, bool) {
-	v, ok := b.wsConns.Load(fd)
+func (s *Breeze) isWSConn(fd int) (*wsConnState, bool) {
+	v, ok := s.wsConns.Load(fd)
 	if !ok {
 		return nil, false
 	}
@@ -175,7 +178,7 @@ func (b *Breeze) isWSConn(fd int) (*wsConnState, bool) {
 //     dispatched to the handler via the worker pool.
 //   - A Close frame triggers graceful shutdown: we send a Close echo, call
 //     OnClose, and clean up state.
-func (b *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
+func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 	fd := c.Fd()
 	wc := state.wc
 
@@ -186,7 +189,7 @@ func (b *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 
 	// Accumulate in per-connection reassembly buffer (same pattern as HTTP bufs).
 	var existing []byte
-	if v, ok := b.wsRxBufs.Load(fd); ok {
+	if v, ok := s.wsRxBufs.Load(fd); ok {
 		existing = v.([]byte)
 	}
 	buf := append(existing, raw...)
@@ -196,7 +199,7 @@ func (b *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 		if consumed == -1 {
 			// Protocol error — send close and drop.
 			wc.Close(WsCloseProtocolError, "protocol error")
-			b.cleanupWS(fd, wc, state.handler, WsCloseProtocolError, "protocol error")
+			s.cleanupWS(fd, wc, state.handler, WsCloseProtocolError, "protocol error")
 			return gnet.Close
 		}
 		if frame == nil {
@@ -226,19 +229,19 @@ func (b *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 			echo := buildWSFrame(wsOpClose, payload)
 			frame.release()
 			_ = c.AsyncWrite(echo, nil)
-			b.cleanupWS(fd, wc, state.handler, code, reason)
+			s.cleanupWS(fd, wc, state.handler, code, reason)
 			return gnet.Close
 
 		case wsOpText, wsOpBinary:
-			b.handleDataFrame(wc, state, frame)
+			s.handleDataFrame(wc, state, frame)
 
 		case wsOpContinuation:
-			b.handleContinuation(wc, state, frame)
+			s.handleContinuation(wc, state, frame)
 
 		default:
 			// Unknown opcode — close with WsCloseUnsupportedData (1003).
 			wc.Close(WsCloseUnsupportedData, "unsupported opcode")
-			b.cleanupWS(fd, wc, state.handler, WsCloseUnsupportedData, "unsupported opcode")
+			s.cleanupWS(fd, wc, state.handler, WsCloseUnsupportedData, "unsupported opcode")
 			frame.release()
 			return gnet.Close
 		}
@@ -246,14 +249,14 @@ func (b *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 
 	// Persist leftover bytes.
 	if len(buf) == 0 {
-		b.wsRxBufs.Delete(fd)
+		s.wsRxBufs.Delete(fd)
 	} else {
 		if cap(buf)-len(buf) > compactThreshold {
 			compact := make([]byte, len(buf))
 			copy(compact, buf)
 			buf = compact
 		}
-		b.wsRxBufs.Store(fd, buf)
+		s.wsRxBufs.Store(fd, buf)
 	}
 
 	return gnet.None
@@ -261,13 +264,13 @@ func (b *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 
 // handleDataFrame processes a non-continuation data frame.
 // Starts or extends a fragmented message, or dispatches a complete unfragmented one.
-func (b *Breeze) handleDataFrame(wc *WSConn, state *wsConnState, frame *wsFrame) {
+func (s *Breeze) handleDataFrame(wc *WSConn, state *wsConnState, frame *wsFrame) {
 	if frame.fin {
 		// Complete single-frame message — fast path, no fragBuf allocation.
 		payload := frame.payload
 		opcode := frame.opcode
 		frame.release()
-		b.dispatchMessage(wc, state.handler, opcode, payload)
+		s.dispatchMessage(wc, state.handler, opcode, payload)
 		return
 	}
 	// Begin fragmented message.
@@ -277,7 +280,7 @@ func (b *Breeze) handleDataFrame(wc *WSConn, state *wsConnState, frame *wsFrame)
 }
 
 // handleContinuation appends a continuation frame to the in-progress message.
-func (b *Breeze) handleContinuation(wc *WSConn, state *wsConnState, frame *wsFrame) {
+func (s *Breeze) handleContinuation(wc *WSConn, state *wsConnState, frame *wsFrame) {
 	wc.fragBuf = append(wc.fragBuf, frame.payload...)
 	if frame.fin {
 		payload := make([]byte, len(wc.fragBuf))
@@ -285,38 +288,38 @@ func (b *Breeze) handleContinuation(wc *WSConn, state *wsConnState, frame *wsFra
 		wc.fragBuf = wc.fragBuf[:0]
 		opcode := wc.fragOp
 		frame.release()
-		b.dispatchMessage(wc, state.handler, opcode, payload)
+		s.dispatchMessage(wc, state.handler, opcode, payload)
 		return
 	}
 	frame.release()
 }
 
 // dispatchMessage routes a complete message to the handler via the worker pool.
-func (b *Breeze) dispatchMessage(wc *WSConn, handler WSHandler, opcode byte, payload []byte) {
+func (s *Breeze) dispatchMessage(wc *WSConn, handler WSHandler, opcode byte, payload []byte) {
 	task := func() { handler.OnMessage(wc, opcode, payload) }
-	if b.Pool != nil {
-		b.Pool.Submit(task)
+	if s.Pool != nil {
+		s.Pool.Submit(task)
 	} else {
 		go task()
 	}
 }
 
 // cleanupWS removes a WebSocket connection from all registries and notifies the handler.
-func (b *Breeze) cleanupWS(fd int, wc *WSConn, handler WSHandler, code uint16, reason string) {
+func (s *Breeze) cleanupWS(fd int, wc *WSConn, handler WSHandler, code uint16, reason string) {
 	wc.closed.Store(true)
-	b.wsHub.unregister(wc)
+	s.wsHub.unregister(wc)
 	// LoadAndDelete, not Delete: cleanupWS is reachable both from a Close frame
 	// and from OnClose, so the same fd can arrive twice. Decrementing only when
 	// an entry was actually removed keeps wsCount from drifting negative and
 	// silently re-enabling the map lookup on the HTTP fast path.
-	if _, loaded := b.wsConns.LoadAndDelete(fd); loaded {
-		b.wsCount.Add(-1)
+	if _, loaded := s.wsConns.LoadAndDelete(fd); loaded {
+		s.wsCount.Add(-1)
 	}
-	b.wsRxBufs.Delete(fd)
+	s.wsRxBufs.Delete(fd)
 
 	task := func() { handler.OnClose(wc, code, reason) }
-	if b.Pool != nil {
-		b.Pool.Submit(task)
+	if s.Pool != nil {
+		s.Pool.Submit(task)
 	} else {
 		go task()
 	}

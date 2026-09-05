@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/nelthaarion/breeze"
@@ -75,7 +76,7 @@ func (o cookieOptions) build() string {
 	switch {
 	case o.MaxAge > 0:
 		b.WriteString("; Max-Age=")
-		b.WriteString(itoa(o.MaxAge))
+		b.WriteString(strconv.Itoa(o.MaxAge))
 	case o.MaxAge < 0:
 		b.WriteString("; Max-Age=0")
 	}
@@ -152,20 +153,4 @@ func pathFromURL(raw string) string {
 		return ""
 	}
 	return u.Path
-}
-
-// itoa is a tiny, allocation-light integer formatter for non-negative ints used
-// in cookie Max-Age (avoids importing strconv for a single call site).
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }

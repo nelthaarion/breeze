@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 )
 
 // Migration represents a single migration file pair (.up.sql and .down.sql).
@@ -107,26 +106,18 @@ func DiscoverMigrations(fsys fs.FS) ([]Migration, error) {
 	return migrations, nil
 }
 
-// nextVersion returns the next migration version number based on existing
-// migrations. If no migrations exist, returns 1. Otherwise returns the highest
-// existing version + 1, zero-padded to 4 digits.
-func nextVersion(migrations []Migration) string {
-	if len(migrations) == 0 {
-		return "0001"
-	}
-	return fmt.Sprintf("%04d", migrations[len(migrations)-1].Version+1)
-}
-
-// toSlug converts a name like "CreateUsersTable" to "create_users_table".
-func toSlug(name string) string {
-	// Handle camelCase -> snake_case
-	var buf strings.Builder
-	for i, r := range name {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			buf.WriteRune('_')
-		}
-		lower := rune(strings.ToLower(string(r))[0])
-		buf.WriteRune(lower)
-	}
-	return buf.String()
-}
+// nextVersion and toSlug used to live here: a version allocator and a
+// CamelCase→snake_case converter for naming a *new* migration pair. Neither was
+// reachable — nothing in this package or any importer called them, only their own
+// tests did.
+//
+// They were dead because this package does not create migration files. It
+// discovers and runs the ones already on disk; `breeze makemigration` writes them,
+// and that lives in internal/generator with its own toSlug. Two functions naming
+// the same artefact would be a problem if both ran, and this one never did — its
+// version was also the wrong one, inserting an underscore before every capital, so
+// "HTTPServer" came out as "h_t_t_p_server" against the generator's "http_server".
+//
+// If this package ever needs to write a migration, the generator's toSlug is the
+// implementation to lift out — it handles acronym runs and has the test cases to
+// prove it.

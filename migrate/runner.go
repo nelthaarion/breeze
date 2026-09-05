@@ -28,11 +28,13 @@ type Runner struct {
 
 // New creates a new Runner for the given database and migration filesystem.
 func New(db *sql.DB, fsys fs.FS) *Runner {
-	return &Runner{
+	r := &Runner{
 		DB: db,
 		FS: fsys,
 		Mu: make(chan struct{}, 1),
 	}
+	r.registerDiagnostics()
+	return r
 }
 
 // StatusEntry represents the status of a single migration.
@@ -48,7 +50,14 @@ type StatusEntry struct {
 // Each migration is applied within its own transaction; if any migration fails,
 // Up stops and returns the error (subsequent migrations are not attempted).
 // Up uses a simple row-level lock (see lockVersion) to prevent concurrent runs.
-func (r *Runner) Up(ctx context.Context) error {
+func (r *Runner) Up(ctx context.Context) (err error) {
+	// A named return, so the deferred record sees whatever any return statement
+	// assigned — including the ones inside the loop, where err is shadowed by the
+	// short declaration but the return value is not.
+	start := time.Now()
+	applied := 0
+	defer func() { record("up", start, applied, err) }()
+
 	// Acquire advisory lock using a sentinel row
 	if err := r.acquireLock(ctx); err != nil {
 		return err
@@ -64,14 +73,14 @@ func (r *Runner) Up(ctx context.Context) error {
 		return err
 	}
 
-	applied, err := appliedVersions(ctx, r.DB)
+	appliedVers, err := appliedVersions(ctx, r.DB)
 	if err != nil {
 		return err
 	}
 
 	pending := make([]Migration, 0, len(migrations))
 	for _, m := range migrations {
-		if _, ok := applied[m.Version]; !ok {
+		if _, ok := appliedVers[m.Version]; !ok {
 			pending = append(pending, m)
 		}
 	}
@@ -106,6 +115,7 @@ func (r *Runner) Up(ctx context.Context) error {
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("failed to commit migration %d: %w", m.Version, err)
 		}
+		applied++
 	}
 
 	return nil
@@ -113,7 +123,11 @@ func (r *Runner) Up(ctx context.Context) error {
 
 // Down rolls back the last n applied migrations in descending version order.
 // Each rollback is applied within its own transaction.
-func (r *Runner) Down(ctx context.Context, n int) error {
+func (r *Runner) Down(ctx context.Context, n int) (err error) {
+	start := time.Now()
+	count := 0
+	defer func() { record("down", start, count, err) }()
+
 	if n <= 0 {
 		return fmt.Errorf("n must be positive")
 	}
@@ -148,7 +162,6 @@ func (r *Runner) Down(ctx context.Context, n int) error {
 	appliedList := descendingByVersion(applied)
 
 	// Roll back up to n migrations
-	count := 0
 	for _, rec := range appliedList {
 		if count >= n {
 			break
@@ -196,7 +209,11 @@ func (r *Runner) Down(ctx context.Context, n int) error {
 }
 
 // Status returns the status of all discovered migrations.
-func (r *Runner) Status(ctx context.Context) ([]StatusEntry, error) {
+func (r *Runner) Status(ctx context.Context) (_ []StatusEntry, err error) {
+	start := time.Now()
+	count := 0
+	defer func() { record("status", start, count, err) }()
+
 	if err := ensureVersionTable(ctx, r.DB); err != nil {
 		return nil, fmt.Errorf("failed to initialize migrations table: %w", err)
 	}
@@ -229,6 +246,9 @@ func (r *Runner) Status(ctx context.Context) ([]StatusEntry, error) {
 		entries[i] = entry
 	}
 
+	// Status moves nothing, so the recorded count is what it inspected. That is
+	// the number a reader of the diagnostic wants from a status call.
+	count = len(entries)
 	return entries, nil
 }
 

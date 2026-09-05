@@ -364,9 +364,11 @@ func TestBlastRadiusIgnoresStaleEdges(t *testing.T) {
 	failEdge(g, "gateway", "orders", 100, 100, start)
 	failEntry(g, "gateway", 100, 100, start)
 
-	// Recompute long after every edge fell outside TraceTTL.
+	// Recompute long after every edge fell outside TraceTTL. The TTL that makes
+	// them stale is the graph's own (passed to NewTopologyGraph above), not a
+	// parameter of the walk — which is why ComputeBlastRadius takes no Config.
 	later := start.Add(time.Hour)
-	br := ComputeBlastRadius(g, cfg, "orders", 1.0, 100, later)
+	br := ComputeBlastRadius(g, "orders", 1.0, 100, later)
 	if len(br.Affected) != 0 {
 		t.Errorf("affected = %+v, want none: every edge is stale", br.Affected)
 	}

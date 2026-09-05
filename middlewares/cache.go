@@ -46,9 +46,13 @@ type cachedResponse struct {
 
 // NewETagCache creates a new ETag cache.
 func NewETagCache() *ETagCache {
-	return &ETagCache{
+	c := &ETagCache{
 		store: make(map[string]*cachedResponse),
 	}
+	// Recorded so the probe can report this instance's store size. The most
+	// recently constructed cache wins, matching the registry's rule everywhere.
+	etagCacheHandle.Store(c)
+	return c
 }
 
 // ETagMiddleware returns a Breeze middleware that sets ETag headers
@@ -59,7 +63,8 @@ func NewETagCache() *ETagCache {
 // produces a different body, the ETag changes and the client gets a
 // full 200 response.
 func (c *ETagCache) ETagMiddleware() breeze.HandlerFunc {
-	return func(ctx *breeze.Context) {
+	etagInstalled.Store(true)
+	return func(ctx *breeze.Context) error {
 		// Pre-check: if the client sent If-None-Match, see if we have a
 		// stored ETag for this URL. If it matches, we can skip the handler
 		// entirely and return 304 immediately.
@@ -73,15 +78,21 @@ func (c *ETagCache) ETagMiddleware() breeze.HandlerFunc {
 				ctx.Status(304)
 				ctx.SetHeader("ETag", inm)
 				ctx.Res.Body = nil
-				return // skip handler — client's cache is still valid
+				// A 304 served without running the handler at all — the best
+				// outcome this middleware has, and the one its hit rate means.
+				etagCounter.Hit()
+				return nil // skip handler — client's cache is still valid
 			}
 		}
 
-		// Run the handler to produce the response.
-		ctx.Next()
+		// Run the handler to produce the response. A failure short-circuits: an
+		// ETag over an error body would let a client cache the failure.
+		if err := ctx.Next(); err != nil {
+			return err
+		}
 
 		if ctx.Res == nil || len(ctx.Res.Body) == 0 {
-			return
+			return nil
 		}
 
 		// Compute ETag from the fresh response body.
@@ -105,7 +116,14 @@ func (c *ETagCache) ETagMiddleware() breeze.HandlerFunc {
 		if inm != "" && inm == etag {
 			ctx.Status(304)
 			ctx.Res.Body = nil
+			// Counted as a hit even though the handler ran: the body did not go
+			// on the wire, which is the bandwidth this middleware saves.
+			etagCounter.Hit()
+		} else {
+			etagCounter.Miss()
 		}
+
+		return nil
 	}
 }
 

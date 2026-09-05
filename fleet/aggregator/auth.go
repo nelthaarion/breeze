@@ -14,11 +14,11 @@ import (
 // server-side proxy, which can keep these credentials off the browser entirely.
 func readAuth(cfg Config) breeze.HandlerFunc {
 	if !cfg.AuthEnabled() {
-		return func(ctx *breeze.Context) { ctx.Next() }
+		return func(ctx *breeze.Context) error { return ctx.Next() }
 	}
 	wantUser := sha256.Sum256([]byte(cfg.Username))
 	wantPass := sha256.Sum256([]byte(cfg.Password))
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 		raw := ctx.Req.Header["authorization"]
 		if strings.HasPrefix(raw, "Basic ") {
 			decoded, err := base64.StdEncoding.DecodeString(raw[6:])
@@ -28,8 +28,7 @@ func readAuth(cfg Config) breeze.HandlerFunc {
 					gotPass := sha256.Sum256(decoded[split+1:])
 					if subtle.ConstantTimeCompare(gotUser[:], wantUser[:]) == 1 &&
 						subtle.ConstantTimeCompare(gotPass[:], wantPass[:]) == 1 {
-						ctx.Next()
-						return
+						return ctx.Next()
 					}
 				}
 			}
@@ -39,6 +38,8 @@ func readAuth(cfg Config) breeze.HandlerFunc {
 			"WWW-Authenticate": `Basic realm="Breeze Fleet"`,
 		}, Body: []byte(`{"error":"unauthorized"}`)}
 		ctx.Abort()
+
+		return nil
 	}
 }
 

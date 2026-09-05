@@ -16,15 +16,16 @@ import "github.com/nelthaarion/breeze"
 //	    oauth2.Auth(cfg),
 //	)
 func Refresh(cfg Config) breeze.HandlerFunc {
-	c := prepareConfig(cfg)
+	c, counts := prepareConfig(cfg)
 
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 		s, err := readSession(ctx, c)
 		if err != nil {
-			// No session to refresh; let downstream (e.g. Auth) decide.
-			ctx.Next()
-			return
+			// No session to refresh; let downstream (e.g. Auth) decide — including
+			// whatever error it reports.
+			return ctx.Next()
 		}
+		counts.sessionsRead.Add(1)
 
 		// Only refresh when we have a refresh token AND the access token is
 		// (near) expired. This keeps the common case allocation- and
@@ -46,7 +47,7 @@ func Refresh(cfg Config) breeze.HandlerFunc {
 		}
 
 		setContext(ctx, s)
-		ctx.Next()
+		return ctx.Next()
 	}
 }
 

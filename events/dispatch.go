@@ -92,15 +92,59 @@ func emitCtx[T any](b *Bus, stdctx context.Context, event T) error {
 		})
 	}
 
-	err := runChain(mw, ctx, func() error {
+	// Split rather than always going through runChain. The middleware form
+	// needs a closure over ran/stopped, and a closure that captures their
+	// addresses forces both onto the heap for every dispatch — escape analysis
+	// is per-function, so merely *having* the closure in this function costs
+	// two allocations even on the path that never builds it. Keeping it in
+	// runMiddlewareChain leaves these two as ordinary stack locals here.
+	var err error
+	if len(mw) == 0 {
+		ran, stopped, err = runListeners(b, e, ctx, snap, event, obs)
+	} else {
+		ran, stopped, err = runMiddlewareChain(mw, b, e, ctx, snap, event, obs)
+	}
+
+	elapsed := time.Since(start)
+	// The payload is boxed into an interface only when something will read it.
+	// Passing `event` unconditionally allocated on every dispatch to hand a
+	// value to two branches that were almost always disabled.
+	b.finish(e, ctx, elapsed, start, ran, stopped, err, payloadFor(b, event), false)
+	return err
+}
+
+// payloadFor boxes event into an `any` only if some consumer will read it.
+//
+// Boxing a generic T into an interface allocates whenever T does not fit in a
+// pointer word, and the recorder and observer are the only readers. Both are
+// off by default and both are gated by an atomic flag, so the check is two
+// atomic loads against an allocation the dispatch would otherwise pay on every
+// emit and immediately discard.
+//
+// It is a free function rather than a method because Go does not permit type
+// parameters on methods.
+func payloadFor[T any](b *Bus, event T) any {
+	if b.recorder.isEnabled() && b.recorder.wantsPayload() {
+		return event
+	}
+	if b.obsPayload.Load() && b.obs.Load() != nil {
+		return event
+	}
+	return nil
+}
+
+// runMiddlewareChain runs the listeners wrapped in the middleware chain.
+//
+// It exists to own the closure. See the comment at its only call site: the
+// closure's captures escape, and isolating it here keeps that cost on the
+// dispatches that actually have middleware registered.
+func runMiddlewareChain[T any](mw []Middleware, b *Bus, e *entry, ctx *Context, snap []*listener[T], event T, obs Observer) (ran int, stopped bool, err error) {
+	err = runChain(mw, ctx, func() error {
 		var derr error
 		ran, stopped, derr = runListeners(b, e, ctx, snap, event, obs)
 		return derr
 	})
-
-	elapsed := time.Since(start)
-	b.finish(e, ctx, elapsed, start, ran, stopped, err, event, false)
-	return err
+	return ran, stopped, err
 }
 
 // runListeners walks the snapshot in order.
@@ -404,7 +448,7 @@ func emitAsync[T any](b *Bus, stdctx context.Context, event T, wg *sync.WaitGrou
 
 	// Duration here measures scheduling, not execution; the Record's
 	// Async flag tells consumers how to read it.
-	b.finish(e, ctx, time.Since(start), start, scheduled, ctx.Cancelled(), nil, event, true)
+	b.finish(e, ctx, time.Since(start), start, scheduled, ctx.Cancelled(), nil, payloadFor(b, event), true)
 	return nil
 }
 

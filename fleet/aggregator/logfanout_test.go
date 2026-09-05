@@ -13,7 +13,6 @@ import (
 	"github.com/nelthaarion/breeze/fleet"
 )
 
-
 // logStub stands in for one service's dashboard log endpoint.
 //
 // A real httptest server rather than a fake client, because the parts most
@@ -238,7 +237,6 @@ func TestLogEndpointsOnlyIncludesTraceServices(t *testing.T) {
 		}, now)
 	}
 
-
 	got := a.logEndpoints([]string{"gateway", "orders"})
 	if len(got) != 2 {
 		t.Fatalf("got %d endpoints, want 2: %+v", len(got), got)
@@ -250,4 +248,3 @@ func TestLogEndpointsOnlyIncludesTraceServices(t *testing.T) {
 		t.Errorf("gateway endpoint = %q", got["gateway"])
 	}
 }
-

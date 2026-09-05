@@ -1,18 +1,25 @@
-# Breeze Fleet Tracing — three services and an aggregator.
+# Breeze Fleet Tracing — three services, an aggregator, and per-service MCP.
 #
-#   docker compose -f cmd/fleet-example/docker-compose.yml up --build
+#   # 1. cross-compile the working tree (nothing is compiled inside the images)
+#   powershell -File cmd/fleet-example/build.ps1     # or: pwsh -File ...
+#
+#   # 2. run
+#   docker compose -f cmd/fleet-example/docker-compose.yml up
 #   curl http://localhost:3000/api/orders/123
 #
 # Then open http://localhost:3000/dashboard (admin/admin) and pick Fleet View.
 #
 # Request path:  client → gateway :3000 → auth :3001 → orders :3002
 # Reporting:     every service → aggregator :9000 (spans and heartbeats)
+# Introspection: gateway :2100 (MCP, app-runtime, read-only)
 #
-# Each service overrides the image's own HEALTHCHECK. The image defaults to
-# probing :3000, which is correct only for the gateway; the others listen on
-# their own ports and would report unhealthy forever. Every probe here targets
-# /healthz — a route each service defines and deliberately excludes from
-# tracing, so probe traffic never appears in the trace list.
+# The images are runtime-only and contain a binary built on the host — see
+# Dockerfile.prebuilt for why. `docker compose build` will not recompile Go code;
+# re-run the build script instead.
+#
+# Each service overrides the image's own probe. Every probe targets /healthz — a
+# route each service defines and deliberately excludes from tracing, so probe
+# traffic never appears in the trace list.
 #
 # All trace state is in memory. Stopping the aggregator discards it.
 
@@ -20,8 +27,9 @@ services:
   aggregator:
     build:
       context: ../..
+      dockerfile: cmd/fleet-example/Dockerfile.prebuilt
       args:
-        BREEZE_TARGET: ./cmd/fleet-aggregator
+        BREEZE_BINARY: aggregator
     environment:
       FLEET_USERNAME: admin
       FLEET_PASSWORD: admin
@@ -39,8 +47,9 @@ services:
   orders:
     build:
       context: ../..
+      dockerfile: cmd/fleet-example/Dockerfile.prebuilt
       args:
-        BREEZE_TARGET: ./cmd/fleet-example/orders
+        BREEZE_BINARY: orders
     environment: &fleet-env
       FLEET_WRITE_URL: http://aggregator:9000/fleet
       FLEET_INGEST_TOKEN: fleet-demo-token
@@ -64,8 +73,9 @@ services:
   auth:
     build:
       context: ../..
+      dockerfile: cmd/fleet-example/Dockerfile.prebuilt
       args:
-        BREEZE_TARGET: ./cmd/fleet-example/auth
+        BREEZE_BINARY: auth
     environment:
       <<: *fleet-env
       ORDERS_URL: http://orders:3002
@@ -88,15 +98,39 @@ services:
   gateway:
     build:
       context: ../..
+      dockerfile: cmd/fleet-example/Dockerfile.prebuilt
       args:
-        BREEZE_TARGET: ./cmd/fleet-example/gateway
+        BREEZE_BINARY: gateway
     environment:
       <<: *fleet-env
       # Write path for its own spans; read path for the dashboard's Fleet View
       # proxy. Same aggregator, opposite directions.
       FLEET_READ_URL: http://aggregator:9000/fleet
       AUTH_URL: http://auth:3001
-    ports: ["3000:3000"]
+
+      # ── the in-process MCP control plane ────────────────────────────────────
+      #
+      # A second port on this same process, serving read-only introspection of
+      # the running gateway. It is NOT the application port, and it is NOT
+      # Auto-MCP: it publishes framework introspection (live routes, recent
+      # errors, logs, performance) rather than this service's business routes.
+      #
+      # The server runs in app-runtime mode unconditionally, so the generating
+      # and provisioning tools are not registered at all — there is no source
+      # tree in this container for them to operate on, and nothing to reach even
+      # with a valid token.
+      BREEZE_MCP_PORT: 2100
+      BREEZE_MCP_TOKEN: fleet-demo-mcp-token
+      # Per-token scoping, the second layer. Mode decided what this server
+      # offers; this decides what the credential reaches. `runtime` is what an
+      # agent inspecting this instance needs; `fleet` would additionally let it
+      # read the aggregator, which it can already reach directly. Remove this
+      # line for an unscoped token — the endpoint reports which it issued at
+      # GET /mcp/features and in the MCP handshake.
+      BREEZE_MCP_SCOPE: runtime
+    ports:
+      - "3000:3000"
+      - "2100:2100"
     depends_on:
       aggregator:
         condition: service_healthy

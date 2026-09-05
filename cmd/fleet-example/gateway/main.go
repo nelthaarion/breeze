@@ -17,12 +17,14 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nelthaarion/breeze"
 	"github.com/nelthaarion/breeze/dashboard"
 	"github.com/nelthaarion/breeze/fleet"
 	"github.com/nelthaarion/breeze/fleet/transport/httptransport"
+	"github.com/nelthaarion/breeze/mcp"
 )
 
 func main() {
@@ -52,8 +54,8 @@ func main() {
 	// every few seconds is not a request anyone wants to debug, and letting it
 	// through would bury real traffic in the trace list and inflate this
 	// service's call count in the topology graph.
-	router.Handle(breeze.GET, "/healthz", func(ctx *breeze.Context) {
-		ctx.JSON(map[string]string{"status": "ok", "service": "gateway"})
+	router.Handle(breeze.GET, "/healthz", func(ctx *breeze.Context) error {
+		return ctx.JSON(map[string]string{"status": "ok", "service": "gateway"})
 	})
 
 	authURL := env("AUTH_URL", "http://localhost:3001")
@@ -61,7 +63,7 @@ func main() {
 	// HandleBlocking because this handler makes a downstream HTTP call:
 	// running blocking I/O inline would stall every connection pinned to the
 	// same event loop for its duration.
-	router.HandleBlocking(breeze.GET, "/api/orders/:id", func(ctx *breeze.Context) {
+	router.HandleBlocking(breeze.GET, "/api/orders/:id", func(ctx *breeze.Context) error {
 		id := ctx.Param("id")
 
 		// Tagged here, at the edge, and propagated as baggage to auth and
@@ -81,8 +83,7 @@ func main() {
 			coll.PushLogCtx(ctx, "error", "gateway could not build the auth request: "+err.Error(), "app")
 
 			ctx.Status(500)
-			ctx.JSON(map[string]string{"error": "internal error"})
-			return
+			return ctx.JSON(map[string]string{"error": "internal error"})
 		}
 
 		// WrapClient injects traceparent and baggage, then calls Do. This is
@@ -93,8 +94,7 @@ func main() {
 			coll.PushLogCtx(ctx, "error", "gateway could not reach auth-service: "+err.Error(), "app")
 
 			ctx.Status(502)
-			ctx.JSON(map[string]string{"error": err.Error()})
-			return
+			return ctx.JSON(map[string]string{"error": err.Error()})
 		}
 		defer resp.Body.Close()
 
@@ -103,8 +103,7 @@ func main() {
 			coll.PushLogCtx(ctx, "error", "gateway got an undecodable auth response: "+err.Error(), "app")
 
 			ctx.Status(502)
-			ctx.JSON(map[string]string{"error": "invalid downstream response"})
-			return
+			return ctx.JSON(map[string]string{"error": "invalid downstream response"})
 		}
 
 		// Propagate the downstream failure rather than reporting success over
@@ -118,11 +117,68 @@ func main() {
 			coll.PushLogCtx(ctx, "info", "gateway completed order "+id, "app")
 
 		}
-		ctx.JSON(map[string]any{"order_id": id, "result": result})
+		return ctx.JSON(map[string]any{"order_id": id, "result": result})
 	})
 
 	fmt.Printf("gateway :%d — dashboard http://localhost:%d/dashboard (admin/admin)\n", port, port)
+	startControlPlane(app, "gateway")
 	app.Run(port, true)
+}
+
+// startControlPlane serves the in-process MCP endpoint beside the application.
+//
+// Off unless BREEZE_MCP_PORT is set, so the example's default behaviour is unchanged
+// and nothing new is exposed by simply running it.
+//
+// ModeAppRuntime, always: this process is a deployed service, and the generating and
+// provisioning tools are not merely unhelpful here — they would chdir and rewrite a
+// source tree the container does not have, while this same process is serving requests.
+// In that mode they are not registered at all.
+//
+// BREEZE_MCP_SCOPE narrows the token further. Mode decides what this server offers;
+// scope decides what the credential reaches. An empty value means unscoped, which is
+// the documented default.
+func startControlPlane(app *breeze.Breeze, service string) {
+	port := envInt("BREEZE_MCP_PORT", 0)
+	if port == 0 {
+		return
+	}
+
+	scope, err := mcp.ParseScope(os.Getenv("BREEZE_MCP_SCOPE"))
+	if err != nil {
+		// Refused rather than downgraded to unscoped: a typo in a scope must not
+		// silently widen the token it was meant to narrow.
+		fmt.Printf("%s: mcp scope rejected: %v\n", service, err)
+		os.Exit(1)
+	}
+
+	// Host 0.0.0.0 because the caller is on the Docker host, not inside the container,
+	// so loopback would be unreachable. The bearer token is then the only guard, which
+	// is why it is required rather than generated-and-forgotten here.
+	server, token, err := mcp.StartInProcess(app, mcp.InProcessConfig{
+		Mode:  mcp.ModeAppRuntime,
+		Port:  port,
+		Host:  "0.0.0.0",
+		Token: env("BREEZE_MCP_TOKEN", ""),
+		Scope: scope,
+	})
+	if err != nil {
+		fmt.Printf("%s: mcp endpoint failed to start: %v\n", service, err)
+		os.Exit(1)
+	}
+
+	granted := "all capabilities (unscoped)"
+	if scope.IsScoped() {
+		names := make([]string, 0, len(scope.Granted()))
+		for _, c := range scope.Granted() {
+			names = append(names, string(c))
+		}
+		granted = strings.Join(names, ",")
+	}
+	fmt.Printf("%s: mcp app-runtime endpoint %s (scope %s, token %s)\n",
+		service, server.URL(), granted, token)
+
+	go func() { _ = server.Serve() }()
 }
 
 // skipUntraced wraps the fleet middleware so probe traffic never becomes a span.
@@ -133,12 +189,13 @@ func main() {
 // treatment — they are not registered through the router's middleware chain, so
 // polling the dashboard already produces no spans.
 func skipUntraced(traced breeze.HandlerFunc) breeze.HandlerFunc {
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 		if ctx.Req != nil && ctx.Req.Path == "/healthz" {
-			ctx.Next()
-			return
+			return ctx.Next()
 		}
 		traced(ctx)
+
+		return nil
 	}
 }
 

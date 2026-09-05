@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	breeze "github.com/nelthaarion/breeze"
@@ -216,6 +217,25 @@ type mount struct {
 	// bufs supplies the read buffers used while streaming. It is owned by
 	// the mount because its buffer size is the mount's chunk size.
 	bufs *sync.Pool
+
+	// Counters for the diagnostic probe.
+	//
+	// Unconditional atomics, not diag.Counter's gated ones. The unit here is one
+	// video response, which stats a file, opens it, and copies at least a chunk
+	// out of it — tens of kilobytes of file I/O minimum. Three atomic adds
+	// against that is not a measurable cost, and gating them would mean a mount
+	// that cannot say how much bandwidth it served unless someone had thought to
+	// enable counting first.
+	//
+	// They live on the mount rather than in a package global because a process
+	// may serve several mounts with different roots, and totalling them would
+	// make "which library is consuming the bandwidth" unanswerable.
+	served       atomic.Uint64
+	partial      atomic.Uint64
+	failedReqs   atomic.Uint64
+	disconnects  atomic.Uint64
+	bytesSent    atomic.Uint64
+	lastServedNs atomic.Int64
 }
 
 // newMount validates cfg and applies defaults.
@@ -342,7 +362,7 @@ func newMount(cfg Config) (*mount, error) {
 		col = nil
 	}
 
-	return &mount{
+	m := &mount{
 		root:       real,
 		prefix:     prefix,
 		exts:       exts,
@@ -362,7 +382,11 @@ func newMount(cfg Config) (*mount, error) {
 		col:     col,
 		onError: cfg.OnError,
 		bufs:    newBufferPool(chunk),
-	}, nil
+	}
+	// One registry append per mount, at construction. The request path is
+	// untouched; see diag.go.
+	m.registerDiagnostics()
+	return m, nil
 }
 
 // allowsExt reports whether name's extension is servable.

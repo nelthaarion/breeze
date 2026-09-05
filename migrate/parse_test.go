@@ -176,24 +176,3 @@ func TestDiscoverMigrationsContent(t *testing.T) {
 		t.Errorf("DownSQL = %q, want %q", m.DownSQL, "DROP TABLE users")
 	}
 }
-
-func TestToSlug(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"CreateUsersTable", "create_users_table"},
-		{"AddEmail", "add_email"},
-		{"user", "user"},
-		{"User", "user"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := toSlug(tt.input)
-			if got != tt.want {
-				t.Errorf("toSlug(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}

@@ -15,33 +15,85 @@ package generator
 
 import (
 	"fmt"
-	"go/format"
 	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// writeGeneratedGoFile formats src and writes it to path, creating the parent
-// directory. An existing file is left alone unless force is set: these are
-// stubs the user is expected to fill in, so silently replacing one would
-// discard their implementation.
-func writeGeneratedGoFile(path, src string, force bool) error {
+// generatedFile is one standalone Go file a generator writes.
+//
+// It is a struct rather than a parameter list because the fields are not
+// independent: Target's package clause has to be the one written into the file,
+// Owner has to be the command a later run will claim the file back under, and
+// ModulePath decides how Imports are grouped. Passing them separately made it
+// possible to resolve a target and then write a different package, which is the
+// mistake this shape rules out.
+type generatedFile struct {
+	// Target is where the file goes and what package it declares, from
+	// outputFlags.target — so a default-derived destination and an overridden
+	// one arrive here identically.
+	Target outputTarget
+	// Owner is the command that generates this file, from generateOwner. It is
+	// written into the header and is what a later run reads back to tell its own
+	// file from another feature's.
+	Owner string
+	// Imports are candidate import lines, in any order and any grouping: the
+	// writer groups them and drops the ones Body does not use. A generator may
+	// list an import its own conditionals might not end up needing.
+	Imports []string
+	// Body is everything after the imports.
+	Body string
+	// ModulePath is the generated project's module path, which is what
+	// distinguishes its own packages from third-party ones.
+	ModulePath string
+	Force      bool
+}
+
+// writeGeneratedGoFile writes one generated Go file, creating its directory.
+//
+// Everything the clean-code guarantees promise happens here, which is what makes
+// them generator-wide rather than per-template: the header that records
+// ownership, the grouped imports, the pruning of unused ones, gofmt, and the
+// package-name check. A generator gets all of it by calling this and cannot opt
+// out by forgetting a step.
+//
+// An existing file is left alone unless Force is set, and a file another
+// generator owns is refused regardless — see checkFileOwnership.
+func writeGeneratedGoFile(f generatedFile) error {
+	path := f.Target.Path
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}
-
-	if _, err := os.Stat(path); err == nil && !force {
-		return fmt.Errorf("%s already exists â€” pass --force to overwrite", path)
+	if err := checkFileOwnership(path, f.Owner, f.Force); err != nil {
+		return err
 	}
 
-	formatted, err := format.Source([]byte(src))
+	var b strings.Builder
+	b.WriteString(generatedHeader(f.Owner))
+	fmt.Fprintf(&b, "package %s\n\n", f.Target.Package)
+	if len(f.Imports) > 0 {
+		// Written factored and unsorted; canonicalGoFile regroups and sorts it,
+		// so the order a generator lists its imports in does not matter.
+		b.WriteString("import (\n")
+		for _, line := range f.Imports {
+			if line = strings.TrimSpace(line); line != "" {
+				b.WriteString("\t")
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+		}
+		b.WriteString(")\n\n")
+	}
+	b.WriteString(f.Body)
+
+	content, err := canonicalGoFile(path, b.String(), f.ModulePath)
 	if err != nil {
-		return fmt.Errorf("formatting %s: %w", path, err)
+		return err
 	}
-	if err := os.WriteFile(path, formatted, 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return err
 	}
 

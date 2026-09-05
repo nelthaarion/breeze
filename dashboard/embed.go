@@ -20,11 +20,6 @@ var componentsFS embed.FS
 //go:embed templates/public/*
 var publicFS embed.FS
 
-// templatesDir is the on-disk directory where embedded templates are written
-// at install time so the Breeze TemplateEngine (which reads from the
-// filesystem) can parse them.
-var templatesDir string
-
 // writeTemplates extracts the embedded template files to a temporary directory
 // and returns the directory path. The directory is removed by the OS on next
 // reboot (or when the process exits, on some platforms).

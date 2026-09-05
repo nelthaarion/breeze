@@ -1,9 +1,9 @@
-﻿package wstransport
+package wstransport
 
 import (
-"testing"
+	"testing"
 
-"github.com/nelthaarion/breeze/fleet"
+	"github.com/nelthaarion/breeze/fleet"
 )
 
 // Compile-time proof that the rewrite still satisfies the interface the Tracer
@@ -12,8 +12,8 @@ import (
 var _ fleet.Transport = (*Transport)(nil)
 
 func TestInterfaceSatisfied(t *testing.T) {
-var tr fleet.Transport = New(Config{})
-if tr.Name() != "ws" {
-t.Fatalf("Name() = %q, want ws", tr.Name())
-}
+	var tr fleet.Transport = New(Config{})
+	if tr.Name() != "ws" {
+		t.Fatalf("Name() = %q, want ws", tr.Name())
+	}
 }

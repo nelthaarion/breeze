@@ -31,16 +31,6 @@ type resolved struct {
 	ModTime int64
 }
 
-// resolve is [mount.normalize] followed by [mount.stat]: the whole
-// pipeline in one call, for callers with no authorisation step in between.
-func (m *mount) resolve(raw string) (resolved, error) {
-	name, err := m.normalize(raw)
-	if err != nil {
-		return resolved{}, err
-	}
-	return m.stat(name)
-}
-
 // normalize turns the raw wildcard capture from a route into a cleaned,
 // root-relative name, without touching the filesystem.
 //

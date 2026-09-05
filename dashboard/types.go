@@ -78,6 +78,26 @@ type RouteStat struct {
 	MaxLatencyMS float64  `json:"max_latency_ms"`
 	LastRequest  string   `json:"last_request"` // RFC3339, "" if never
 	Errors       int64    `json:"errors"`
+
+	// Summary, Description and Tags are what the developer wrote in
+	// middleware.Doc, carried through from the Scalar registry.
+	//
+	// They are here because a method and a path do not say what a route is for.
+	// "GET /orders/:id" plus a latency number is enough to render a table and not
+	// enough to answer "which endpoint should I call" — and that is the question
+	// an agent reading this endpoint is actually asking. The sentence already
+	// exists; before this it reached the OpenAPI document and nothing else.
+	Summary     string   `json:"summary,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+
+	// Documented reports whether a RouteDoc was found for this route.
+	//
+	// Sent even when false, unlike the three fields above, because absent and
+	// empty are different answers: a route with no Doc wrapper is missing from
+	// the OpenAPI document entirely, and a reader needs to distinguish that from
+	// one that is documented with a blank title.
+	Documented bool `json:"documented"`
 }
 
 // LogEntry is a single line in the dashboard log viewer.

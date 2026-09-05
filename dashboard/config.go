@@ -68,6 +68,17 @@ type Config struct {
 	// handled by a reverse proxy. Defaults to false.
 	DisableAuth bool `yaml:"disable_auth" json:"disable_auth"`
 
+	// DevMode links the readable client bundles instead of the minified ones.
+	//
+	// Defaults to false, so a dashboard serves dashboard.min.css and
+	// dashboard.min.js — ~55KB less per page load than the commented sources.
+	// Both files are always present under /assets; this only decides what the
+	// layout references, so a developer can still open the readable copy by URL.
+	//
+	// Named to match breeze.TemplateConfig.DevMode, which makes the same choice
+	// for the SPA runtime, because they are the same decision.
+	DevMode bool `yaml:"dev_mode" json:"dev_mode"`
+
 	// AllowWrites enables Create/Update/Delete in the Database Browser.
 	// Defaults to false. Even when a DBWriter is configured via
 	// Collector.SetDBWriter, writes stay disabled until this is

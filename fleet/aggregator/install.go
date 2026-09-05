@@ -34,7 +34,6 @@ type Aggregator struct {
 	logs *logFanout
 }
 
-
 // InstallAggregator mirrors dashboard.Install: construct the subsystem, register
 // its routes, and return the handle the process shuts down with.
 func InstallAggregator(app *breeze.Breeze, router *breeze.Router, cfg Config) *Aggregator {
@@ -61,7 +60,6 @@ func installWithStore(router *breeze.Router, cfg Config, store SpanStore) *Aggre
 	if cfg.ServiceToken != "" {
 		a.logs = newLogFanout(cfg.ServiceToken)
 	}
-
 
 	if cfg.Logger != nil {
 		if !cfg.AuthEnabled() {

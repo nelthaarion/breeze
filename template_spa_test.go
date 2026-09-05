@@ -112,8 +112,15 @@ func TestSPARuntimeSyntax(t *testing.T) {
 // on before. Each assertion is a property of the source that a future edit
 // could silently undo, and that the behavioural harness cannot observe
 // (the form paths need a real DOM to exercise).
+//
+// These read spa.js directly rather than going through breezeRuntime(), which
+// serves the minified bundle outside DevMode: esbuild renames every local and
+// collapses the whitespace, so none of these snippets survive there as text.
+// spa.js is the file a regressing edit would touch, and
+// TestSPAMinifiedMatchesSource is what proves the shipped bundle still came
+// from it — so asserting on the source loses no coverage.
 func TestSPARuntimeInvariants(t *testing.T) {
-	js := extractRuntimeJS(t)
+	js := spaJS
 
 	mustContain := []struct{ what, snippet string }{
 		{
@@ -157,9 +164,10 @@ func TestSPARuntimeInvariants(t *testing.T) {
 		t.Error("form.submit() is called directly again; a field named \"submit\" would shadow it")
 	}
 
-	// The runtime lives in a Go raw string literal, so a backtick would end
-	// the literal and break the build in a confusing place.
-	if strings.Contains(js, "`") {
-		t.Error("runtime contains a backtick, which terminates the Go raw string literal holding it")
+	// breezeRuntime() wraps this bundle in a <script> tag, so a closing tag
+	// anywhere inside it would end the script early and dump the remainder
+	// into the page as text.
+	if strings.Contains(js, "</script") {
+		t.Error("runtime contains a </script> sequence, which would close the tag breezeRuntime wraps it in")
 	}
 }

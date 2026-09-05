@@ -43,9 +43,9 @@ func main() {
 	app.Listen(":3000")
 }
 
-func dashboard(ctx *breeze.Context) {
+func dashboard(ctx *breeze.Context) error {
 	user := oauth2.CurrentUser(ctx) // *oauth2.User
-	ctx.JSON(user)
+	return ctx.JSON(user)
 }
 ```
 

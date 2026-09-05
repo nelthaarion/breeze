@@ -1,547 +1,425 @@
 <div align="center">
 
-# Breeze
+# 🌬️ Breeze
 
-**A ridiculously fast, event-driven Go web framework built for maximum
-throughput, minimal allocations, native WebSockets, and
-production-ready APIs.**
+**A ridiculously fast, event‑driven Go web framework** — built for maximum
+throughput, minimal allocations, native WebSockets, and a batteries‑included
+path to production.
 
 [![Documentation](https://img.shields.io/badge/Documentation-Latest-blue?style=for-the-badge)](https://nelthaarion.github.io/breeze)
 [![GitHub](https://img.shields.io/badge/GitHub-nelthaarion%2Fbreeze-181717?style=for-the-badge&logo=github)](https://github.com/nelthaarion/breeze)
+[![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](./LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge)](./CONTRIBUTING.md)
+
+*Built on [`gnet`](https://github.com/panjf2000/gnet) · One event loop per core · Zero‑copy where it counts*
 
 </div>
 
 ---
 
-Breeze is a modern, high-performance Go web framework engineered for
-developers who demand speed without sacrificing developer experience.
-Built on an event-driven architecture, Breeze minimizes allocations,
-optimizes every request path, and provides first-class support for REST
-APIs, WebSockets, middleware, and automatic OpenAPI documentation.
+Breeze is a modern, high‑performance Go web framework for people who want
+speed **and** a real toolbox: a router, WebSockets, request binding, an
+OpenAPI generator, a live developer dashboard, an event bus, durable
+workflows, distributed tracing across services, a JSON‑RPC server, an
+AI‑agent control plane — all first‑party, all documented, none of it bolted
+on as an afterthought.
 
-Whether you're building microservices, real-time applications, or
-high-throughput APIs, Breeze is designed to handle millions of requests
-efficiently while keeping your code clean and maintainable.
+> 📖 Looking for the full reference instead of the tour? [`docs/README.md`](./docs/README.md)
+> is the index — one row per subsystem, pointing at the document that covers it in full.
 
-## Table of Contents
+## 📑 Table of Contents
 
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Docker](#docker)
-- [CLI — Scaffolding & Code Generation](#-cli--scaffolding--code-generation)
-- [Features](#features)
-  - [Built for Extreme Performance](#-built-for-extreme-performance)
-  - [Inline Execution](#-inline-execution)
-  - [Zero-Copy Headers](#-zero-copy-headers)
-  - [High-Performance Routing](#-high-performance-routing)
-  - [Native WebSocket Engine](#-native-websocket-engine)
-    - [Built-in OpenAPI / Scalar](#-built-in-openapi--scalar)
-    - [gRPC Code Generation](#-grpc-code-generation)
-  - [Production Middleware](#-production-middleware)
-  - [OAuth2 / Social Login](#-oauth2--social-login)
-  - [Event System](#-event-system)
-  - [Video Streaming](#-video-streaming)
-  - [Durable Workflows](#-durable-workflows)
+<table>
+<tr>
+<td valign="top" width="33%">
 
-  - [Built-in Developer Dashboard](#-built-in-developer-dashboard)
-  - [Fleet Tracing](#-fleet-tracing)
-  - [JSON-RPC 2.0](#-json-rpc-20)
-  - [MCP Server](#-mcp-server)
+**Get started**
+- [Installation](#-installation)
+- [Quick Start](#-quick-start)
+- [Docker](#-docker)
+- [CLI](#-cli)
+- [Packages at a Glance](#-packages-at-a-glance)
 
-  - [Developer Experience](#-developer-experience)
-  - [Performance Optimizations](#-performance-optimizations)
-- [Support the Project](#-support-the-project)
+**Core HTTP**
+- [Performance Core](#-performance-core)
+- [Errors as Values](#-errors-as-values)
+- [WebSocket](#-websocket)
+- [Request Validation](#-request-validation)
+- [Middleware](#-middleware)
+- [OAuth2 Login](#-oauth2-login)
 
+</td>
+<td valign="top" width="33%">
+
+**Data & workflow**
+- [Events](#-events)
+- [Workflows](#-workflows)
+- [Migrations](#-migrations)
+- [HTTP Client](#-http-client)
+
+**See inside your app**
+- [Dashboard](#-dashboard)
+- [Observability](#-observability)
+- [Diagnostics](#-diagnostics)
+- [Fleet Tracing](#-fleet-tracing)
+
+</td>
+<td valign="top" width="33%">
+
+**More protocols**
+- [JSON‑RPC 2.0](#-json-rpc-20)
+- [OpenAPI / Scalar](#-openapi--scalar)
+- [Video Streaming](#-video-streaming)
+- [Templates, SPA & i18n](#-templates-spa--i18n)
+- [MCP for AI Agents](#-mcp-for-ai-agents)
+
+**Wrap‑up**
+- [Examples](#-examples)
 - [Contributing](#-contributing)
-- [Security Scanning](#-security-scanning)
-- [License](#license)
+- [Security](#-security-scanning)
+- [License](#-license)
 
-## Installation
+</td>
+</tr>
+</table>
+
+---
+
+## 📦 Installation
 
 Requires **Go 1.25.13** or later.
-
 
 ```bash
 go get github.com/nelthaarion/breeze
 ```
 
-The module pulls in **gnet v2** for the event loop, **go-json** for fast
-JSON marshaling, **brotli** for compression, and **golang-jwt/jwt** for
-authentication.
+Pulls in **gnet v2** for the event loop, **go‑json** for fast marshaling,
+**brotli** for compression, and **golang‑jwt** for authentication. Nothing
+else — every other subsystem below is an opt‑in subpackage.
 
-📖 **Full documentation:** <https://nelthaarion.github.io/breeze>
+## 🚀 Quick Start
 
-## Quick Start
-
-A complete working server in under 20 lines:
+A complete server in under 20 lines:
 
 ```go
 package main
 
 import (
-    "runtime"
+	"runtime"
 
-    "github.com/nelthaarion/breeze"
-    middleware "github.com/nelthaarion/breeze/middlewares"
+	"github.com/nelthaarion/breeze"
+	middleware "github.com/nelthaarion/breeze/middlewares"
 )
 
 func main() {
-    router := breeze.NewRouter()
+	router := breeze.NewRouter()
+	router.Use(middleware.RecoveryMiddleware())
+	router.Use(middleware.LoggingMiddleware())
 
-    router.Use(middleware.RecoveryMiddleware())
-    router.Use(middleware.LoggingMiddleware())
+	router.Handle(breeze.GET, "/", func(ctx *breeze.Context) error {
+		return ctx.JSON(map[string]string{"status": "ok"})
+	})
+	router.Handle(breeze.GET, "/users/:id", func(ctx *breeze.Context) error {
+		return ctx.JSON(map[string]string{"id": ctx.Param("id")})
+	})
 
-    router.Handle(breeze.GET, "/", func(ctx *breeze.Context) {
-        ctx.JSON(map[string]string{"status": "ok"})
-    })
-
-    router.Handle(breeze.GET, "/users/:id", func(ctx *breeze.Context) {
-        ctx.JSON(map[string]string{"id": ctx.Param("id")})
-    })
-
-    pool := breeze.NewWorkerPool(runtime.NumCPU())
-    app  := breeze.New(router, pool)
-    app.Run(3000, true) // port, multiCore
+	pool := breeze.NewEventLoopWorkerPool(runtime.NumCPU())
+	app := breeze.New(router, pool)
+	app.Run(3000, true) // port, multiCore
 }
 ```
 
-Run it:
-
 ```bash
 go run main.go
-# → curl http://localhost:3000/        → {"status":"ok"}
-# → curl http://localhost:3000/users/42 → {"id":"42"}
+# curl http://localhost:3000/        → {"status":"ok"}
+# curl http://localhost:3000/users/42 → {"id":"42"}
 ```
 
-## Docker
-
-The repository ships a multi-stage `Dockerfile` and `docker-compose.yml`
-that containerize the example server in `./cmd` (~25 MB image, static
-binary, non-root user, built-in healthcheck):
+## 🐳 Docker
 
 ```bash
-# Plain Docker
 docker build -t breeze-example .
 docker run --rm -p 3000:3000 breeze-example
-
-# Or with Compose
+# or
 docker compose up --build
 ```
 
-Breeze itself is a library — to containerize your own application, point
-the `BREEZE_TARGET` build argument at any main package in the module:
+Breeze itself is a library — point `BREEZE_TARGET` at any `main` package in
+your module to containerize *your* app:
 
 ```bash
 docker build --build-arg BREEZE_TARGET=./cmd/dashboard-example -t my-app .
 ```
 
-## 🧰 CLI — Scaffolding & Code Generation
+## 🧰 CLI
 
-Breeze ships a `rails`-style CLI. It has two verbs: **`generate`** writes code
-you then edit, **`add`** wires a framework feature that already exists into your
-project.
+A `rails`‑style CLI: **`new`** scaffolds a project, **`generate`** writes code
+you edit, **`add`** wires in a framework feature that already exists.
 
 ```bash
 go install github.com/nelthaarion/breeze/cmd/breeze@latest
-```
 
-**Start a new project:**
+breeze new myapp                       # minimal REST API
+breeze new myapp --template=views      # + templates, layouts, components
 
-```bash
-breeze new myapp                    # minimal REST API layout (default)
-breeze new myapp --template=views   # + views/components/template engine
-```
-
-**Generate a full CRUD resource** — request/response structs, handlers, an
-in-memory store, OpenAPI docs and request validation, wired into the router
-automatically:
-
-```bash
-breeze generate resource User name:string email:string age:int
-```
-
-A third segment on a field becomes a `validate:"..."` tag, which the generated
-handler enforces through `binding.Bind` — a request that breaks a rule gets a
-`422` with an RFC 9457 body rather than being stored:
-
-```bash
 breeze generate resource User \
   name:string:required,min=2,max=40 \
   role:string:required,oneof=admin editor viewer
+
+breeze add dashboard --allow-writes
+breeze add events --async
+breeze add --list                      # all 23 features, in wiring order
+
+breeze routes                          # list routes without booting the app
+breeze migrate up | down [n] | status
+breeze makemigration <name>
 ```
 
-String fields given no rules are inferred as `required` (and `required,email`
-when named like an email address); numbers and bools are left alone, since
-`required` means *non-zero* and would otherwise reject `age: 0`. Pass
-`--no-validate` to turn inference off. Rules: `required`, `email`, `min=N`,
-`max=N`, `oneof=a b c`.
-
-**The other generators:**
+<details>
+<summary><b>🧪 Every <code>generate</code> subcommand</b></summary>
 
 | Command | Writes |
 |---|---|
-| `generate handler <Name>` | route group with CRUD stubs, no structs or docs |
-| `generate model <Name> field:type…` | `models/` struct plus a paired SQL migration |
-| `generate event <Name> [field:type…]` | event type with emit and subscribe helpers |
+| `generate resource <n> field:type…` | struct, handlers, in‑memory store, OpenAPI docs, validation — fully wired |
+| `generate handler <n>` | route group with CRUD stubs |
+| `generate model <n> field:type…` | `models/` struct + a paired SQL migration |
+| `generate event <n> [field:type…]` | event type with emit/subscribe helpers |
 | `generate listener <Event>` | subscriber for an existing event |
-| `generate workflow <Name> --steps=a,b,c` | workflow definition with retries and compensation |
-| `generate middleware <Name>` | `breeze.HandlerFunc` stub |
-| `generate ws <Name>` | WebSocket handler with connect/message/close hooks |
-| `generate view <Name>` | HTML view and the route that renders it |
-| `generate job <Name> [--every=1h]` | background job, registered with the dashboard |
-| `generate grpc <Name>` | gRPC server/client scaffolding (see below) |
-
-**Wire in a framework feature** — 21 of them, each idempotent, each written as a
-replaceable block in `features_generated.go`:
-
-```bash
-breeze add dashboard --allow-writes
-breeze add events --async
-breeze add video --root=./media
-breeze add --list                   # all 21, in the order they are wired
-```
-
-Middlewares are emitted in an order that matters: `recovery` outermost so it
-catches panics from everything below, `cors` before `ratelimit` so a preflight is
-never rate-limited, `etag` innermost so a cached body is never served to an
-unauthenticated caller.
-
-**And the rest:**
-
-```bash
-breeze routes                       # list generated routes without booting the app
-breeze migrate up|down [n]|status   # via the runner from `breeze add migrator`
-breeze makemigration <Name>
-breeze version
-breeze help <command>
-```
-
-`breeze migrate` shells out to `cmd/migrate` in your project, which
-`breeze add migrator --driver=postgres` writes with your SQL driver
-blank-imported. That keeps `lib/pq`, `mysql` and `sqlite3` out of breeze's own
-`go.mod` while still letting the CLI run your migrations.
-
-**gRPC** scaffolding is generated from an interface declared in any `*_grpc.go`
-file — no naming convention on methods, just a `grpc_type` comment (`Unary`,
-`ServerSideStreaming`, `ClientSideStreaming`, or `Bidirectional`) above each:
-
-```bash
-breeze generate grpc UserService
-```
-
-The `resource` and `handler` generators write to `handlers/<name>.go` and
-register routes in a single `routes_generated.go` file — your hand-written
-`main.go` is never touched. Re-running `generate` for the same resource
-replaces its block, so it's safe to regenerate after adding fields (pass
-`--force` to overwrite the handler file too). The `grpc` generator writes
-its own server/client/adapter files alongside the `*_grpc.go` interface it
-was generated from, and also supports `--force` to overwrite them.
+| `generate workflow <n> --steps=a,b,c` | workflow definition with retries + compensation |
+| `generate middleware <n>` | `breeze.HandlerFunc` stub |
+| `generate ws <n>` | WebSocket handler with connect/message/close hooks |
+| `generate view <n>` | HTML view + the route that renders it |
+| `generate job <n> [--every=1h]` | background job registered with the dashboard |
+| `generate grpc <n>` | gRPC server/client scaffolding from a `*_grpc.go` interface |
 
 Supported field types: `string`, `int`, `int64`, `uint`, `uint64`, `float32`,
 `float64`, `bool`, `[]string`, `time.Time`, `time.Duration`.
+</details>
 
-## Features
+<details>
+<summary><b>🧩 All 23 <code>breeze add</code> features</b></summary>
 
-### 🚀 Built for Extreme Performance
+`events` `observability` `dashboard` `workflow` `tuning` `migrator` `fleet`
+`recovery` `logging` `security` `cors` `compression` `ratelimit` `i18n` `jwt`
+`oauth2` `etag` `docs` `static` `video` `websocket` `templates` `jsonrpc`
 
-- ⚡ Event-driven architecture powered by `gnet`
-- 🏎 **Inline execution**: non-blocking handlers run directly on the `gnet`
-  event-loop goroutine — no worker-pool hop, no channel handoff, no
-  `AsyncWrite` poller wakeup (see [Inline Execution](#-inline-execution))
-- 🧠 Zero-copy HTTP request parsing, optionally all the way down to **zero
-  allocations per request** (see [Zero-Copy Headers](#-zero-copy-headers))
-- 📦 Minimal allocations via pooled `Context`, `HTTPRequest`,
-  `HTTPResponse`, wire buffers, and route parameter maps (`sync.Pool`)
-- 🔥 Optimized response serialization (precomputed status-line table,
-  append-in-place into a pooled buffer, no `fmt.Sprintf`)
-- 🗂 O(1) exact-path route lookup via per-method buckets
-- 🧵 Configurable Worker Pool backpressure (`OverflowBlock` /
-  `OverflowReject` / `OverflowSpawn`)
-- 🌲 Single-allocation middleware chain construction in the router
-- 💨 Lock-free fast paths for critical operations
-- 🎯 Preallocated buffers & cached status codes
-- 🧊 Cache-line-padded pool counters (no false sharing between reactors)
+Each is idempotent and written as a replaceable block in
+`features_generated.go`; middlewares are emitted in an order that matters —
+`recovery` outermost, `cors` before `ratelimit`, `etag` innermost.
+</details>
 
-### 🏎 Inline Execution
+## 🗂 Packages at a Glance
 
-By default, Breeze runs handlers **directly on the `gnet` event-loop
-goroutine** that read the request, rather than passing every request through
-the worker pool.
+Breeze is one module. Each row is a package you can import directly:
 
-`gnet` already runs one event loop per core and pins each connection to one,
-so the parallelism is there before the pool is involved. Funnelling every
-request through a single channel re-serialises that work and adds two
-goroutine handoffs plus a poller wakeup to each request. Removing the hop is
-the single largest throughput win in the framework.
+| Package | Import path | Doc |
+|---|---|---|
+| Request binding | `breeze/binding` | [`docs/binding.md`](./docs/binding.md) |
+| Middleware | `breeze/middlewares` | [`docs/middlewares.md`](./docs/middlewares.md) |
+| OAuth2 | `breeze/middlewares/oauth2` | [`middlewares/oauth2/README.md`](./middlewares/oauth2/README.md) |
+| Diagnostics | `breeze/diag` | [`docs/diag.md`](./docs/diag.md) |
+| Events | `breeze/events` | [`events/README.md`](./events/README.md) |
+| Workflows | `breeze/workflow` | [`workflow/README.md`](./workflow/README.md) |
+| Dashboard | `breeze/dashboard` | [`dashboard/README.md`](./dashboard/README.md) |
+| Observability | `breeze/observability` | [`observability/README.md`](./observability/README.md) |
+| Fleet tracing | `breeze/fleet` | [`docs/fleet-tracing.md`](./docs/fleet-tracing.md) |
+| Video streaming | `breeze/video` | [`video/README.md`](./video/README.md) |
+| JSON‑RPC 2.0 | `breeze/rpc` | [`docs/rpc.md`](./docs/rpc.md) |
+| OpenAPI / Scalar | `breeze/scalar` | [`docs/scalar.md`](./docs/scalar.md) |
+| Migrations | `breeze/migrate` | [`docs/migrate.md`](./docs/migrate.md) |
+| HTTP client | `breeze/client` | [`docs/client.md`](./docs/client.md) |
+| MCP (in‑process) | `breeze/mcp` | [`docs/mcp-walkthrough.md`](./docs/mcp-walkthrough.md) |
 
-**This puts a requirement on your handlers.** A handler on the inline path
-must not block, because the event-loop goroutine it occupies is also serving
-every other connection pinned to that reactor. Anything that waits — a SQL
-query, a file read, an outbound HTTP call, a lock held under I/O — stalls all
-of them for its duration.
+`events`, `workflow` and `observability` never import the root package — they
+work in a program that serves no HTTP at all.
 
-Register those with **`HandleBlocking`**, which routes the request through the
-worker pool exactly as before:
+---
+
+# 🧬 Core HTTP Framework
+
+## ⚡ Performance Core
+
+- 🏎 **Inline execution** — a non‑blocking handler runs *directly on the
+  `gnet` event‑loop goroutine* that read the request: no worker‑pool hop, no
+  channel handoff, no `AsyncWrite` poller wakeup. This is the single largest
+  throughput win in the framework.
+- 🧠 **Zero‑copy headers (opt‑in)** — parse a request, route it, handle it,
+  and answer it with **zero heap allocations**.
+- 🗂 O(1) exact‑path routing via per‑method buckets, dynamic `:params` and
+  wildcard segments.
+- 📦 Everything hot is pooled: `Context`, `HTTPRequest`, `HTTPResponse`, wire
+  buffers, route‑param maps.
+- 🧵 A configurable worker pool for anything that blocks, with three
+  backpressure policies (`Block` / `Reject` / `Spawn`).
 
 ```go
 // In-memory, returns immediately → inline (fastest path).
 router.Handle(breeze.GET, "/users/:id", getUser)
 
-// Touches a database, the disk, or the network → worker pool.
+// Touches a database, disk, or network → the worker pool.
 router.HandleBlocking(breeze.POST, "/orders", createOrder)
-```
 
-The framework's own I/O-bound routes already do this: static files, video
-streaming, template rendering, the dashboard, the OpenAPI/Scalar endpoints,
-the OAuth2 flow, and the WebSocket upgrade are all registered as blocking.
-
-To opt out globally and send every route through the pool — the pre-inline
-behaviour — call:
-
-```go
-app.SetInlineExecution(false)
-```
-
-### 🧠 Zero-Copy Headers
-
-Answering a request on the inline path allocates exactly once: the parser copies
-the request's header block into memory the request owns, and points `Path` and
-every header key and value at that copy. `SetZeroCopyHeaders(true)` removes that
-copy too, so a request is parsed, routed, handled and answered **without a
-single heap allocation by the framework**:
-
-```go
+// Remove the last allocation on the fast path (careful — see the docs on lifetime):
 app.SetZeroCopyHeaders(true)
 ```
 
-A few hundred bytes per request does not sound like much. At high request rates
-it is a continuous stream of short-lived garbage, and the mark work for it comes
-back as GC assist on the very event-loop goroutines that are supposed to be
-serving connections. Removing the allocation removes the assist.
+## 🧯 Errors as Values
 
-**The trade-off is lifetime.** With this on, every string on `ctx.Req` — `Path`
-included — is a view into the connection's read buffer, which is reused for the
-next read. Inside your handler they are always valid; Breeze re-parses a request
-into owned memory before it is ever handed to a worker goroutine. What is not
-safe is keeping one *after* the handler returns:
+A handler — and a middleware — returns an `error`. One function decides what
+that becomes on the wire, and it can never leave a connection with no
+response at all.
 
 ```go
-app.Handle(breeze.GET, "/x", func(c *breeze.Context) {
-    seen[c.Req.Path] = true                  // ✗ mutates into a later request
-    seen[strings.Clone(c.Req.Path)] = true   // ✓
+router.Handle(breeze.GET, "/orders/:id", func(ctx *breeze.Context) error {
+	order, err := store.Find(ctx.Param("id"))
+	if errors.Is(err, sql.ErrNoRows) {
+		return breeze.NewHTTPError(404, "no such order")
+	}
+	if err != nil {
+		// client sees "unavailable"; the driver's message goes to the log only
+		return breeze.WrapHTTPError(502, "the order service is unavailable", err)
+	}
+	return ctx.JSON(order)
 })
 ```
 
-The failure mode is not a crash. The bytes stay mapped and readable, so a stored
-string silently turns into a fragment of some later request — and as a map key it
-lands in the wrong bucket and corrupts every lookup after it. The rule for
-anything that outlives the handler, including a package-level cache or a value
-sent to another goroutine, is `strings.Clone`.
+| Returned | Response |
+|---|---|
+| `*binding.ValidationError` | `422` with field‑level RFC 9457 detail |
+| `*breeze.HTTPError` | its status, with `Message` as the detail |
+| anything else | logged to stderr, generic `500` |
 
-Breeze's own middlewares hold to that rule, so the dashboard, the ETag cache, and
-the rest are safe with this enabled. Third-party middleware written against the
-default contract may not be — which is why the flag is **off by default**. Turn
-it on for a service whose handlers read the request, write a response and keep
-nothing, which is most of them and is where the throughput is won. Leave it off
-if you cannot audit what your handlers and middlewares retain.
+## 🔌 WebSocket
 
-### 🌐 High-Performance Routing
+A dedicated fast path — an upgraded connection carries **zero** HTTP
+overhead, and an HTTP‑only server never even probes for one.
 
-- ⚡ Fast HTTP router
-- 🎯 Dynamic route parameters
-- 🌲 Wildcard routing
-- 📂 Static file serving
-- 🧩 Global middleware pipeline
-- 🔍 Optimized route matching
+```go
+hub := app.WebSocket("/ws", &breeze.WSHandlerFunc{
+	Connect: func(c *breeze.WSConn) { c.SendText("welcome!") },
+	Message: func(c *breeze.WSConn, op byte, payload []byte) {
+		hub.BroadcastExcept(op, payload, c) // fan out to everyone else
+	},
+})
+```
 
-### 🔌 Native WebSocket Engine
+Binary & text frames, ping/pong, fragmentation, graceful close — all RFC 6455.
 
-- ⚡ Zero-overhead HTTP → WebSocket upgrade
-- 🔥 Dedicated WebSocket fast path
-- 📡 Binary & Text frames
-- ❤️ Ping / Pong support
-- 🔄 Fragmented frame handling
-- 🚪 Graceful close frames
-- 🧵 Concurrent connection management
+## ✅ Request Validation
 
-### 📚 Built-in OpenAPI / Scalar
+One call: decode JSON body + query + path params, validate, and — on
+failure — write an RFC 9457 `422` for you.
 
-- 📖 Automatic OpenAPI 3.1 generation
-- 📝 Route registration
-- 🎯 Schema generation
-- 🔍 Typed request & response definitions
-- 🌍 Ready for Scalar API Reference
+```go
+type CreateUser struct {
+	Name  string `json:"name"  validate:"required,min=2,max=50"`
+	Email string `json:"email" validate:"required,email"`
+	Role  string `json:"role"  validate:"oneof=admin user viewer"`
+	ID    string `param:"id"`
+}
 
-### 📡 gRPC Code Generation
+router.Handle(breeze.POST, "/users/:id", func(ctx *breeze.Context) error {
+	var in CreateUser
+	if err := ctx.Bind(&in); err != nil {
+		return nil // the 422 problem+json response is already written
+	}
+	return ctx.JSON(in)
+})
+```
 
-- 🔎 Auto-detects gRPC services from any `*_grpc.go` interface file —
-  no naming convention required
-- 🏷 Call style (`Unary`, `ServerSideStreaming`, `ClientSideStreaming`,
-  `Bidirectional`) set per-method via a `grpc_type` comment annotation
-- 🧩 Generates server/client scaffolding and adapters with
-  `breeze generate grpc <InterfaceName>`
+## 🛡 Middleware
 
-### 🛡 Production Middleware
+Twelve built‑ins, composed once at registration — a route with no `:params`
+costs **zero** allocations to dispatch.
 
-- 🚦 Rate Limiter
-- 🗜 Compression
-- 💾 Response Cache
-- 🔑 JWT Authentication
-- 🌍 CORS
-- 🪖 Security Headers
-- 📝 Request Logger
-- 💥 Panic Recovery
+```go
+import middleware "github.com/nelthaarion/breeze/middlewares"
 
-### 🔐 OAuth2 / Social Login
+router.Use(middleware.RecoveryMiddleware())   // outermost
+router.Use(middleware.LoggingMiddleware())
+router.Use(middleware.NewRateLimiter(middleware.RateLimiterOptions{
+	Requests: 100, Per: time.Minute,
+}))
+router.Use(middleware.CORSMiddleware(middleware.CORSOptions{AllowOrigins: "*"}))
+router.Use(middleware.DefaultSecurityMiddleware())
+router.Use(middleware.CompressionMiddleware()) // innermost
+```
 
-Zero-config OAuth2 / OpenID Connect login under `middlewares/oauth2` — only
-`ClientID` and `ClientSecret` are required, everything else has a secure default.
+🚦 Rate Limiter · 🗜 Compression · 💾 ETag Cache · 🔑 JWT Auth · 🌍 CORS ·
+🪖 Security Headers · 📝 Logger · 💥 Panic Recovery · 🌐 Locale ·
+📚 Scalar (OpenAPI route) — see [`docs/middlewares.md`](./docs/middlewares.md)
+for the install order and why it matters.
 
+## 🔐 OAuth2 Login
 
-- 🌐 Four providers out of the box: **Google, GitHub, Microsoft, Discord**
-- 🔑 PKCE (S256) enabled by default for every provider
-- 🛡 CSRF-protected `state` — signed, short-lived, single-use, constant-time compared
-- 🍪 Signed, HttpOnly, `SameSite=Lax` cookies (or algorithm-pinned HS256 JWT sessions)
-- 🔄 Transparent access-token refresh with session rotation
-- 👤 Normalized provider-independent `User` (id, email, name, username, avatar)
-- 🧩 Six composable middlewares: `Login`, `Callback`, `Auth`, `Optional`, `Refresh`, `Logout`
-- 🚫 Open-redirect guard on post-login redirects
+Zero‑config social login under `middlewares/oauth2` — only `ClientID` and
+`ClientSecret` are required.
 
 ```go
 import "github.com/nelthaarion/breeze/middlewares/oauth2"
 
 cfg := oauth2.Config{
-    Provider:     oauth2.Google,
-    ClientID:     "your-client-id",
-    ClientSecret: "your-client-secret",
-    BaseURL:      "https://app.example.com",
-    CookieSecret: "a-long-random-secret",
+	Provider:     oauth2.Google,
+	ClientID:     "your-client-id",
+	ClientSecret: "your-client-secret",
+	BaseURL:      "https://app.example.com",
+	CookieSecret: "a-long-random-secret",
 }
 
 router.Handle(breeze.GET, "/auth/google", oauth2.Login(cfg))
 router.Handle(breeze.GET, "/auth/google/callback", oauth2.Callback(cfg))
 router.Handle(breeze.GET, "/dashboard", dashboard, oauth2.Auth(cfg))
 
-func dashboard(ctx *breeze.Context) {
-    ctx.JSON(oauth2.CurrentUser(ctx)) // *oauth2.User
+func dashboard(ctx *breeze.Context) error {
+	return ctx.JSON(oauth2.CurrentUser(ctx)) // *oauth2.User
 }
 ```
 
-See [`middlewares/oauth2/README.md`](./middlewares/oauth2/README.md) for full documentation.
+🌐 **Google · GitHub · Microsoft · Discord** out of the box · 🔑 PKCE (S256) by
+default · 🛡 CSRF‑protected, single‑use `state` · 🍪 signed HttpOnly cookies
+or HS256 JWT sessions · 🔄 transparent token refresh · 🚫 open‑redirect guard.
+Full reference: [`middlewares/oauth2/README.md`](./middlewares/oauth2/README.md).
 
-### 🔔 Event System
+---
 
-The framework's internal communication layer lives in `events` — a typed,
-reflection-free publish/subscribe bus that every subsystem (router, OAuth2,
-dashboard, scheduler, plugins, WebSocket) uses to observe and extend
-behaviour without importing each other.
+# 🗃 Data, Events & Workflow
 
-- 🧩 Events are **plain Go structs** — no interfaces, no registration ceremony
-- ⚡ Generic `On` / `Once` / `Off` / `Emit` with **zero reflection during dispatch**
-- 🔒 Lock-free reads: registration publishes an immutable snapshot via `atomic.Pointer`
-- 🎯 Deterministic order: before-hooks → listeners by descending priority → after-hooks
-- 🛑 Flow control via `events.Stop`, `ctx.Cancel()`, and `Config.ContinueOnError`
-- 🔁 Async emission — goroutine or worker-pool modes with overflow policies
-- 🛡 Panic recovery, dispatch middleware, filters, and once-listeners
-- 📈 Per-event metrics + optional ring-buffer recorder for debugging
-- 🏗 Built-in framework events: application lifecycle, HTTP, WebSocket, OAuth2,
-  routing, plugins, scheduler, and configuration reload
+## 🔔 Events
+
+The framework's internal nervous system — a typed, reflection‑free
+publish/subscribe bus every subsystem uses to talk to your code.
 
 ```go
 import "github.com/nelthaarion/breeze/events"
 
-// Events are just structs.
 type UserCreated struct{ UserID uint64 }
 
-// Listen — plain function, compiler-typed, no reflection.
 events.On(UserCreated{}, func(ctx *events.Context, e UserCreated) error {
-    return sendWelcomeEmail(e.UserID)
-})
+	return sendWelcomeEmail(e.UserID)
+}).Priority(events.PriorityHigh)
 
-// Emit — listeners run in priority order.
-events.Emit(UserCreated{UserID: 10})
+events.Emit(UserCreated{UserID: 42})
 ```
 
-See [`events/README.md`](./events/README.md) for full documentation.
+🧩 plain structs, no interfaces · ⚡ zero reflection on the dispatch path ·
+🔒 lock‑free reads via `atomic.Pointer` snapshots · 🎯 before/normal/after
+phases + priority · 🛑 `events.Stop`, filters, once‑listeners · 🔁 async
+(goroutine or bounded worker pool) · 🛡 panic recovery · 📈 per‑event metrics
++ a ring‑buffer recorder. Full reference: [`events/README.md`](./events/README.md).
 
-### 🎬 Video Streaming
+## 🧬 Workflows
 
-`video` serves a directory of media files with byte-range support, so
-browsers can **seek**. A static file handler cannot do this: ignore the
-`Range` header and the video still plays, which is what makes the bug
-expensive to find — the scrubber is simply dead, because the browser cannot
-ask for the middle of a file it is being handed sequentially.
-
-- 🎯 `206 Partial Content` with correct `Content-Range`; `416` for
-  well-formed but unsatisfiable ranges; a malformed one is ignored (as RFC 9110
-  requires) and answered like a request with no `Range` at all — the first
-  chunk, still `206`, so the player learns the full size and can seek. `200`
-  appears only for an empty file
-- 🧠 One pooled chunk in flight per response — 256 KiB by default, so ten
-  thousand viewers cost ten thousand chunks, not ten thousand copies
-- 🚧 Open-ended `Range: bytes=0-` capped at `MaxChunkSize` (4 MiB), so a
-  player's opening request cannot pin an entire movie in memory
-- 🛡 Traversal defence in a deliberate order: percent-decode first, reject
-  NUL/backslash and any `..`, hide dotfiles, allow-list extensions, then
-  prove containment against the symlink-resolved path
-- 🕵️ Existence questions always answer **404, never 403**, so the filesystem
-  cannot be mapped by watching which refusals differ
-- 🔐 Optional signed, expiring URLs — verified *before* any disk access, so
-  an unauthenticated flood costs no I/O
-- ⚡ `ETag`/`Last-Modified` answered **before the file is opened**;
-  `If-Range` honoured so resumed downloads cannot be corrupted
-- 👁 Publishes `StreamServed`; a viewer closing the tab is reported as
-  **cancelled, not failed**, and the dashboard's Video tab groups live
-  traffic **by file** with throughput per stream
-
-```go
-import "github.com/nelthaarion/breeze/video"
-
-if err := video.Mount(router, video.Config{Root: "./media"}); err != nil {
-    log.Fatal(err)
-}
-```
-
-That registers `GET` and `HEAD` on `/videos/*filepath`. To make every URL a
-capability that expires, add a secret:
-
-```go
-video.Mount(router, video.Config{
-    Root:   "./media",
-    Secret: []byte(os.Getenv("VIDEO_SECRET")),
-})
-
-url := "/videos/movie.mp4?" + video.Sign(secret, "movie.mp4", 10*time.Minute)
-```
-
-See [`video/README.md`](./video/README.md) for full documentation.
-
-### 🧬 Durable Workflows
-
-
-`workflow` brings durable, in-process orchestration to Breeze: multi-step
-business processes with retries, timeouts, parallelism, rollback (Saga)
-and crash recovery — no broker, and no required database.
-
-- 🧩 Declarative steps; `WithDependsOn` opts into a validated DAG with parallelism
-- 🔁 Retries with exponential backoff + jitter; `NonRetryable` marks permanent failures
-- ↩️ Automatic compensation: rollback runs in reverse over completed steps
-- ⏱ Per-attempt and per-execution timeouts, cancellable retry backoff
-- 💾 Optional `Store` for durability; `Resume` continues interrupted executions
-  **without re-running completed steps**
-- 🔑 Idempotency keys — safe with at-least-once event delivery
-- 📡 Triggered by bus events via `OnType[UserRegistered](def)`
-- 👁 Publishes `WorkflowStarted`/`StepFailed`/`CompensationStarted`/… events, and the
-  dashboard shows **in-flight executions live**, step by step
+Durable, in‑process orchestration — retries, timeouts, parallelism, Saga
+rollback and crash recovery, with **no broker and no required database**.
 
 ```go
 import "github.com/nelthaarion/breeze/workflow"
 
 def := workflow.New("order-processing").
-    Step("validate", ValidateOrder).
-    Step("charge", ChargeCard, workflow.WithCompensation(RefundCard)).
-    Step("ship", CreateShipment)
+	Step("validate", ValidateOrder).
+	Step("charge", ChargeCard, workflow.WithCompensation(RefundCard)).
+	Step("ship", CreateShipment)
 
 engine := workflow.NewEngine()
 engine.Register(def)
@@ -549,206 +427,380 @@ engine.Register(def)
 res, err := engine.Run(ctx, "order-processing", order)
 ```
 
-If `ship` fails, `RefundCard` runs automatically — the failure path is
-declared next to the work, not scattered through error handling.
+If `ship` fails, `RefundCard` runs automatically — the failure path lives
+next to the work, not scattered through error handling. `WithDependsOn`
+opts a step into a validated, parallel DAG; `WithRetry` adds exponential
+backoff with jitter; `Resume` replays what a crash interrupted **without**
+re‑running completed steps. Full reference: [`workflow/README.md`](./workflow/README.md).
 
-See [`workflow/README.md`](./workflow/README.md) for full documentation.
+## 🗄 Migrations
 
-### 📊 Built-in Developer Dashboard
+Numbered `.up.sql` / `.down.sql` pairs, applied one transaction at a time,
+with a checksummed ledger.
 
+```go
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
 
-- 🔧 Native module under `/dashboard` (zero-overhead when disabled)
-- 📈 Real-time overview: RPS, latency, memory, goroutines, CPU
+sub, _ := fs.Sub(migrationsFS, "migrations")
+runner := migrate.New(db, sub)
+runner.Up(context.Background())
+```
 
-- 🛣 Routes Explorer with per-route latency stats
-- 🧪 API Explorer with multi-language code generation (curl / Go / JS / Python / C# / PHP)
-- 📡 Live Requests feed with WebSocket push
-- 🎬 Video monitor — live streams grouped **by file**, with throughput,
-  range/seek counts and abandoned transfers
-- 🗄 Database Browser (paginated; optional inline Create/Update/Delete via `DBWriter`)
+```bash
+breeze makemigration create_users   # writes the .up.sql / .down.sql pair
+breeze migrate up                   # apply everything pending
+breeze migrate status               # what's applied, and what drifted
+```
 
-- 🔍 ORM Query Monitor with slow-query detection
-- 💾 Cache, Queue, and Scheduler monitors
-- 📝 Logs with five tabs (App / HTTP / Errors / Panics / Warnings)
-- ❤️ Health checks with green / yellow / red indicators
-- ⚡ Go runtime performance metrics with charts
-- 🕒 Developer Timeline — per-request profiler with expandable steps
-- 🔒 HTTP Basic Auth + secret masking (Authorization, Cookie, API keys…)
-- 🌑 Modern dark mode, responsive, single-file SPA (no external deps)
+## 🌐 HTTP Client
 
-See [`dashboard/README.md`](./dashboard/README.md) for full documentation.
+An outbound HTTP client built on the **same `gnet` engine** as the server —
+one non‑blocking I/O model in both directions.
 
-### 🕸 Fleet Tracing
+```go
+c := client.New()
+defer c.Close()
 
-Native distributed tracing across Breeze services with no external tracing
-backend required. Fleet propagates W3C `traceparent`, exports spans off the
-request path into bounded buffers, and adds a capability-gated 15th dashboard
-page with service topology, merged waterfalls, contract violations,
-deterministic root cause, and blast radius.
+resp, err := c.Get("http://auth-service/verify")
+if err == nil && resp.OK() {
+	fmt.Println(resp.String())
+}
+```
+
+Sized for service‑to‑service JSON traffic: HTTP/1.1, TLS via `crypto/tls`,
+a per‑host connection pool (64 idle conns by default, vs. `net/http`'s 2).
+Full reference: [`docs/client.md`](./docs/client.md).
+
+---
+
+# 👁 See Inside Your Running App
+
+## 📊 Dashboard
+
+A native developer dashboard — 14 pages, live over one WebSocket, **zero
+overhead when disabled**.
+
+```go
+coll := dashboard.Install(app, router, dashboard.DefaultConfig())
+router.Use(coll.Middleware())
+// → http://localhost:3000/dashboard  (default: admin / admin)
+```
+
+📈 Overview (RPS, latency, memory, goroutines) · 📡 Live Requests ·
+🕒 Developer Timeline (per‑request profiler) · 🛣 Routes Explorer ·
+🧪 API Explorer with curl/Go/JS/Python/C#/PHP snippets · 🗄 Database Browser
+(optional inline CRUD) · 🔍 ORM Query Monitor · 💾 Cache / 🧾 Queue /
+⏰ Scheduler monitors · 📝 Logs (5 tabs) · ❤️ Health checks · 🎬 Video monitor ·
+🕸 Fleet page (once an aggregator is attached). Full reference:
+[`dashboard/README.md`](./dashboard/README.md).
+
+## 👁 Observability
+
+Records what actually happened — which events fired, which listeners ran,
+what failed — and it costs **nothing** until you attach it.
+
+```go
+col := observability.NewCollector(observability.Config{Capacity: 1000, Metrics: true})
+defer col.Close()
+
+detach := observability.AttachEvents(events.Default, col)
+defer detach() // switch it back off at runtime, with zero residual cost
+
+for _, sig := range col.Recent(10) {
+	fmt.Printf("%s took %v (%d listeners)\n", sig.Name, sig.Duration, sig.Executed)
+}
+```
+
+🔍 filterable queries · 🌊 live streaming subscribers (never block the app) ·
+📊 per‑name metrics · 🕸 an *observed* execution graph · 🎭 automatic
+secret masking on captured payloads. Full reference:
+[`observability/README.md`](./observability/README.md).
+
+## 🩺 Diagnostics
+
+One endpoint that answers **"what is every subsystem of this process doing
+right now?"** — zero cost until read.
+
+```go
+import "github.com/nelthaarion/breeze/diag"
+
+diag.Register("billing", func() diag.Report {
+	if !gateway.Configured() {
+		return diag.Off("no payment gateway configured; call billing.Configure(key)")
+	}
+	return diag.OK(fmt.Sprintf("%d charge(s) settled", settled.Load()), nil)
+})
+```
+
+```bash
+curl -u admin:pass http://127.0.0.1:8080/dashboard/api/diagnostics
+```
+
+Four honest states — `ok` / `degraded` / `off` / `unknown` — so "never wired
+up" is never confused with "wired up and unhappy". Full reference:
+[`docs/diag.md`](./docs/diag.md).
+
+## 🕸 Fleet Tracing
+
+Distributed tracing across your services — **no Jaeger, Zipkin, or OTel
+Collector required.**
 
 ```go
 tracer := fleet.New(fleet.TracerConfig{
-    ServiceName:   "orders-service",
-    AggregatorURL: "http://fleet-aggregator:9000/fleet",
+	ServiceName:   "orders",
+	AggregatorURL: "http://fleet-aggregator:9000/fleet",
 })
-router.Use(fleet.Middleware(tracer)) // before dashboard middleware
+router.Use(fleet.Middleware(tracer)) // before the dashboard middleware
+defer tracer.Close(context.Background())
 ```
 
-The aggregator is intentionally live and in-memory: it is not durable storage,
-and one process is the v1 scaling boundary. Importing base `fleet` adds no gRPC,
-broker, or third-party WebSocket dependency.
+```bash
+go run ./cmd/fleet-aggregator   # run once, shared by every service
+```
 
-See [`docs/fleet-tracing.md`](./docs/fleet-tracing.md) for setup, transport
-status, security, architecture, and migration guidance.
+🔗 W3C `traceparent` propagation · 🌪 async span export, never blocks a
+handler · 🗺 topology graph with live p50/p95 per hop · 🎯 deterministic
+root‑cause & blast‑radius highlighting (graph math, not a black box) ·
+📐 live OpenAPI contract validation · 📜 trace‑correlated log stitching.
+Full reference: [`docs/fleet-tracing.md`](./docs/fleet-tracing.md).
 
-### 🔗 JSON-RPC 2.0
+---
 
-A complete JSON-RPC 2.0 implementation in `rpc/`. The distinction worth stating
-plainly, because it is easy to assume otherwise: **this is a peer protocol on
-gnet, not a route on the HTTP router.** It is not `net/http`, not `net/rpc`, and
-not an `http.Handler` mounted on a path. It sits on the same event-loop
-primitives the HTTP layer itself uses, for the same reasons — no reflection-based
-method discovery anywhere in the dispatch path.
+# 🔗 More Protocols
 
-Methods register the way routes do, so there is no second pattern to learn:
+## 🔗 JSON‑RPC 2.0
+
+A complete JSON‑RPC 2.0 server, on **its own port**, running directly on
+`gnet`'s event loop — a peer of the HTTP layer, not a route on it.
 
 ```go
 reg := rpc.NewRegistry()
 reg.Use(logging)                        // mirrors Router.Use
-reg.Register("sum", sum)                // mirrors Router.Handle
-reg.RegisterBlocking("db.query", query) // mirrors Router.HandleBlocking
+reg.Register("sum", func(ctx *rpc.Context) {
+	var in struct{ A, B int }
+	if err := ctx.Bind(&in); err != nil {
+		ctx.Errorf(rpc.CodeInvalidParams, "a and b must be numbers")
+		return
+	}
+	ctx.Result(in.A + in.B)
+})
 
 srv := rpc.NewServer(reg)
 srv.SetPool(breeze.NewEventLoopWorkerPool(runtime.NumCPU()))
 log.Fatal(srv.Run(9000, true))
 ```
 
-A handler takes a `*rpc.Context` and reads params off it, exactly as a
-`breeze.HandlerFunc` takes a `*breeze.Context`. The same inline-vs-blocking rule
-applies: a handler that blocks stalls every connection pinned to its event loop,
-so those register with `RegisterBlocking` and run on the worker pool.
+```bash
+curl -s --data '{"jsonrpc":"2.0","id":1,"method":"sum","params":{"a":2,"b":3}}' \
+  --output - localhost:9000
+# {"jsonrpc":"2.0","id":1,"result":5}
+```
 
-Single requests, notifications, batches, the five standard error codes and the
-reserved application-defined range are all covered, with `id` echoed exactly
-(including large integers that would lose precision through a float).
+Single requests, notifications, batches, all five standard error codes, and
+a **stdio transport** for peers that talk over pipes (this is what powers
+MCP below). Full reference: [`docs/rpc.md`](./docs/rpc.md).
 
-JSON-RPC specifies a message format but not how messages are delimited on a byte
-stream, so framing is by structural completeness — one complete JSON value at a
-time, tracking depth while respecting strings and escapes. Newline-delimited,
-whitespace-separated and back-to-back packed messages all work without the
-client declaring which it chose. `SetMaxMessageBytes` bounds what one message may
-accumulate, so a client cannot pin memory by opening a brace and going quiet.
+## 📚 OpenAPI / Scalar
 
-For peers that speak JSON-RPC over a pipe rather than a socket, `NewStdioServer`
-runs the same dispatcher over any `io.Reader`/`io.Writer`.
+A spec generated from **declared** route docs (checked by the compiler, not
+sniffed from traffic or parsed from a comment) — plus a Scalar UI and an
+`llms.txt` for models.
 
-### 🤖 MCP Server
+```go
+router.Use(middleware.ScalarMiddleware(router, middleware.ScalarOptions{
+	Title: "My API", Version: "2.0.0",
+}))
 
-`cmd/breeze-mcp` exposes Breeze's own tooling to an AI agent over the Model
-Context Protocol, so an assistant can scaffold and inspect a project through
-structured tool calls instead of guessing at shell commands. It is built on the
-`rpc` dispatcher above rather than a second JSON-RPC implementation.
+router.Handle(breeze.POST, "/users", createUser,
+	middleware.DocPOST("/users", scalar.RouteDoc{
+		Title: "Create user",
+		Tags:  []string{"users"},
+		Input: []scalar.InputGroup{
+			{Type: scalar.InputBody, Fields: CreateUserRequest{}, Required: true},
+		},
+		Output:       UserResponse{},
+		OutputStatus: 201,
+	}),
+)
+```
+
+- `GET /openapi.json` — the spec
+- `GET /scalar` — the interactive UI
+- `GET /llms.txt`, `GET /llms-full.txt` — the model‑readable index
+
+Full reference: [`docs/scalar.md`](./docs/scalar.md).
+
+## 🎬 Video Streaming
+
+Byte‑range streaming so browsers can actually **seek** — the one thing a
+plain static file handler silently gets wrong.
+
+```go
+video.Mount(router, video.Config{Root: "./media"})
+// registers GET + HEAD on /videos/*filepath
+```
+
+```go
+// optional: signed, expiring URLs — verified before any disk access
+video.Mount(router, video.Config{Root: "./media", Secret: []byte(secret)})
+url := "/videos/movie.mp4?" + video.Sign(secret, "movie.mp4", 10*time.Minute)
+```
+
+🎯 correct `206 Partial Content` / `416` handling · 🧠 one pooled 256 KiB
+chunk per response (10,000 viewers ≠ 10,000 copies) · 🛡 layered traversal
+defense · 🕵️ 404‑never‑403 so the filesystem can't be mapped · ⚡ conditional
+requests answered before the file is even opened. Full reference:
+[`video/README.md`](./video/README.md).
+
+## 🖼 Templates, SPA & i18n
+
+Server‑rendered views with a built‑in SPA runtime — link clicks are
+intercepted, partials are swapped in, and the URL updates — with zero
+client‑side framework.
+
+```go
+te := breeze.NewTemplateEngine(breeze.TemplateConfig{ViewsDir: "views"})
+
+router.Handle(breeze.GET, "/", func(ctx *breeze.Context) error {
+	return te.RenderView(ctx, "home", map[string]any{"Name": "World"})
+})
+```
+
+```go
+// locales/en.json: {"home": {"greeting": "Hello, %{name}!"}}
+i18n, _ := breeze.NewI18n(breeze.I18nConfig{Dir: "locales", DefaultLocale: "en"})
+router.Use(middleware.LocaleMiddleware(i18n))
+// in a template: {{t "home.greeting" "name" .User.Name}}
+```
+
+📄 layouts + reusable components · 🔁 partial re‑renders with no full reload ·
+🌍 per‑locale translation with pluralization · 🔥 hot‑reload in dev mode.
+
+## 🤖 MCP for AI Agents
+
+Breeze exposes itself to AI agents over the **Model Context Protocol**, in
+three different shapes depending on what the agent needs to do.
+
+### 1️⃣ `breeze-mcp` — the generator (build & change a project)
 
 ```bash
 go build -o breeze-mcp ./cmd/breeze-mcp
 ```
 
-Then register it with any MCP client (stdio transport):
-
 ```json
 {
   "mcpServers": {
-    "breeze": { "command": "/path/to/breeze-mcp" }
+    "breeze": { "command": "/path/to/breeze-mcp", "args": ["--mode=generator"] }
   }
 }
 ```
 
-It implements `initialize`, `notifications/initialized`, `tools/list` and
-`tools/call`, currently exposing five tools:
+Or served over the network, for a container an agent reaches remotely:
 
-| Tool | What it does |
-|---|---|
-| `breeze_new` | Scaffold a new project (`api` or `views` template) |
-| `breeze_generate` | Generate a handler, resource, model, event, workflow, middleware, ws, view, job or grpc |
-| `breeze_add` | Wire in a feature (events, dashboard, jwt, cors, observability, …) |
-| `breeze_features` | List available features and their flags |
-| `breeze_routes` | Report the routes registered in a project |
+```bash
+breeze-mcp --mode generator --port 2000 --scope fleet,runtime
+# loopback by default; a bearer token is mandatory on every request
+```
 
-Every tool calls the real generator rather than reimplementing it, so a tool call
-and the equivalent CLI invocation produce identical files — including a
-generator's refusal to overwrite a hand-edited file, which is reported rather
-than worked around.
+~40 tools: scaffold a project, generate a resource, wire in a feature, plan
+change sets, run the Go toolchain, and inspect a live service — routes,
+errors, logs, performance, traces, contract violations,
+`breeze_diagnose_service`. Docker‑aware fleet provisioning is included.
 
-One transport detail that is a protocol requirement rather than a style choice:
-on stdio, **stdout is the protocol stream**. A single human-readable log line
-written there is a malformed MCP message to the peer, so generator progress is
-captured and returned inside the tool result, and diagnostics go to stderr.
+### 2️⃣ `--mode app-runtime` — read‑only introspection of a deployed instance
 
-### ⚙️ Developer Experience
+```bash
+breeze-mcp --mode app-runtime --port 2000 --scope fleet
+```
 
-- 📦 Lightweight architecture
-- 🎨 JSON responses out of the box
-- 📄 Template rendering
-- 📁 Static assets
-- 🔍 Request validation
-- 🧩 Simple Context API
+Structurally different, not just filtered: the mutating tools are **never
+registered** — no token scope or misconfiguration can reach what was never
+built. Exactly what a deployed container should expose.
 
-### 🧠 Performance Optimizations
+### 3️⃣ In‑process — the app serves its own control plane
 
-- Inline handler execution on the event loop (no dispatch hop)
-- Zero-copy body handling
-- No per-event copy of the request bytes
-- In-place header-key lowercasing (no allocation per header)
-- Optional zero-copy headers — zero framework allocations per request
-- WebSocket lookup gated on a counter, so HTTP requests never probe the map
-- Header reuse
-- Copy-on-write headers
-- Cached HTTP status text and full status lines
-- Unsafe string conversions
-- Compact receive buffers
-- Optimized HTTP parser
-- Single-pass header parsing
-- Pooled requests, responses, params, and wire buffers
-- Exact-path route map per HTTP method
-- Cache-line padding on hot atomic counters
-- Reduced GC pressure
+No separate binary; the application answers MCP itself, beside its own
+traffic:
+
+```go
+scope, _ := mcp.NewScope(mcp.CapFleet) // narrow what this token reaches
+server, token, err := mcp.StartInProcess(app, mcp.InProcessConfig{
+	Mode:  mcp.ModeAppRuntime, // required, no default
+	Port:  2000,
+	Token: os.Getenv("BREEZE_MCP_TOKEN"),
+	Scope: scope,
+})
+if err != nil {
+	log.Fatal(err)
+}
+go server.Serve()
+app.Run(3000, true)
+```
+
+### 🏷 Bonus: make your own routes agent‑callable (Auto‑MCP)
+
+Tag a route once — the tag is stripped at registration, so it costs nothing
+per request, and calls run through the exact same middleware chain as HTTP:
+
+```go
+router.Handle(breeze.POST, "/orders", createOrder,
+	auth.Require(),
+	breeze.MCPTool("create_order", "Places an order for a customer."))
+```
+
+An untagged route is *never* exposed — that's the whole opt‑in surface.
+`app.EnableMCP(addr)` serves every tagged route as a callable tool, separate
+from (and complementary to) the read‑only in‑process endpoint above. Full
+reference: [`docs/mcp-walkthrough.md`](./docs/mcp-walkthrough.md).
 
 ---
 
+## 🧪 Examples
+
+Every subsystem has a runnable example under `cmd/`, each with its own README:
+
+| Example | Demonstrates |
+|---|---|
+| [`cmd/api-example`](./cmd/api-example) | REST API, OpenAPI docs, WebSocket chat, static files |
+| [`cmd/dashboard-example`](./cmd/dashboard-example) | The dashboard against real traffic |
+| [`cmd/templates-example`](./cmd/templates-example) | Server‑rendered views, components, i18n, SPA re‑render |
+| [`cmd/workflow-example`](./cmd/workflow-example) | Retries, compensation, live workflow visualisation |
+| [`cmd/video-example`](./cmd/video-example) | Range‑request video streaming |
+| [`cmd/events-example`](./cmd/events-example) | The event bus: listeners, priorities, async |
+| [`cmd/fleet-example`](./cmd/fleet-example) | Three services, distributed tracing, Docker Compose |
+| [`cmd/automcp-example`](./cmd/automcp-example) | Auto‑MCP: a tagged route, one behind auth, and one that's never a tool |
 
 ## 🤝 Contributing
 
-We welcome contributions of all sizes.
-
-Whether it's fixing bugs, improving documentation, optimizing
-performance, or adding new features — every contribution helps make
-Breeze better.
+We welcome contributions of all sizes — bug fixes, docs, performance work,
+new features.
 
 1. **Fork** the repository
 2. **Create** a feature branch (`git checkout -b feat/my-thing`)
 3. **Commit** your changes with a clear message
 4. **Open** a pull request describing what and why
 
-Please open an issue first for non-trivial changes so we can align on
-the approach before you spend time on code.
+Please open an issue first for non‑trivial changes so we can align on the
+approach before you spend time on code.
 
 ## 🔐 Security Scanning
 
-Breeze now includes automated security checks in GitHub Actions:
-
 - **CodeQL** static analysis (`.github/workflows/codeql.yml`)
-- **govulncheck** vulnerability scanning for Go packages and reachable code (`.github/workflows/govulncheck.yml`)
+- **govulncheck** vulnerability scanning (`.github/workflows/govulncheck.yml`)
 - **Gitleaks** secret scanning (`.github/workflows/secret-scan.yml`)
-- **Dependabot** weekly updates for Go modules and GitHub Actions (`.github/dependabot.yml`)
+- **Dependabot** weekly updates for Go modules and GitHub Actions
 
-For repository admins:
+Repository admins: enable GitHub Advanced Security secret scanning + push
+protection, require the security workflows on branch protection, and triage
+alerts via [`.github/SECURITY_TRIAGE.md`](./.github/SECURITY_TRIAGE.md).
 
-- Enable GitHub Advanced Security **secret scanning** and **push protection** in repository settings when available.
-- Configure branch protection to require the three security workflow checks before merge.
-- Use the triage process in `.github/SECURITY_TRIAGE.md` to classify and resolve alerts.
-
-## License
+## 📄 License
 
 Breeze is released under the [MIT License](./LICENSE).
 
-© Nelthaarion
+<div align="center">
+
+© Nelthaarion — made with 🌬️ and a healthy dislike of unnecessary allocations
+
+</div>

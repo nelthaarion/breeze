@@ -22,10 +22,23 @@ func generateView(modulePath, name string, args []string) error {
 	viewsDir := fs.String("views", "views", "directory holding the view templates")
 	data := fs.Bool("data", false, "generate a per-request data function instead of passing nil")
 	force := fs.Bool("force", false, "overwrite an existing view file")
+	out := registerOutputFlags(fs)
 
 	flagArgs, _ := splitFlagsAndPositional(fs, args)
 	if err := parseFlags(fs, flagArgs); err != nil {
 		return err
+	}
+
+	// Registered and refused for the same reason as `generate grpc`: an
+	// unrecognised flag would report "flag provided but not defined", which reads
+	// as though the flags do not exist anywhere. This kind writes one HTML
+	// template and a block inside features_generated.go, so it produces no Go
+	// file of its own for either override to apply to. --views moves the template.
+	if out.set() {
+		return fmt.Errorf("`breeze generate view` does not accept --%s or --%s: it writes an HTML "+
+			"template and a block inside %s, and neither is a standalone Go file\n"+
+			"       (use --views to change the template's directory)",
+			outputFilenameFlag, outputPackageFlag, featuresFileName)
 	}
 
 	// Templates is declared by the templates feature block. Without it this
@@ -41,12 +54,20 @@ func generateView(modulePath, name string, args []string) error {
 		return fmt.Errorf("no package-scope template engine in this project â€” run `breeze add templates` first\n"+
 			"       (it declares the `Templates` var that serving a generated view requires)\n"+
 			"       If you scaffolded with --template=views, its engine is a local in main()\n"+
-			"       and unreachable from %s; adding the block will also take over \"/\".", featuresFileName)
+			"       and unreachable from %s; adding the block will also take over \"/\"", featuresFileName)
 	}
 
 	viewName := strings.ToLower(name)
 	routePath, err := resolveRoutePath(*pathOverride, viewName)
 	if err != nil {
+		return err
+	}
+
+	// --views names a directory inside the project and is written to. Checked for
+	// the same reason the templates feature's copy of this flag is: breeze_generate
+	// forwards a caller's flags object to this FlagSet verbatim, so
+	// {"flags": {"views": "../../etc"}} arrives here as a place to write an HTML file.
+	if err := validatePathFlag("views", *viewsDir); err != nil {
 		return err
 	}
 

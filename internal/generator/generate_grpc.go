@@ -97,10 +97,26 @@ func (k grpcMethodKind) String() string {
 func generateGRPC(modulePath, name string, args []string) error {
 	fs := flag.NewFlagSet("generate grpc", flag.ContinueOnError)
 	force := fs.Bool("force", false, "overwrite existing generated files")
+	out := registerOutputFlags(fs)
 
 	flagArgs, _ := splitFlagsAndPositional(fs, args)
 	if err := parseFlags(fs, flagArgs); err != nil {
 		return err
+	}
+
+	// The two overrides are registered so `breeze generate grpc --filename=x`
+	// fails with a reason rather than with "flag provided but not defined",
+	// which reads as though the flags do not exist at all. They genuinely do not
+	// apply here: this kind emits five files per service under
+	// generated/<Service>/, named after the service and after protoc's own
+	// conventions, so one filename cannot name the output — and the package is
+	// fixed by the same convention, since the generated .pb.go, the adapter and
+	// the client all have to be in it for the service to compile.
+	if out.set() {
+		return fmt.Errorf("`breeze generate grpc` does not accept --%s or --%s: it writes five "+
+			"files per service into generated/%s/, named and packaged by protoc's conventions, "+
+			"so neither an output file name nor a package is this command's to choose",
+			outputFilenameFlag, outputPackageFlag, name)
 	}
 
 	// Scan all _grpc.go files in the project for the named interface.

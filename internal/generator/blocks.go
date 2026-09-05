@@ -129,12 +129,25 @@ func upsertBlock(req blockRequest) error {
 		content = content[:braceIdx] + indented + content[braceIdx:]
 	}
 
-	formatted, err := format.Source([]byte(content))
+	// The same canonical form every standalone generated file gets: gofmt,
+	// grouped imports, and no unused ones. Applying it here as well is what makes
+	// the guarantee generator-wide rather than true only of the files written
+	// through writeGeneratedGoFile — features_generated.go and routes_generated.go
+	// are generated too, and the pruning matters most in exactly this file,
+	// because ensureImports adds an import for a block without knowing whether a
+	// later regeneration of that block still uses it.
+	//
+	// The module path is read from the project on disk, the same source `add` and
+	// `generate` read it from. A failure is not fatal: without it the project's
+	// own imports simply group with the third-party ones rather than after them,
+	// which is a formatting difference and not a correctness one.
+	modulePath, _ := currentModulePath()
+	formatted, err := canonicalGoFile(req.FileName, content, modulePath)
 	if err != nil {
-		return fmt.Errorf("formatting %s: %w", req.FileName, err)
+		return err
 	}
 
-	return os.WriteFile(req.FileName, formatted, 0o644)
+	return os.WriteFile(req.FileName, []byte(formatted), 0o644)
 }
 
 // hasBlock reports whether fileName already contains a block for name. Used

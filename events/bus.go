@@ -116,6 +116,10 @@ func New(cfg ...Config) *Bus {
 	if c.Recorder {
 		b.recorder.enable(false)
 	}
+
+	// Publish this bus as the process's event-bus diagnostic. One registry
+	// append, at construction; nothing is added to the dispatch path.
+	RegisterDiagnostics(b)
 	return b
 }
 

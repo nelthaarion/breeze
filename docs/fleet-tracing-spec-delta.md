@@ -319,7 +319,7 @@ Smallest change that satisfies the spec's intent without touching dashboard beha
 | Spec | Actual |
 |---|---|
 | `breeze.App` (§8.1 `InstallAggregator`) | **`*breeze.Breeze`** — there is no `App` type |
-| `breeze.Middleware` (§5.1) | **`breeze.HandlerFunc`** (`type HandlerFunc func(*Context)`) |
+| `breeze.Middleware` (§5.1) | **`breeze.HandlerFunc`** (`type HandlerFunc func(*Context) error`) |
 | `ctx.Locals` (§5.1, §9C.2) | **`ctx.Set(key string, val any)` / `ctx.Get(key) (any, bool)`** — no `Locals`, no `Values` |
 | `coll.PushLog("fleet", ...)` (§6.1) | **`PushLog(level, message, source string)`** — three args; "fleet" is the *source*, not the first arg |
 | `events.Bus` as a field type (§8.1) | **`*events.Bus`** — `Bus` is a struct |

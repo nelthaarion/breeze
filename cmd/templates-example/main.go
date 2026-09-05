@@ -1,3 +1,15 @@
+// Command templates-example is the server-rendered half of Breeze: HTML
+// templates, layouts and partials, i18n with locale resolution, HTMX partial
+// swaps, and static asset serving.
+//
+// It is the companion to cmd/api-example, which covers the JSON side. Everything
+// here is rendered on the server; the only client-side dependency is HTMX,
+// loaded from a CDN in the layout.
+//
+// Run it from this directory so the relative ./views, ./locales and ./public
+// paths resolve:
+//
+//	cd cmd/templates-example && go run .
 package main
 
 import (
@@ -60,7 +72,7 @@ func removeUser(id string) {
 
 func main() {
 	router := breeze.NewRouter()
-	pool := breeze.NewWorkerPool(runtime.NumCPU())
+	pool := breeze.NewEventLoopWorkerPool(runtime.NumCPU())
 	app := breeze.New(router, pool)
 
 	// ── i18n ──────────────────────────────────────────────────────────────
@@ -108,18 +120,20 @@ func main() {
 	//
 	// GET /search — SPA GET form target. Returns a partial when X-Breeze-Partial
 	// is present (SPA navigation / form), or a full page otherwise.
-	router.Handle(breeze.GET, "/search", func(ctx *breeze.Context) {
+	router.Handle(breeze.GET, "/search", func(ctx *breeze.Context) error {
 		q := ctx.Query("q")
 		engine.RenderView(ctx, "home", map[string]any{
 			"SearchQuery": q,
 			"SearchNote":  fmt.Sprintf("Search results for: %q (demo — no real results)", q),
 		})
+
+		return nil
 	})
 
 	// POST /contact — SPA POST form target. Renders a confirmation fragment.
 	// When called with X-Breeze-Partial: true (the SPA form handler always sets it)
 	// the template engine returns only the content block — no layout, no scripts.
-	router.Handle(breeze.POST, "/contact", func(ctx *breeze.Context) {
+	router.Handle(breeze.POST, "/contact", func(ctx *breeze.Context) error {
 		// Read form fields from URL-encoded body.
 		// For a real app you'd use a form parser; for the demo we read raw body.
 		name := "someone"
@@ -127,30 +141,33 @@ func main() {
 		engine.RenderView(ctx, "about", map[string]any{
 			"ContactNote": fmt.Sprintf("Thanks, %s! Message received.", name),
 		})
+
+		return nil
 	})
 
 	// ── API routes ────────────────────────────────────────────────────────
-	router.Handle(breeze.POST, "/api/users", func(ctx *breeze.Context) {
+	router.Handle(breeze.POST, "/api/users", func(ctx *breeze.Context) error {
 		var u User
 		if err := json.Unmarshal(ctx.Req.Body, &u); err != nil {
 			ctx.Status(400)
-			ctx.JSON(map[string]string{"error": "invalid body"})
-			return
+			return ctx.JSON(map[string]string{"error": "invalid body"})
 		}
 		usersMu.Lock()
 		u.ID = fmt.Sprintf("%d", len(users)+1)
 		usersMu.Unlock()
 		addUser(u)
-		ctx.JSON(u)
+		return ctx.JSON(u)
 	})
 
-	router.Handle(breeze.GET, "/api/users", func(ctx *breeze.Context) {
-		ctx.JSON(getUsers())
+	router.Handle(breeze.GET, "/api/users", func(ctx *breeze.Context) error {
+		return ctx.JSON(getUsers())
 	})
 
-	router.Handle(breeze.DELETE, "/api/users/:id", func(ctx *breeze.Context) {
+	router.Handle(breeze.DELETE, "/api/users/:id", func(ctx *breeze.Context) error {
 		removeUser(ctx.Param("id"))
 		ctx.Status(204)
+
+		return nil
 	})
 
 	// ── Fragment routes ───────────────────────────────────────────────────

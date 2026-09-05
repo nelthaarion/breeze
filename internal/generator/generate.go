@@ -184,11 +184,22 @@ Flags common to most kinds:
   --force    overwrite an existing file
   --plural   override the pluralized form used for paths and list handlers
 
+Output overrides (every kind that writes a Go file):
+  --filename  the file to write, within that kind's directory
+              (default: derived from the name, e.g. user_model.go)
+  --package   the package clause of the generated file
+              (default: the name of the directory it lands in)
+
+  Both are validated before anything is written: --package must be a legal Go
+  identifier and must agree with the other files in that directory, and
+  --filename is refused if it names a file another generator owns.
+
 Examples:
   breeze generate resource User name:string email:string age:int
   breeze generate resource User name:string:required,min=2 role:string:oneof=admin viewer
   breeze generate handler Session --methods=list,create --path=/auth/sessions
   breeze generate model Order total:float64 placed_at:time.Time
+  breeze generate model User name:string --filename user_model.go --package models
   breeze generate event UserCreated id:int64 email:string
   breeze generate listener UserCreated --name=SendWelcomeEmail
   breeze generate workflow Signup --steps=validate,create,notify --retry

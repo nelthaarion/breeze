@@ -33,6 +33,8 @@ func main() {
 		err = generator.Migrate(args)
 	case "makemigration":
 		err = generator.MakeMigration(args)
+	case "start":
+		err = runStart(args, os.Stdin, os.Stdout, os.Stderr)
 	case "version", "--version", "-v":
 		generator.PrintVersion(os.Stdout)
 		return
@@ -112,6 +114,48 @@ Example:
 `)
 	case "version":
 		fmt.Print("Usage: breeze version\n\nPrints the CLI's breeze module version, Go toolchain and platform.\n")
+	case "start":
+		fmt.Print(`Usage: breeze start mcp-server [flags]
+
+Serves Breeze's own toolchain to an AI agent over the Model Context Protocol.
+This is the same server as the standalone breeze-mcp binary, reached from the
+CLI you already have — same flags, same defaults, same tools.
+
+With no flags it speaks JSON-RPC on stdin/stdout, which is what an editor
+launching it as a subprocess expects. Stdout is protocol only; diagnostics go
+to stderr.
+
+Flags:
+  --mode=<kind>         REQUIRED, no default. "generator" to build and change a
+                        project; "app-runtime" to inspect a running instance.
+                        An app-runtime server has no generating or provisioning
+                        tools registered at all, so the choice is a capability
+                        boundary rather than a preference.
+  --port=<n>            serve MCP Streamable HTTP on this control port instead
+                        of stdio; loopback only unless --host says otherwise
+  --host=<addr>         bind address for --port (default 127.0.0.1)
+  --token=<token>       bearer token required on every network request
+                        (default $BREEZE_MCP_TOKEN; generated and printed once
+                        to stderr if unset)
+  --allow-origin=<list> comma-separated Origin values to accept in addition to
+                        loopback, or * to disable the check
+  --workspace=<dirs>    comma-separated directory roots the filesystem tools may
+                        touch (default the working directory). A path outside
+                        them is refused rather than resolved.
+  --allow-any-path      REMOVES that confinement. Filesystem tools may then read,
+                        write and run "go test" anywhere on this host — only for a
+                        deployment where the process boundary is already the
+                        security boundary, such as a disposable container.
+                        Mutually exclusive with --workspace.
+
+The port is a control port: what an agent talks to in order to generate, modify
+or verify. It is never the port a generated application listens on.
+
+Examples:
+  breeze start mcp-server --mode=generator
+  breeze start mcp-server --mode=generator --port=2000
+  breeze start mcp-server --mode=generator --workspace=/srv/projects
+`)
 	default:
 		return fmt.Errorf("unknown command %q — run `breeze help` for the list", args[0])
 	}
@@ -128,6 +172,7 @@ Usage:
   breeze routes [--json]                      list generated routes
   breeze migrate [up|down [n]|status]         run migrations
   breeze makemigration <Name>                 create a migration pair
+  breeze start mcp-server --mode=<kind>       serve MCP to an AI agent
   breeze version
   breeze help [command]
 

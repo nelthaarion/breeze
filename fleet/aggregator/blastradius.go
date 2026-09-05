@@ -115,7 +115,7 @@ func Incidents(g *TopologyGraph, cfg Config, now time.Time) []BlastRadius {
 		if calls < minWindowCalls || rate < cfg.BlastRadiusErrorRateThreshold {
 			continue
 		}
-		out = append(out, ComputeBlastRadius(g, cfg, node.Service, rate, calls, now))
+		out = append(out, ComputeBlastRadius(g, node.Service, rate, calls, now))
 	}
 
 	sort.Slice(out, func(i, j int) bool {
@@ -138,8 +138,14 @@ func Incidents(g *TopologyGraph, cfg Config, now time.Time) []BlastRadius {
 // from the origin — which matters because Hops is used to judge how credible the
 // attribution is, and a depth-first walk could reach a direct caller by a long
 // path first and label it four hops away.
-func ComputeBlastRadius(g *TopologyGraph, cfg Config, service string, rate float64, calls uint64, now time.Time) BlastRadius {
-	cfg = cfg.withDefaults()
+//
+// No Config parameter, deliberately. This used to take one and call
+// withDefaults() on it, and then read no field of it: every threshold in the
+// blast-radius calculation is applied by Incidents before it calls here, and the
+// traversal itself has nothing left to tune. The normalisation read as if it
+// mattered, which is worse than its absence — a future reader would have looked
+// for the knob it implied.
+func ComputeBlastRadius(g *TopologyGraph, service string, rate float64, calls uint64, now time.Time) BlastRadius {
 	br := BlastRadius{
 		Service:      service,
 		ErrorRate:    rate,

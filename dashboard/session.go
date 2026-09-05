@@ -3,6 +3,7 @@ package dashboard
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -114,28 +115,5 @@ func buildSessionCookie(token, basePath string, maxAge int) string {
 		// Expire immediately (logout).
 		return sessionCookieName + "=" + token + "; Path=" + path + "; Max-Age=0; HttpOnly; SameSite=Lax"
 	}
-	return sessionCookieName + "=" + token + "; Path=" + path + "; Max-Age=" + itoa(maxAge) + "; HttpOnly; SameSite=Lax"
-}
-
-// itoa is a tiny stdlib-free int-to-string for the cookie builder.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
+	return sessionCookieName + "=" + token + "; Path=" + path + "; Max-Age=" + strconv.Itoa(maxAge) + "; HttpOnly; SameSite=Lax"
 }

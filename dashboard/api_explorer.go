@@ -10,6 +10,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/nelthaarion/breeze"
+	"github.com/nelthaarion/breeze/scalar"
 )
 
 // APIExplorerRoute describes one registered route for the API Explorer UI.
@@ -20,12 +21,21 @@ type APIExplorerRoute struct {
 	Tags    []string           `json:"tags,omitempty"`
 	Summary string             `json:"summary,omitempty"`
 	Inputs  []APIExplorerInput `json:"inputs,omitempty"`
+
+	// Description is the longer explanation from the route's RouteDoc.
+	Description string `json:"description,omitempty"`
+
+	// Documented reports whether a RouteDoc was found. Sent even when false,
+	// because a route missing from the OpenAPI document is a defect the explorer
+	// is in a position to show and nothing else is.
+	Documented bool `json:"documented"`
 }
 
 // APIExplorerInput describes one input group for a route.
 type APIExplorerInput struct {
-	Type   string                 `json:"type"` // body / query / params / header
-	Fields map[string]FieldSchema `json:"fields,omitempty"`
+	Type        string                 `json:"type"` // body / query / params / header
+	Description string                 `json:"description,omitempty"`
+	Fields      map[string]FieldSchema `json:"fields,omitempty"`
 }
 
 // FieldSchema is a simple type descriptor for an input field.
@@ -33,12 +43,28 @@ type FieldSchema struct {
 	Type     string `json:"type"`
 	Required bool   `json:"required,omitempty"`
 	Default  any    `json:"default,omitempty"`
+
+	// Description is the field's `description:"…"` struct tag, which is the only
+	// place the explorer can learn what a field means rather than what type it is.
+	Description string `json:"description,omitempty"`
 }
 
 // handleAPIExplorerList returns the list of routes formatted for the API
 // explorer, with parameter schemas extracted from the Scalar registry
 // (if available) or inferred from the route pattern.
-func (c *Collector) handleAPIExplorerList(ctx *breeze.Context) {
+//
+// The registry is the better source and is tried first. What it knows and the
+// pattern does not: what each field means, what type it is, whether the body is
+// required, and what the endpoint is for. The pattern can only ever yield the path
+// parameters, typed as string, with no description — which is why a documented
+// route now produces a usable explorer entry and an undocumented one still
+// produces the fallback rather than nothing.
+func (c *Collector) handleAPIExplorerList(ctx *breeze.Context) error {
+	docs := make(map[string]scalar.RouteDoc, 16)
+	for _, r := range scalar.Routes() {
+		docs[strings.ToUpper(r.Method)+" "+r.Path] = r.Doc
+	}
+
 	routes := make([]APIExplorerRoute, 0)
 	for _, rt := range c.router.RoutesInfo() {
 		pattern := rt.Pattern()
@@ -56,8 +82,21 @@ func (c *Collector) handleAPIExplorerList(ctx *breeze.Context) {
 			Path:    path,
 			Pattern: pattern,
 		}
-		// Extract path params from the pattern.
-		if rt.ParamCount() > 0 {
+
+		doc, documented := docs[strings.ToUpper(string(rt.Method()))+" "+path]
+		if documented {
+			entry.Documented = true
+			entry.Summary = doc.Title
+			entry.Description = doc.Description
+			entry.Tags = doc.Tags
+			entry.Inputs = explorerInputs(doc)
+		}
+
+		// The pattern-derived fallback, for a route with no Doc wrapper or one
+		// whose documentation omitted its path parameters. Without it an
+		// undocumented route with an :id would render a URL the explorer cannot
+		// fill in, which is worse than a bare string field.
+		if !hasExplorerInput(entry.Inputs, "params") && rt.ParamCount() > 0 {
 			fields := make(map[string]FieldSchema)
 			for _, seg := range rt.Segments() {
 				if len(seg) > 0 && seg[0] == ':' {
@@ -71,7 +110,55 @@ func (c *Collector) handleAPIExplorerList(ctx *breeze.Context) {
 		}
 		routes = append(routes, entry)
 	}
-	ctx.JSON(routes)
+	return ctx.JSON(routes)
+}
+
+// explorerInputs converts a RouteDoc's input groups into explorer fields.
+//
+// The schemas are inferred by the same scalar.InferSchema the OpenAPI generator
+// uses, so the explorer cannot disagree with the document about what a route
+// accepts.
+func explorerInputs(doc scalar.RouteDoc) []APIExplorerInput {
+	out := make([]APIExplorerInput, 0, len(doc.Input))
+	for _, group := range doc.Input {
+		schema := scalar.InferSchema(group.Fields)
+		if schema == nil || len(schema.Properties) == 0 {
+			continue
+		}
+
+		required := make(map[string]bool, len(schema.Required))
+		for _, name := range schema.Required {
+			required[name] = true
+		}
+
+		fields := make(map[string]FieldSchema, len(schema.Properties))
+		for name, field := range schema.Properties {
+			fields[name] = FieldSchema{
+				Type: field.Type,
+				// A path parameter is required whatever the struct said: without
+				// it there is no URL to request.
+				Required:    required[name] || group.Type == scalar.InputParams,
+				Description: field.Description,
+				Default:     field.Example,
+			}
+		}
+		out = append(out, APIExplorerInput{
+			Type:        string(group.Type),
+			Description: group.Description,
+			Fields:      fields,
+		})
+	}
+	return out
+}
+
+// hasExplorerInput reports whether a group of the given type is already present.
+func hasExplorerInput(inputs []APIExplorerInput, kind string) bool {
+	for _, in := range inputs {
+		if in.Type == kind && len(in.Fields) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // breezeToOpenAPIPath converts "/users/:id" to "/users/{id}".
@@ -108,56 +195,74 @@ type APIExplorerExecResponse struct {
 // handleAPIExplorerExec executes an HTTP request from the dashboard UI and
 // returns the response along with multi-language code snippets.
 //
-// The request is executed against the running Breeze server itself, on
-// localhost, using the same port the dashboard is served on. We use the
-// stdlib net/http client here (not the Breeze client) because the dashboard
-// needs fine-grained control over headers, body, and timeout.
-func (c *Collector) handleAPIExplorerExec(ctx *breeze.Context) {
+// # The target is this service, and only this service
+//
+// The explorer exists to call the application's own routes. Before this, it would
+// fetch any absolute URL the request body named — from inside the process, and
+// return the body verbatim. That is a server-side request forgery primitive with
+// the service's own network position: a caller who reached this endpoint could read
+// the cloud metadata service at 169.254.169.254, any internal address the container
+// can route to, and any port on the host — none of which the caller could reach
+// directly, which is the whole point of the attack.
+//
+// It is not gated behind much, either. The dashboard's auth is a no-op when
+// Username or Password is empty, and `breeze add dashboard --no-auth` generates
+// exactly that.
+//
+// So the target is now pinned to loopback and the port the request arrived on.
+// A relative path is resolved against it, and an absolute URL is accepted only if
+// it names that same origin. This is a narrowing of what the code did and not of
+// what it was for: the doc comment already said "against the running Breeze server
+// itself, on localhost".
+//
+// # Redirects are not followed
+//
+// Following them would reopen the hole through the front door: a route on this
+// service that 302s to an attacker-chosen Location — a URL shortener, an OAuth
+// callback, anything reflecting a parameter — would have the explorer fetch it. The
+// redirect response is returned as-is instead, which is also more useful to someone
+// debugging a redirect.
+//
+// The stdlib net/http client is used rather than the Breeze client because the
+// dashboard needs fine-grained control over headers, body, timeout and — now —
+// redirect behaviour.
+func (c *Collector) handleAPIExplorerExec(ctx *breeze.Context) error {
 	var req APIExplorerExecRequest
 	if err := json.Unmarshal(ctx.Req.Body, &req); err != nil {
-		ctx.Status(400)
-		ctx.JSON(map[string]string{"error": "invalid body: " + err.Error()})
-		return
+		return jsonError(ctx, 400, "invalid body: "+err.Error())
 	}
 	if req.URL == "" {
-		ctx.Status(400)
-		ctx.JSON(map[string]string{"error": "url required"})
-		return
+		return jsonError(ctx, 400, "url required")
 	}
 	method := strings.ToUpper(req.Method)
 	if method == "" {
 		method = "GET"
 	}
 
-	// Build the request. The URL may be a relative path ("/users/1") or a
-	// full URL. For relative paths we resolve against localhost.
-	target := req.URL
-	if strings.HasPrefix(target, "/") {
-		// Resolve against the same host:port the dashboard is served on.
-		host := ctx.Req.Header["host"]
-		if host == "" {
-			host = "localhost"
-		}
-		target = "http://" + host + target
+	target, err := explorerTarget(req.URL, ctx.Req.Header["host"], c.listenPort())
+	if err != nil {
+		return jsonError(ctx, 400, err.Error())
 	}
 
 	httpReq, err := http.NewRequest(method, target, strings.NewReader(req.Body))
 	if err != nil {
-		ctx.Status(400)
-		ctx.JSON(map[string]string{"error": err.Error()})
-		return
+		return jsonError(ctx, 400, err.Error())
 	}
 	for k, v := range req.Headers {
 		httpReq.Header.Set(k, v)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		// Returning the redirect rather than following it. See the comment above.
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	start := time.Now()
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		ctx.Status(502)
-		ctx.JSON(map[string]string{"error": err.Error()})
-		return
+		return jsonError(ctx, 502, err.Error())
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -189,7 +294,7 @@ func (c *Collector) handleAPIExplorerExec(ctx *breeze.Context) {
 		DurationMS: float64(duration.Microseconds()) / 1000.0,
 		Snippets:   snippets,
 	}
-	ctx.JSON(out)
+	return ctx.JSON(out)
 }
 
 // generateSnippets produces curl, Go, JavaScript, Python, C#, and PHP code

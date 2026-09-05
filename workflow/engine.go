@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nelthaarion/breeze/diag"
 	"github.com/nelthaarion/breeze/events"
 	"github.com/nelthaarion/breeze/observability"
 )
@@ -89,6 +90,23 @@ type Engine struct {
 	// sem bounds concurrent step execution across every execution.
 	sem chan struct{}
 
+	// Counters for the diagnostic probe.
+	//
+	// Unconditional atomics rather than diag.Counter's gated ones, and the
+	// reason is the unit of work: one increment happens per *execution* or per
+	// *step*, each of which already writes to a Store, emits an event and
+	// publishes an observability signal. An atomic add is not measurable against
+	// that, and gating it would mean a workflow engine that cannot say how many
+	// workflows it ran unless someone thought to enable counting first — which
+	// is the exact question this subsystem exists to answer.
+	started      atomic.Uint64
+	completed    atomic.Uint64
+	failed       atomic.Uint64
+	compensated  atomic.Uint64
+	stepsRun     atomic.Uint64
+	stepRetries  atomic.Uint64
+	lastRunNanos atomic.Int64
+
 	// inflight guards idempotent starts within the process, covering
 	// the window before the store has the record.
 	inflight sync.Map // key -> *sync.Once-guarded executionID
@@ -121,7 +139,7 @@ func NewEngine(cfg ...Config) *Engine {
 	if c.DisableObservability {
 		col = nil
 	}
-	return &Engine{
+	e := &Engine{
 		cfg:   c,
 		store: c.Store,
 		bus:   c.Bus,
@@ -129,6 +147,8 @@ func NewEngine(cfg ...Config) *Engine {
 		defs:  make(map[string]*Definition),
 		sem:   make(chan struct{}, c.MaxWorkers),
 	}
+	RegisterDiagnostics(e)
+	return e
 }
 
 // Register validates a definition and adds it to the engine. A
@@ -360,6 +380,8 @@ func (e *Engine) execute(ctx context.Context, def *Definition, payload any, o ru
 		StepNames:   def.StepNames(),
 		Time:        start,
 	})
+	e.started.Add(1)
+	e.lastRunNanos.Store(start.UnixNano())
 	e.setState(ctx, &rec, StateRunning, nil)
 
 	res, spans := e.runSteps(ctx, def, wctx, execID, completed)
@@ -373,12 +395,14 @@ func (e *Engine) execute(ctx context.Context, def *Definition, payload any, o ru
 	// below.
 	if res.Err == nil {
 		res.State = StateCompleted
+		e.completed.Add(1)
 		e.emit(events.WorkflowCompleted{
 			Workflow: def.name, ExecutionID: execID,
 			Steps: len(res.Steps), Duration: res.Duration,
 		})
 	} else {
 		res.State = stateFor(res.Err)
+		e.failed.Add(1)
 		switch res.State {
 		case StateTimedOut:
 			e.emit(events.WorkflowTimedOut{
@@ -398,6 +422,7 @@ func (e *Engine) execute(ctx context.Context, def *Definition, payload any, o ru
 		failedState := res.State
 		if compensated := e.compensate(def, wctx, execID, res, &rec); compensated {
 			res.State = StateCompensated
+			e.compensated.Add(1)
 		}
 		if failedState == StateFailed && res.State == StateFailed {
 			e.emit(events.WorkflowFailed{
@@ -505,6 +530,10 @@ func (e *Engine) runStep(ctx context.Context, def *Definition, step *Step, wctx 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		sr.Attempts = attempt
 		wctx.setStep(step.name, attempt)
+		e.stepsRun.Add(1)
+		if attempt > 1 {
+			e.stepRetries.Add(1)
+		}
 
 		e.emit(events.WorkflowStepStarted{
 			Workflow: def.name, ExecutionID: execID, Step: step.name, Attempt: attempt,
@@ -993,4 +1022,11 @@ func recErr(s string) error {
 	return errors.New(s)
 }
 
-func msOf(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+// msOf renders a step or execution duration as fractional milliseconds for the
+// DurationMS fields the dashboard reads.
+//
+// Delegates to [diag.Milliseconds] so this package and events/diag.go round the
+// same way. They did not before: this one divided by float64(time.Millisecond),
+// keeping nanosecond noise in a field rendered next to values that had been
+// truncated to microseconds.
+func msOf(d time.Duration) float64 { return diag.Milliseconds(d) }

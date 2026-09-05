@@ -1,14 +1,21 @@
 package breeze
 
-import (
-	"context"
-	"encoding/json"
-	"runtime"
-	"sync"
-	"testing"
-)
-
-// zzperf_bench_test.go — microbenchmarks for the request path.
+// bench_test.go — the root package's benchmarks: routing, the request path, and
+// template rendering.
+//
+// One file per package, per docs/repository-structure.md. This replaces
+// router_bench_test.go, zzperf_bench_test.go and zzrender_bench_test.go, which
+// were three files with three naming conventions in one package — so
+// `go test -bench` needed prior knowledge of which file held what.
+//
+// The Benchmark**ZZ**… function names stay. The `zz` in the old *file* names was a
+// sort-order hack with no meaning, but the prefix in the function names is a
+// working filter (`-bench ZZRender` selects the render set) and, more to the
+// point, it is the identifier every number recorded in CHANGELOG.md is keyed to.
+// Renaming them would silently invalidate every recorded baseline while a
+// benchstat comparison against them reported "no benchmarks".
+//
+// # What is measured
 //
 // These exist to make the throughput work measurable rather than assumed. Each
 // benchmark isolates one stage that was changed, and pairs the old approach
@@ -33,6 +40,97 @@ import (
 //	PoolSubmit      vs InlineCall             — what inline execution removes
 //	PipelineDispatch vs PipelineInline vs PipelineInlineZeroCopy
 //	                                          — the whole request path, old to new
+//
+// And for the render path (`-bench ZZRender`), where RenderView is the
+// per-request cost of every server-rendered route. The request path around it is
+// allocation-free by the benchmarks above, so anything a page render costs is
+// paid on top of a pipeline measured down to zero:
+//
+//	RenderViewFull    — a full page load: layout, data tag, template sources, runtime
+//	RenderViewPartial — an SPA navigation: content block plus the same three tags
+//	CollectSources    — the file reads RenderView performs per render
+//	TemplateScript    — building the injected <script> block, cold and cached
+//
+// This file is part of package breeze, so the method constants (GET, POST) and
+// the request types are already in scope unqualified. Importing
+// github.com/nelthaarion/breeze here would be a self-import, which Go rejects as
+// "import cycle not allowed in test" — and because the failure is attributed to
+// the package rather than to one test, it stops the entire root package from
+// building under `go test ./...`.
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
+	"testing"
+)
+
+// --- Routing -----------------------------------------------------------------
+
+// BenchmarkFindChain measures the per-request routing cost on the hot path.
+//
+// The important number is "allocs/op". After precomputing the middleware
+// chain at registration time, matching a route on the request path performs
+// ZERO chain allocations for routes without :params (the previous code
+// allocated a fresh []HandlerFunc on every single request). Routes with
+// :params still take one pooled map, which sync.Pool amortises to ~0.
+func benchRouter() *Router {
+	r := NewRouter()
+	r.autoServeRoot = false
+	// A couple of global middlewares, like a real app (logging, CORS, ...).
+	r.Use(func(*Context) error {
+		return nil
+	}, func(*Context) error {
+		return nil
+	})
+	r.Handle(GET, "/users", func(*Context) error {
+		return nil
+	})
+	r.Handle(GET, "/users/:id", func(*Context) error {
+		return nil
+	})
+	r.Handle(POST, "/users", func(*Context) error {
+		return nil
+	})
+	r.Handle(GET, "/health", func(*Context) error {
+		return nil
+	})
+	return r
+}
+
+func BenchmarkFindChainStatic(b *testing.B) {
+	r := benchRouter()
+	req := &HTTPRequest{Method: GET, Path: "/health"}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		chain, _ := r.findChain(req)
+		if chain == nil {
+			b.Fatal("route not found")
+		}
+	}
+}
+
+func BenchmarkFindChainParam(b *testing.B) {
+	r := benchRouter()
+	req := &HTTPRequest{Method: GET, Path: "/users/42"}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		chain, params := r.findChain(req)
+		if chain == nil {
+			b.Fatal("route not found")
+		}
+		if params != nil {
+			releaseParams(params) // return the pooled map, like releaseContext does
+		}
+	}
+}
+
+// --- Request path ------------------------------------------------------------
 
 var rawGET = []byte("GET /users/42 HTTP/1.1\r\nHost: localhost:3000\r\nUser-Agent: bombardier\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n")
 
@@ -58,14 +156,20 @@ var rawGETScanned = []byte("GET /users/me HTTP/1.1\r\nHost: localhost:3000\r\nUs
 func perfRouter() *Router {
 	r := NewRouter()
 	r.autoServeRoot = false
-	r.Use(func(c *Context) { c.Next() })
-	r.Handle(GET, "/users", func(c *Context) { c.JSON(map[string]string{"a": "b"}) })
-	r.Handle(GET, "/users/:id", func(c *Context) {
-		c.JSON(map[string]string{"id": c.GetParam("id"), "name": "Alice"})
+	r.Use(func(c *Context) error { return c.Next() })
+	r.Handle(GET, "/users", func(c *Context) error { return c.JSON(map[string]string{"a": "b"}) })
+	r.Handle(GET, "/users/:id", func(c *Context) error {
+		return c.JSON(map[string]string{"id": c.GetParam("id"), "name": "Alice"})
 	})
-	r.Handle(POST, "/users", func(c *Context) {})
-	r.Handle(GET, "/users/me", func(c *Context) {})
-	r.Handle(GET, "/health", func(c *Context) {})
+	r.Handle(POST, "/users", func(c *Context) error {
+		return nil
+	})
+	r.Handle(GET, "/users/me", func(c *Context) error {
+		return nil
+	})
+	r.Handle(GET, "/health", func(c *Context) error {
+		return nil
+	})
 	return r
 }
 
@@ -482,4 +586,159 @@ func BenchmarkZZInlineCall(b *testing.B) {
 			func() {}()
 		}
 	})
+}
+
+// --- Template rendering ------------------------------------------------------
+
+// benchEngineDir writes a small but realistic view tree: a layout with a
+// <body>, a content block, and two components. Two components rather than one
+// because collectTemplateSources globs the whole directory, so its cost scales
+// with the component count rather than with what the page uses.
+func benchEngineDir(tb testing.TB) (viewsDir, compDir string) {
+	tb.Helper()
+	root := tb.TempDir()
+	viewsDir = filepath.Join(root, "views")
+	compDir = filepath.Join(root, "components")
+	for _, d := range []string{viewsDir, compDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			tb.Fatal(err)
+		}
+	}
+
+	layout := `{{define "layout"}}<!DOCTYPE html><html><head><title>bench</title></head>` +
+		`<body><div id="breeze-app">{{template "content" .}}</div></body></html>{{end}}`
+	if err := os.WriteFile(filepath.Join(viewsDir, "layout.html"), []byte(layout), 0o644); err != nil {
+		tb.Fatal(err)
+	}
+
+	home := `{{define "content"}}<h1>{{.Data.Title}}</h1>` +
+		`{{component "nav" .Data}}<ul>{{range .Data.Items}}<li>{{.}}</li>{{end}}</ul>{{end}}`
+	if err := os.WriteFile(filepath.Join(viewsDir, "home.html"), []byte(home), 0o644); err != nil {
+		tb.Fatal(err)
+	}
+
+	nav := `{{define "nav"}}<nav><a href="/">home</a><a href="/about">about</a></nav>{{end}}`
+	if err := os.WriteFile(filepath.Join(compDir, "nav.html"), []byte(nav), 0o644); err != nil {
+		tb.Fatal(err)
+	}
+	card := `{{define "card"}}<div class="card">{{.Title}}</div>{{end}}`
+	if err := os.WriteFile(filepath.Join(compDir, "card.html"), []byte(card), 0o644); err != nil {
+		tb.Fatal(err)
+	}
+	return viewsDir, compDir
+}
+
+// benchEngine returns a production-mode engine (devMode off, so templates are
+// parsed once and cached) over the tree above.
+func benchEngine(tb testing.TB) *TemplateEngine {
+	tb.Helper()
+	viewsDir, compDir := benchEngineDir(tb)
+	return NewTemplateEngine(TemplateConfig{
+		ViewsDir:      viewsDir,
+		ComponentsDir: compDir,
+		LayoutFile:    filepath.Join(viewsDir, "layout.html"),
+	})
+}
+
+// benchViewData is the page data a handler would hand to RenderView.
+var benchViewData = map[string]any{
+	"Title": "Dashboard",
+	"Items": []string{"alpha", "beta", "gamma", "delta"},
+}
+
+// renderOnce drives one full render through a fresh Context, releasing the
+// response so the benchmark measures the render rather than pool growth.
+func renderOnce(tb testing.TB, te *TemplateEngine, partial bool) {
+	ctx := NewContext(GET, "/")
+	if partial {
+		ctx.Req.Header["x-breeze-partial"] = "true"
+	}
+	if err := te.RenderView(ctx, "home", benchViewData); err != nil {
+		tb.Fatalf("render failed: %v", err)
+	}
+	if ctx.Res == nil || len(ctx.Res.Body) == 0 {
+		tb.Fatal("render produced no body")
+	}
+}
+
+// BenchmarkZZRenderViewFull is a full page load: the layout executes, then the
+// data tag, the client-side template sources, the i18n tag and the SPA runtime
+// are injected after <body>.
+func BenchmarkZZRenderViewFull(b *testing.B) {
+	te := benchEngine(b)
+	renderOnce(b, te, false) // warm the template cache
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		renderOnce(b, te, false)
+	}
+}
+
+// BenchmarkZZRenderViewPartial is an SPA navigation: only the content block is
+// executed, but the same three script tags are appended.
+func BenchmarkZZRenderViewPartial(b *testing.B) {
+	te := benchEngine(b)
+	renderOnce(b, te, true)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		renderOnce(b, te, true)
+	}
+}
+
+// BenchmarkZZCollectSources isolates the per-render filesystem work:
+// collectTemplateSources reads the view file and globs plus reads every
+// component file, on every render, cache or no cache.
+func BenchmarkZZCollectSources(b *testing.B) {
+	te := benchEngine(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if got := te.collectTemplateSources("home"); len(got) == 0 {
+			b.Fatal("no sources collected")
+		}
+	}
+}
+
+// BenchmarkZZTemplateScript isolates serializing the template-source map into
+// its <script> tag. RenderView no longer does this per request — the finished
+// tag is cached by templateScriptFor — so this measures what the cache buys,
+// which is this plus BenchmarkZZCollectSources.
+func BenchmarkZZTemplateScript(b *testing.B) {
+	te := benchEngine(b)
+	sources := te.collectTemplateSources("home")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if s := breezeTemplateScript(sources); s == "" {
+			b.Fatal("empty script tag")
+		}
+	}
+}
+
+// BenchmarkZZTemplateScriptCached is the same thing through the cache, which is
+// what a warm render actually pays: a read-locked map lookup.
+func BenchmarkZZTemplateScriptCached(b *testing.B) {
+	te := benchEngine(b)
+	te.templateScriptFor("home") // populate
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if s := te.templateScriptFor("home"); s == "" {
+			b.Fatal("empty script tag")
+		}
+	}
+}
+
+// BenchmarkZZRuntimeString measures handing out the SPA runtime. RenderView
+// concatenates it into the injection string, so if this is not free the whole
+// bundle is copied once per page.
+func BenchmarkZZRuntimeString(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if s := breezeRuntime(); len(s) == 0 {
+			b.Fatal("empty runtime")
+		}
+	}
 }

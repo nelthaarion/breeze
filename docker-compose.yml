@@ -4,7 +4,7 @@ services:
       context: .
       args:
         # Any main package in the module can be containerized.
-        BREEZE_TARGET: ./cmd
+        BREEZE_TARGET: ./cmd/api-example
     image: breeze-example:latest
     container_name: breeze
     ports:

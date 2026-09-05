@@ -47,6 +47,14 @@ func runRoutes(args []string) error {
 		return err
 	}
 
+	// --file names the generated registry inside the project. `breeze routes` only
+	// reads it, so an escape here is a read rather than a write — but the tool
+	// prints what it parsed, which turns an unchecked path into a way to read
+	// selected lines of any file on the machine through breeze_get_routes.
+	if err := validatePathFlag("file", *file); err != nil {
+		return err
+	}
+
 	routes, err := parseRoutes(*file)
 	if err != nil {
 		return err

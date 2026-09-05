@@ -14,9 +14,9 @@ import "github.com/nelthaarion/breeze"
 //
 // No manual redirect construction, state generation or PKCE handling is needed.
 func Login(cfg Config) breeze.HandlerFunc {
-	c := prepareConfig(cfg)
+	c, counts := prepareConfig(cfg)
 
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 		var verifier, challenge string
 		if c.pkceEnabled() {
 			p := newPKCE()
@@ -36,6 +36,13 @@ func Login(cfg Config) breeze.HandlerFunc {
 
 		authURL := c.driver.AuthURL(c, fs.State, fs.Nonce, challenge)
 		redirect(ctx, authURL)
+
+		// Counted after the redirect is set, so the count is of logins actually
+		// begun. A login started with no callback later is the signature of a
+		// redirect-URL mismatch — see the oauth2 diagnostic probe.
+		counts.loginsStarted.Add(1)
+
+		return nil
 	}
 }
 

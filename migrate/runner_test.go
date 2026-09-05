@@ -116,67 +116,6 @@ func isHex(s string) bool {
 	return true
 }
 
-func TestNextVersion(t *testing.T) {
-	tests := []struct {
-		name       string
-		migrations []Migration
-		want       string
-	}{
-		{
-			name:       "empty list",
-			migrations: []Migration{},
-			want:       "0001",
-		},
-		{
-			name: "single migration",
-			migrations: []Migration{
-				{Version: 1, Name: "create_users"},
-			},
-			want: "0002",
-		},
-		{
-			name: "multiple migrations",
-			migrations: []Migration{
-				{Version: 1, Name: "create_users"},
-				{Version: 5, Name: "add_email"},
-			},
-			want: "0006",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := nextVersion(tt.migrations)
-			if got != tt.want {
-				t.Errorf("nextVersion() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestToSlugEdgeCases(t *testing.T) {
-	// Test that toSlug handles various inputs correctly
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"CreateUsersTableWithIndex", "create_users_table_with_index"},
-		{"ID", "i_d"},
-		{"IDField", "i_d_field"},
-		{"lowercase", "lowercase"},
-		{"UPPERCASE", "u_p_p_e_r_c_a_s_e"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := toSlug(tt.input)
-			if got != tt.want {
-				t.Errorf("toSlug(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestDescendingByVersion pins the order Down rolls back in.
 //
 // This is the whole of `migrate down N`'s contract: N means "the last N", so the

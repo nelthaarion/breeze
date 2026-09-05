@@ -220,6 +220,9 @@ func New(cfg TracerConfig) *Tracer {
 			// spend a while wondering why no spans appear.
 			t.logf("warn", "fleet tracing enabled but inactive: service_name and aggregator_url are both required")
 		}
+		// Registered even though inactive: this tracer's report is the answer to
+		// "why are there no traces", and it is the only place that is stated.
+		RegisterDiagnostics(t)
 		return t
 	}
 
@@ -233,6 +236,8 @@ func New(cfg TracerConfig) *Tracer {
 		t.cfg.InstanceID = NewTraceContext().TraceIDHex()[:16]
 	}
 	t.lastHeartbeatAt = time.Now()
+
+	RegisterDiagnostics(t)
 
 	go t.run()
 	return t

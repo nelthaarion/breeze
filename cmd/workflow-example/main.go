@@ -243,7 +243,7 @@ func main() {
 	// ── Demo endpoints ───────────────────────────────────────────────────
 
 	// POST /demo/workflow — the parallel happy path.
-	router.Handle(breeze.POST, "/demo/workflow", func(ctx *breeze.Context) {
+	router.Handle(breeze.POST, "/demo/workflow", func(ctx *breeze.Context) error {
 		fmt.Println("\n▶ order-processing")
 		start := time.Now()
 		res, err := engine.Run(context.Background(), "order-processing",
@@ -252,7 +252,7 @@ func main() {
 
 		// validate(0.2) + max(2,3,2) + ship(0.6) + notify(0.4) ≈ 4.2s in
 		// parallel, versus ≈ 9.2s if the level ran sequentially.
-		ctx.JSON(map[string]any{
+		return ctx.JSON(map[string]any{
 			"workflow":       res.Workflow,
 			"execution_id":   res.ExecutionID,
 			"state":          res.State.String(),
@@ -265,10 +265,10 @@ func main() {
 	})
 
 	// POST /demo/workflow/retry — deterministic retry.
-	router.Handle(breeze.POST, "/demo/workflow/retry", func(ctx *breeze.Context) {
+	router.Handle(breeze.POST, "/demo/workflow/retry", func(ctx *breeze.Context) error {
 		fmt.Println("\n▶ payment-retry")
 		res, err := engine.Run(context.Background(), "payment-retry", nil)
-		ctx.JSON(map[string]any{
+		return ctx.JSON(map[string]any{
 			"workflow":     res.Workflow,
 			"execution_id": res.ExecutionID,
 			"state":        res.State.String(),
@@ -279,10 +279,10 @@ func main() {
 	})
 
 	// POST /demo/workflow/compensation — Saga rollback.
-	router.Handle(breeze.POST, "/demo/workflow/compensation", func(ctx *breeze.Context) {
+	router.Handle(breeze.POST, "/demo/workflow/compensation", func(ctx *breeze.Context) error {
 		fmt.Println("\n▶ order-compensation")
 		res, err := engine.Run(context.Background(), "order-compensation", nil)
-		ctx.JSON(map[string]any{
+		return ctx.JSON(map[string]any{
 			"workflow":     res.Workflow,
 			"execution_id": res.ExecutionID,
 			"state":        res.State.String(),
@@ -293,17 +293,17 @@ func main() {
 
 	// POST /demo/workflow/event — start the workflow by emitting a
 	// domain event instead of calling the engine.
-	router.Handle(breeze.POST, "/demo/workflow/event", func(ctx *breeze.Context) {
+	router.Handle(breeze.POST, "/demo/workflow/event", func(ctx *breeze.Context) error {
 		_ = events.Emit(OrderCreated{OrderID: "ord_2002", Total: 4200})
-		ctx.JSON(map[string]any{
+		return ctx.JSON(map[string]any{
 			"emitted": "OrderCreated",
 			"note":    "the workflow was triggered by the event and runs in the background",
 		})
 	})
 
 	// GET /demo/workflows — what is registered.
-	router.Handle(breeze.GET, "/demo/workflows", func(ctx *breeze.Context) {
-		ctx.JSON(map[string]any{"registered": engine.Definitions()})
+	router.Handle(breeze.GET, "/demo/workflows", func(ctx *breeze.Context) error {
+		return ctx.JSON(map[string]any{"registered": engine.Definitions()})
 	})
 
 	fmt.Println("Breeze Workflow example listening on :3000")

@@ -29,7 +29,6 @@ func newTestCollector(t *testing.T) *dashboard.Collector {
 	return dashboard.Install(nil, breeze.NewRouter(), cfg)
 }
 
-
 // TestPushLogCtxStampsTraceID is the core of the service-side contract: the
 // resolver fleet registers on the dashboard actually resolves, so a log line
 // emitted mid-request is retrievable by trace id afterwards.
@@ -38,7 +37,6 @@ func TestPushLogCtxStampsTraceID(t *testing.T) {
 	ctx, st := tracedContext()
 
 	coll.PushLogCtx(ctx, "app", "charging card", "orders")
-
 
 	logs := coll.Logs("app", 10)
 	if len(logs) != 1 {
@@ -54,7 +52,6 @@ func TestPushLogCtxStampsTraceID(t *testing.T) {
 // recorded, just without a trace id.
 func TestPushLogCtxOutsideRequestIsStillLogged(t *testing.T) {
 	coll := newTestCollector(t)
-
 
 	coll.PushLogCtx(nil, "app", "cache warmed", "startup")
 	// A request that exists but was never traced — fleet.Middleware absent,
@@ -81,7 +78,6 @@ func TestPushLogCtxMasks(t *testing.T) {
 	ctx, _ := tracedContext()
 
 	coll.PushLogCtx(ctx, "app", "authorizing with password=hunter2", "orders")
-
 
 	logs := coll.Logs("app", 10)
 	if len(logs) != 1 {

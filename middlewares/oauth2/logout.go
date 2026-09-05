@@ -8,16 +8,19 @@ import "github.com/nelthaarion/breeze"
 //
 //	app.Router.Handle(breeze.GET, "/logout/google", oauth2.Logout(cfg))
 func Logout(cfg Config) breeze.HandlerFunc {
-	c := prepareConfig(cfg)
+	c, counts := prepareConfig(cfg)
 
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 		clearSession(ctx, c)
 		clearFlowState(ctx, c)
+		counts.logouts.Add(1)
 
 		dest := c.SuccessRedirect
 		if r := ctx.Query("redirect"); isLocalRedirect(r) {
 			dest = r
 		}
 		redirect(ctx, dest)
+
+		return nil
 	}
 }

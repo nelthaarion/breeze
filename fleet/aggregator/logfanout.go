@@ -35,7 +35,6 @@ import (
 	"sync"
 	"time"
 
-
 	"github.com/nelthaarion/breeze/client"
 	"github.com/nelthaarion/breeze/dashboard"
 )
@@ -107,7 +106,6 @@ type TraceLogs struct {
 	// them looking for a missing log line that was never going to be there.
 	Disabled string `json:"disabled,omitempty"`
 }
-
 
 // logFanout fetches and merges logs for one trace.
 //
@@ -243,7 +241,6 @@ func (e *fanoutStatusError) Error() string {
 		return "log endpoint returned status " + strconv.Itoa(e.status)
 	}
 }
-
 
 // logEndpoints derives each service's dashboard base URL from its heartbeat.
 //

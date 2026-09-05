@@ -1,0 +1,48 @@
+# syntax=docker/dockerfile:1
+
+# Runtime-only image for the Fleet Tracing example.
+#
+# # Why this exists beside the repo-root Dockerfile
+#
+# The root Dockerfile compiles inside the image (`COPY . .` then `go build`), which is
+# the right shape for a released library. It is the wrong shape for iterating on this
+# example: every `up --build` re-runs a full module download and compile for four
+# services, and any package not yet published — fleet, at time of writing — has to be
+# present in the build context in exactly the right layout for the module resolver.
+#
+# This image compiles nothing. The binaries are cross-compiled on the host from the
+# working tree and copied in, so what runs in the container is unambiguously the code
+# currently checked out — not a published tag the proxy happens to serve.
+#
+#   powershell -File cmd/fleet-example/build.ps1
+#   docker compose -f cmd/fleet-example/docker-compose.yml up --build
+#
+# The script builds with CGO_ENABLED=0 GOOS=linux, which this image requires: alpine has
+# no glibc, and a dynamically linked binary fails at exec with a message that does not
+# mention libc.
+FROM alpine:3.22
+
+RUN apk add --no-cache ca-certificates wget \
+    && addgroup -S breeze && adduser -S breeze -G breeze
+
+WORKDIR /app
+
+# Which prebuilt binary this image runs. One Dockerfile, four services.
+ARG BREEZE_BINARY
+
+COPY .compose-bin/${BREEZE_BINARY} /usr/local/bin/breeze-server
+
+RUN chmod +x /usr/local/bin/breeze-server && chown -R breeze:breeze /app
+
+USER breeze
+
+# The application port and, when BREEZE_MCP_PORT is set, the app-runtime MCP control
+# port. Two ports because they answer different questions: one serves the service's
+# traffic, the other serves read-only introspection of the process serving it.
+EXPOSE 3000 2100
+
+# No HEALTHCHECK here. Each service listens on its own port and defines its own probe
+# in docker-compose.yml, so a default baked in here would only ever be wrong for three
+# of the four.
+
+ENTRYPOINT ["breeze-server"]

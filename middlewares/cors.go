@@ -25,7 +25,9 @@ type CORSOptions struct {
 //
 // Performance: ctx.Abort() is a single int assignment — zero cost.
 func CORSMiddleware(opts CORSOptions) breeze.HandlerFunc {
-	return func(ctx *breeze.Context) {
+	corsInstalled.Store(true)
+	corsConfig.Store(&opts)
+	return func(ctx *breeze.Context) error {
 		if opts.AllowOrigins != "" {
 			ctx.SetHeader("Access-Control-Allow-Origin", opts.AllowOrigins)
 		}
@@ -49,9 +51,11 @@ func CORSMiddleware(opts CORSOptions) breeze.HandlerFunc {
 		if ctx.Req.Method == breeze.OPTIONS {
 			ctx.Status(204)
 			ctx.Abort() // FIX: guarantee the chain stops here
-			return
+			corsCounter.Hit()
+			return nil
 		}
 
-		ctx.Next()
+		corsCounter.Miss()
+		return ctx.Next()
 	}
 }

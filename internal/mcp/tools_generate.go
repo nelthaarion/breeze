@@ -15,6 +15,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -52,21 +53,34 @@ func newProjectTool() *tool {
 			if err := decodeArgs(raw, &a); err != nil {
 				return errorResult("arguments: " + err.Error())
 			}
-			if a.Name == "" {
-				return errorResult("name is required")
-			}
-
-			argv := []string{a.Name}
-			if a.Template != "" {
-				argv = append(argv, "--template="+a.Template)
-			}
-			if a.Module != "" {
-				argv = append(argv, "--module="+a.Module)
+			argv, err := a.argv()
+			if err != nil {
+				return errorResult(err.Error())
 			}
 
 			return runGenerator(a.Dir, func() error { return generator.New(argv) })
 		},
 	}
+}
+
+// argv renders the arguments as `breeze new` accepts them.
+//
+// It is a method rather than inline in run because a change set stages the same
+// call to run later, against a sandbox: two places build this argv, and they
+// must not be two spellings of it.
+func (a newProjectArgs) argv() ([]string, error) {
+	if a.Name == "" {
+		return nil, errors.New("name is required")
+	}
+
+	argv := []string{a.Name}
+	if a.Template != "" {
+		argv = append(argv, "--template="+a.Template)
+	}
+	if a.Module != "" {
+		argv = append(argv, "--module="+a.Module)
+	}
+	return argv, nil
 }
 
 // ─── breeze_generate ─────────────────────────────────────────────────────────
@@ -115,25 +129,32 @@ func generateTool() *tool {
 			if err := decodeArgs(raw, &a); err != nil {
 				return errorResult("arguments: " + err.Error())
 			}
-			if a.Kind == "" {
-				return errorResult("kind is required")
+			argv, err := a.argv()
+			if err != nil {
+				return errorResult(err.Error())
 			}
-
-			argv := []string{a.Kind}
-			if a.Name != "" {
-				argv = append(argv, a.Name)
-			}
-			if len(a.Steps) > 0 {
-				argv = append(argv, "--steps="+strings.Join(a.Steps, ","))
-			}
-			argv = append(argv, flagsToArgv(a.Flags)...)
-			// Fields go last: they are positional, and the generator reads
-			// everything after the name as field specs.
-			argv = append(argv, a.Fields...)
 
 			return runGenerator(a.Dir, func() error { return generator.Generate(argv) })
 		},
 	}
+}
+
+func (a generateArgs) argv() ([]string, error) {
+	if a.Kind == "" {
+		return nil, errors.New("kind is required")
+	}
+
+	argv := []string{a.Kind}
+	if a.Name != "" {
+		argv = append(argv, a.Name)
+	}
+	if len(a.Steps) > 0 {
+		argv = append(argv, "--steps="+strings.Join(a.Steps, ","))
+	}
+	argv = append(argv, flagsToArgv(a.Flags)...)
+	// Fields go last: they are positional, and the generator reads everything
+	// after the name as field specs.
+	return append(argv, a.Fields...), nil
 }
 
 // ─── breeze_add ──────────────────────────────────────────────────────────────
@@ -166,25 +187,32 @@ func addFeatureTool() *tool {
 			if err := decodeArgs(raw, &a); err != nil {
 				return errorResult("arguments: " + err.Error())
 			}
-			if a.Feature == "" {
-				return errorResult("feature is required")
+			argv, err := a.argv()
+			if err != nil {
+				return errorResult(err.Error())
 			}
-
-			// Reject an unknown feature here rather than passing it through.
-			// The generator would also reject it, but this way the reply can
-			// name the closest real feature, and a model that guessed "auth"
-			// learns that the feature is called jwt.
-			canonical, ok := knownFeature(a.Feature)
-			if !ok {
-				return errorResult(fmt.Sprintf("unknown feature %q; available: %s",
-					a.Feature, strings.Join(generator.FeatureNames(), ", ")))
-			}
-
-			argv := append([]string{canonical}, flagsToArgv(a.Flags)...)
 
 			return runGenerator(a.Dir, func() error { return generator.Add(argv) })
 		},
 	}
+}
+
+func (a addFeatureArgs) argv() ([]string, error) {
+	if a.Feature == "" {
+		return nil, errors.New("feature is required")
+	}
+
+	// An unknown feature is rejected here rather than passed through. The
+	// generator would also reject it, but this way the reply can name the
+	// closest real feature, and a model that guessed "auth" learns that the
+	// feature is called jwt.
+	canonical, ok := knownFeature(a.Feature)
+	if !ok {
+		return nil, fmt.Errorf("unknown feature %q; available: %s",
+			a.Feature, strings.Join(generator.FeatureNames(), ", "))
+	}
+
+	return append([]string{canonical}, flagsToArgv(a.Flags)...), nil
 }
 
 // flagsToArgv converts a flag map to command-line form.
@@ -220,7 +248,25 @@ func flagsToArgv(flags map[string]any) []string {
 // deliberate: the generators print what they did as they go, so when one fails
 // half-way the printed lines are the record of what already exists on disk. A
 // caller that only saw the error would not know whether to retry or clean up.
+//
+// # dir is confined
+//
+// This is the only place the generator tools decide where they write, and dir goes
+// straight to os.Chdir. Unconfined, `{"dir": "/etc"}` would have the generator
+// create files there — so it goes through resolvePath first, like every other
+// caller-supplied path in this package.
+//
+// The refusal happens before the chdir rather than inside it, so a rejected call
+// has not moved the process. runInDir restores the previous directory on the way
+// out, but "restores correctly" is a weaker property than "never left".
 func runGenerator(dir string, fn func() error) toolCallResult {
+	// An empty dir keeps its old meaning — run where the server already is — and
+	// resolvePath applies the workspace check to that default too.
+	target, err := resolvePath(dir)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+
 	var (
 		out    string
 		runErr error
@@ -229,7 +275,7 @@ func runGenerator(dir string, fn func() error) toolCallResult {
 	// captureStdout takes the lock that also guards chdir, so runInDir goes
 	// inside it rather than around it.
 	out, capErr := captureStdout(func() error {
-		return runInDir(dir, func() error {
+		return runInDir(target, func() error {
 			runErr = fn()
 			return nil
 		})

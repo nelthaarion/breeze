@@ -32,11 +32,26 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
-      - name: Run optional golangci-lint
-        if: ${{ hashFiles('.golangci.yml', '.golangci.yaml', '.golangci.toml', '.golangci.json') != '' }}
+      - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: latest
 
+      - name: Build the nested Kafka backend module
+        # fleet/transport/eventtransport/backends/kafka carries its own go.mod
+        # so kafka-go stays out of the framework's dependency graph. The cost is
+        # that ./... does not reach it, so nothing compiled it for months. This
+        # step is the only thing that does.
+        working-directory: fleet/transport/eventtransport/backends/kafka
+        run: |
+          go build ./...
+          go vet ./...
+
       - name: Run tests
         run: go test ./...
+
+      - name: Check internal documentation links
+        # Every relative Markdown link in the repo must resolve. Fenced code
+        # blocks are skipped: Go generics in examples (Inspect[T](bus)) are
+        # indistinguishable from Markdown links to a regex.
+        run: go run ./internal/tools/linkcheck .

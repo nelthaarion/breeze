@@ -1,0 +1,79 @@
+{
+  "//": "TEMPLATE — not literal values. Every <placeholder> below is filled in from provision_fleet's or provision_service's actual return value. See docs/mcp-walkthrough.md for the address-kind distinction this file depends on.",
+
+  "mcpServers": {
+    "breeze-orchestrator": {
+      "command": "/path/to/breeze-mcp",
+      "args": ["--mode=generator"],
+      "//": "The one instance with Docker access. Use it to provision services (provision_service, provision_fleet), to tear them down (deprovision_service), and to run generation or verification tools against the orchestrator's own workspace. Launched as a subprocess over stdio, so it needs no port and no token: the process boundary is the trust boundary. --mode is required and has no default; this one is a generator because provisioning and generation are the point of it."
+    },
+
+    "gateway-control": {
+      "url": "http://<host>:<gateway control_port>/mcp",
+      "headers": { "Authorization": "Bearer <gateway control_token>" },
+      "//": "CONTROL address, mode generator. Tool calls travel through here to act on the gateway's own workspace. This is never the port the gateway application serves traffic on. Its initialize response reports breezeServerKind: generator."
+    },
+
+    "orders-control": {
+      "url": "http://<host>:<orders control_port>/mcp",
+      "headers": { "Authorization": "Bearer <orders control_token>" },
+      "//": "CONTROL address for orders. Its control_token is a different value from the gateway's — a token authorises one instance."
+    },
+
+    "auth-control": {
+      "url": "http://<host>:<auth control_port>/mcp",
+      "headers": { "Authorization": "Bearer <auth control_token>" },
+      "//": "CONTROL address for auth."
+    },
+
+    "orders-runtime": {
+      "url": "http://<host>:<orders app_mcp_port>/mcp",
+      "headers": { "Authorization": "Bearer <orders control_token>" },
+      "//": "APP-MCP address, mode app-runtime. A fourth address kind, present only when provision_service was called with docker.enable_app_mcp. It answers 'what is this instance doing right now' — live routes, recent errors, logs, performance — and it CANNOT generate or change anything: the mutating tools are not registered on an app-runtime server at all. Its initialize response reports breezeServerKind: app-runtime, which is how an agent tells the two apart without relying on this file's naming."
+    }
+  },
+
+  "//token-scoping": {
+    "//": "Nothing above needs changing to use a scoped token — a scope is a property of the token, chosen when the server that issued it was started, so the client entry is identical either way. It matters here only for how an agent should read a short tools/list.",
+
+    "how_to_scope": "breeze-mcp --mode generator --port 2000 --scope fleet,runtime",
+    "categories": ["generation", "introspection", "planning", "knowledge", "verification", "runtime", "fleet", "provisioning"],
+    "default": "Omitting --scope grants all eight, which is what an unscoped deployment already did.",
+    "how_an_agent_finds_out": "initialize returns breezeCapabilities: { granted, known, scoped }. Compare granted against known to tell 'this tool was withheld from my token' from 'this server has no such tool' — the first is worth asking a human about, the second is not.",
+    "by_hand": "curl -H \"Authorization: Bearer <control_token>\" http://<host>:<control_port>/mcp/features",
+    "worth_scoping_here": "The orchestrator entry above holds Docker access, so it is the one most worth narrowing in a shared setup. A read-only agent wants --scope fleet,runtime; only the process that actually provisions needs the provisioning category."
+  },
+
+  "//app-addresses": {
+    "//": "These are NOT servers. They are argument values a Category C/D tool takes, and they are listed here only so an operator has one place to keep them. A call to breeze_get_routes goes through one of the control-plane servers above and carries one of these as its service_url.",
+
+    "gateway": {
+      "service_url": "http://<host>:<gateway app_port>",
+      "//": "The running gateway application's own address, from provision_fleet's app_port."
+    },
+    "orders": { "service_url": "http://<host>:<orders app_port>" },
+    "auth": { "service_url": "http://<host>:<auth app_port>" }
+  },
+
+  "//aggregator-address": {
+    "//": "A third kind again. The Fleet Aggregator's own endpoint, hosted by one of the services above — and distinct from that service's control_port and its app_port. It is what breeze_get_trace, breeze_get_traces, breeze_get_topology, breeze_get_contract_violations and breeze_explain_incident take as aggregator_url.",
+
+    "hosted_by_service": "<the service named in provision_fleet's aggregator.hosted_by_service>",
+    "aggregator_url": "http://<host>:<aggregator_port>/fleet",
+    "ingest_token": "<aggregator.ingest_token>",
+    "read_credentials": {
+      "username": "admin",
+      "password": "admin",
+      "//": "The aggregator's read side authenticates with HTTP Basic. The ingest_token is a write credential and will not authorise a read."
+    }
+  },
+
+  "//in-process-alternative": {
+    "//": "A service that embeds breeze/mcp.ServeInProcess instead of running a separate breeze-mcp needs no entry above beyond a URL and token — the shape is identical to orders-runtime. Set Mode: mcp.ModeAppRuntime in InProcessConfig; there is no default. The tool set is then read-only introspection only, with no generation or provisioning tool registered. See the breeze/mcp package documentation.",
+
+    "orders-introspection": {
+      "url": "http://<host>:<in-process port>/mcp",
+      "headers": { "Authorization": "Bearer $BREEZE_MCP_TOKEN" }
+    }
+  }
+}

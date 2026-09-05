@@ -51,12 +51,17 @@ type TemplateEngine struct {
 	mu         sync.RWMutex
 	templates  map[string]*template.Template // view name → full template set
 	components map[string]*template.Template // component name → template
-	viewsDir   string
-	compDir    string
-	layoutFile string
-	funcMap    template.FuncMap
-	devMode    bool  // if true, re-parse on every render (hot reload)
-	i18n       *I18n // optional translation bundle backing the t helper
+	// tmplScripts caches the rendered <script id="__breeze_tmpl__"> tag per
+	// view, so a full page load does not re-read every template file from
+	// disk and re-encode them to JSON on every request. Guarded by mu, like
+	// the two caches above; unused in devMode.
+	tmplScripts map[string]string
+	viewsDir    string
+	compDir     string
+	layoutFile  string
+	funcMap     template.FuncMap
+	devMode     bool  // if true, re-parse on every render (hot reload)
+	i18n        *I18n // optional translation bundle backing the t helper
 }
 
 // TemplateConfig configures the template engine.
@@ -91,14 +96,15 @@ func NewTemplateEngine(cfg TemplateConfig) *TemplateEngine {
 	}
 
 	te := &TemplateEngine{
-		templates:  make(map[string]*template.Template),
-		components: make(map[string]*template.Template),
-		viewsDir:   cfg.ViewsDir,
-		compDir:    cfg.ComponentsDir,
-		layoutFile: cfg.LayoutFile,
-		devMode:    cfg.DevMode,
-		funcMap:    cfg.FuncMap,
-		i18n:       cfg.I18n,
+		templates:   make(map[string]*template.Template),
+		components:  make(map[string]*template.Template),
+		tmplScripts: make(map[string]string),
+		viewsDir:    cfg.ViewsDir,
+		compDir:     cfg.ComponentsDir,
+		layoutFile:  cfg.LayoutFile,
+		devMode:     cfg.DevMode,
+		funcMap:     cfg.FuncMap,
+		i18n:        cfg.I18n,
 	}
 
 	// Dev mode already means "favour visibility over speed" (templates
@@ -116,9 +122,16 @@ func NewTemplateEngine(cfg TemplateConfig) *TemplateEngine {
 
 	// Built-in "component" function — renders a named component with data.
 	// Rebound per locale in funcsForLocale so nested components translate.
+	//
+	// The scratch buffer comes from the pool because this runs once per
+	// {{component}} tag per render — a page with a nav and three cards calls it
+	// four times, and each call previously allocated a buffer and grew it from
+	// nothing. The String() copy stays: html/template.HTML is a string type, so
+	// the bytes have to be copied out before the buffer is reused.
 	te.funcMap["component"] = func(name string, data any) (template.HTML, error) {
-		var buf bytes.Buffer
-		if err := te.renderComponent(name, "", data, &buf); err != nil {
+		buf := acquireRenderBuf()
+		defer releaseRenderBuf(buf)
+		if err := te.renderComponent(name, "", data, buf); err != nil {
 			return "", err
 		}
 		return template.HTML(buf.String()), nil
@@ -126,6 +139,9 @@ func NewTemplateEngine(cfg TemplateConfig) *TemplateEngine {
 
 	// Built-in "partial" alias for component.
 	te.funcMap["partial"] = te.funcMap["component"]
+
+	// One registry append, at construction; see diag.go.
+	te.registerDiagnostics()
 
 	// Built-in "t" translation helper. This base version covers templates
 	// rendered with no locale; funcsForLocale rebinds it per locale.
@@ -181,8 +197,9 @@ func (te *TemplateEngine) funcsForLocale(locale string) template.FuncMap {
 	}
 	fm["t"] = te.tFunc(locale)
 	fm["component"] = func(name string, data any) (template.HTML, error) {
-		var buf bytes.Buffer
-		if err := te.renderComponent(name, locale, data, &buf); err != nil {
+		buf := acquireRenderBuf()
+		defer releaseRenderBuf(buf)
+		if err := te.renderComponent(name, locale, data, buf); err != nil {
 			return "", err
 		}
 		return template.HTML(buf.String()), nil
@@ -291,6 +308,42 @@ func (te *TemplateEngine) renderComponent(name, locale string, data any, w *byte
 	return exec(t)
 }
 
+// renderBufMaxKeep caps the capacity a scratch buffer may have and still be
+// worth pooling. One enormous page would otherwise pin its buffer in the pool
+// for the life of the process.
+const renderBufMaxKeep = 256 << 10
+
+// renderBufPool holds scratch buffers for template execution.
+//
+// Every render executes its template into a buffer, then assembles the final
+// response — content plus the injected script tags — into a second, exactly
+// sized one. Only the second buffer's bytes leave the function, so the first is
+// pure scratch: a fresh one per request paid the doubling growth of the whole
+// page (several allocations and copies for anything non-trivial) and then threw
+// the capacity away. Pooling keeps that capacity, so a warm server executes
+// templates into memory it already has.
+//
+// The response body is deliberately NOT pooled. It is handed to the connection,
+// and on the async write path gnet returns before the bytes are flushed — see
+// pool.go. That is why execView returns a freshly allocated slice rather than
+// the scratch buffer's own bytes.
+var renderBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
+func acquireRenderBuf() *bytes.Buffer {
+	buf := renderBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	return buf
+}
+
+func releaseRenderBuf(buf *bytes.Buffer) {
+	if buf.Cap() > renderBufMaxKeep {
+		return
+	}
+	renderBufPool.Put(buf)
+}
+
 // RenderView renders a view and writes the response to ctx.
 //
 //   - In a normal request it wraps the view in the layout (if defined) and
@@ -298,7 +351,15 @@ func (te *TemplateEngine) renderComponent(name, locale string, data any, w *byte
 //   - When the request carries "X-Breeze-Partial: true" it returns only the
 //     inner view fragment so the client-side router can swap it in without a
 //     full page reload.
-func (te *TemplateEngine) RenderView(ctx *Context, viewName string, data any) {
+//
+// RenderView writes a rendered view as the response.
+//
+// It returns an error rather than only writing a 500 body. Both still happen: the 500
+// is written so a caller that ignores the return sends something intelligible, and the
+// error is returned so one that propagates gets the cause logged by the framework's
+// error path. A template that fails to parse is a deployment fault, and the operator
+// needs it in a log rather than only in one user's browser.
+func (te *TemplateEngine) RenderView(ctx *Context, viewName string, data any) error {
 	isPartial := ctx.Req.Header["x-breeze-partial"] == "true"
 	locale := te.requestLocale(ctx)
 
@@ -306,21 +367,23 @@ func (te *TemplateEngine) RenderView(ctx *Context, viewName string, data any) {
 		te.i18n.reloadIfDev()
 	}
 
-	var buf bytes.Buffer
+	scratch := acquireRenderBuf()
+	defer releaseRenderBuf(scratch)
 
 	t, err := te.getView(viewName, locale)
 	if err != nil {
 		ctx.Status(500)
-		ctx.WriteString(fmt.Sprintf("template error: %v", err))
-		return
+		_ = ctx.WriteString(fmt.Sprintf("template error: %v", err))
+		return fmt.Errorf("rendering view %q: %w", viewName, err)
 	}
-	if err := te.execView(t, viewName, locale, data, isPartial, &buf); err != nil {
+	body, err := te.execView(t, viewName, locale, data, isPartial, scratch)
+	if err != nil {
 		ctx.Status(500)
-		ctx.WriteString(fmt.Sprintf("render error: %v", err))
-		return
+		_ = ctx.WriteString(fmt.Sprintf("render error: %v", err))
+		return fmt.Errorf("rendering view %q: %w", viewName, err)
 	}
 
-	ctx.HTML(buf.Bytes())
+	return ctx.HTML(body)
 }
 
 // getView returns the parsed template set for (viewName, locale), parsing
@@ -348,7 +411,13 @@ func (te *TemplateEngine) getView(viewName, locale string) (*template.Template, 
 	return t, nil
 }
 
-// execView executes the right template definition inside t.
+// execView executes the right template definition inside t and returns the
+// finished response body.
+//
+// scratch is working memory for the template execution and is not retained: the
+// returned slice is freshly allocated, sized exactly, and owned by the caller.
+// That split is what lets scratch be pooled — see renderBufPool for why the
+// response bytes themselves must not be.
 //
 // Resolution order:
 //  1. If partial → execute the template named after the view file (the content block).
@@ -360,8 +429,8 @@ func (te *TemplateEngine) execView(
 	locale string,
 	data any,
 	isPartial bool,
-	buf *bytes.Buffer,
-) error {
+	scratch *bytes.Buffer,
+) ([]byte, error) {
 	// Wrap data with template helpers.
 	td := &TemplateData{
 		Data:    data,
@@ -380,8 +449,8 @@ func (te *TemplateEngine) execView(
 		if contentTmpl == nil {
 			contentTmpl = t
 		}
-		if err := contentTmpl.Execute(buf, td); err != nil {
-			return err
+		if err := contentTmpl.Execute(scratch, td); err != nil {
+			return nil, err
 		}
 
 		// Embed the same data/template-sources/i18n blob that a full page
@@ -396,26 +465,30 @@ func (te *TemplateEngine) execView(
 		if jsonErr != nil {
 			dataJSON = []byte("{}")
 		}
-		tmplSources := te.collectTemplateSources(viewName)
-		buf.WriteString(breezeDataScript(dataJSON))
-		buf.WriteString(breezeTemplateScript(tmplSources))
-		buf.WriteString(te.breezeI18nScript(locale))
-		return nil
+		tmplScript := te.templateScriptFor(viewName)
+		i18nScript := te.breezeI18nScript(locale)
+
+		body := scratch.Bytes()
+		out := make([]byte, 0, len(body)+dataScriptLen(dataJSON)+len(tmplScript)+len(i18nScript))
+		out = append(out, body...)
+		out = appendDataScript(out, dataJSON)
+		out = append(out, tmplScript...)
+		return append(out, i18nScript...), nil
 	}
 
 	// Full page: prefer a "layout" definition, else render view directly.
 	layoutTmpl := t.Lookup("layout")
 	if layoutTmpl != nil {
-		if err := layoutTmpl.Execute(buf, td); err != nil {
-			return err
+		if err := layoutTmpl.Execute(scratch, td); err != nil {
+			return nil, err
 		}
 	} else {
 		viewTmpl := t.Lookup(viewName + ".html")
 		if viewTmpl == nil {
 			viewTmpl = t
 		}
-		if err := viewTmpl.Execute(buf, td); err != nil {
-			return err
+		if err := viewTmpl.Execute(scratch, td); err != nil {
+			return nil, err
 		}
 	}
 
@@ -426,7 +499,9 @@ func (te *TemplateEngine) execView(
 	}
 
 	// Embed raw template sources so the client can re-render without a server round-trip.
-	tmplSources := te.collectTemplateSources(viewName)
+	tmplScript := te.templateScriptFor(viewName)
+	i18nScript := te.breezeI18nScript(locale)
+	runtime := breezeRuntime()
 
 	// Inject data tag + template sources + SPA runtime right after the
 	// opening <body> tag — NOT just before </body>.
@@ -448,24 +523,29 @@ func (te *TemplateEngine) execView(
 	// right after <body> guarantees the runtime and current route's data
 	// are always in place before any page content — and therefore any
 	// script it contains — is parsed, on both full loads and swaps alike.
-	html := buf.String()
-	injection := breezeDataScript(dataJSON) + breezeTemplateScript(tmplSources) +
-		te.breezeI18nScript(locale) + breezeRuntime()
-	if loc := bodyOpenTag.FindStringIndex(html); loc != nil {
-		buf.Reset()
-		buf.WriteString(html[:loc[1]])
-		buf.WriteString(injection)
-		buf.WriteString(html[loc[1]:])
-	} else {
-		// No <body> tag found — fall back to prepending at the very start
-		// so the runtime still loads before anything else has a chance to
-		// reference it.
-		buf.Reset()
-		buf.WriteString(injection)
-		buf.WriteString(html)
+	//
+	// Assembled into one exactly-sized slice rather than by concatenating
+	// the injected parts and splicing them into a string. The runtime is
+	// ~20KB, so the previous version copied it once to build `injection`,
+	// again to write it into the buffer, and repeatedly as that buffer
+	// doubled to fit — for one page, on every request. Each byte is now
+	// copied once into memory sized for the final result.
+	body := scratch.Bytes()
+	// No <body> tag: inject at the very start so the runtime still loads
+	// before anything else has a chance to reference it.
+	cut := 0
+	if loc := bodyOpenTag.FindIndex(body); loc != nil {
+		cut = loc[1]
 	}
 
-	return nil
+	out := make([]byte, 0,
+		len(body)+dataScriptLen(dataJSON)+len(tmplScript)+len(i18nScript)+len(runtime))
+	out = append(out, body[:cut]...)
+	out = appendDataScript(out, dataJSON)
+	out = append(out, tmplScript...)
+	out = append(out, i18nScript...)
+	out = append(out, runtime...)
+	return append(out, body[cut:]...), nil
 }
 
 // marshalPageData safely serializes page data to JSON for client access.
@@ -481,6 +561,43 @@ func marshalPageData(data any) ([]byte, error) {
 }
 
 // ─── Client-side template embedding ──────────────────────────────────────────
+
+// templateScriptFor returns the ready-to-inject <script id="__breeze_tmpl__">
+// tag for viewName, building it on first use.
+//
+// Both callers do exactly one thing with the source map — hand it to
+// breezeTemplateScript — so the cache holds the finished tag rather than the
+// map. That removes the JSON encode and the tag concatenation from the render
+// path along with the file reads.
+//
+// devMode is not cached, for the same reason the template set is not: editing a
+// view must show up on the next request. Production caches for the lifetime of
+// the process, which matches getView — a view file that changes under a running
+// server is already outside what the engine promises to notice.
+func (te *TemplateEngine) templateScriptFor(viewName string) string {
+	if te.devMode {
+		return breezeTemplateScript(te.collectTemplateSources(viewName))
+	}
+
+	te.mu.RLock()
+	tag, ok := te.tmplScripts[viewName]
+	te.mu.RUnlock()
+	if ok {
+		return tag
+	}
+
+	// Built outside the write lock: collectTemplateSources reads files and
+	// globs a directory, and holding the lock that guards the template cache
+	// across filesystem I/O would stall every concurrent render of every
+	// other view. Two goroutines racing here both build it and the second
+	// store wins, which is correct because the value is a pure function of
+	// what is on disk.
+	tag = breezeTemplateScript(te.collectTemplateSources(viewName))
+	te.mu.Lock()
+	te.tmplScripts[viewName] = tag
+	te.mu.Unlock()
+	return tag
+}
 
 // collectTemplateSources reads the raw source of a view and all component files,
 // strips the {{define "name"}}...{{end}} wrapper, and returns a map of
@@ -595,26 +712,26 @@ type reRenderRequest struct {
 // RenderJSON renders a view or component from a JSON request body.
 // It is used by the /breeze/render endpoint registered by EnableReRender.
 // The caller decides which wins: Component takes precedence over View.
-func (te *TemplateEngine) RenderJSON(ctx *Context) {
+func (te *TemplateEngine) RenderJSON(ctx *Context) error {
 	var req reRenderRequest
 	if err := json.Unmarshal(ctx.Req.Body, &req); err != nil {
 		ctx.Status(400)
-		ctx.WriteString("breeze/render: invalid JSON body: " + err.Error())
-		return
+		return ctx.WriteString("breeze/render: invalid JSON body: " + err.Error())
 	}
 
-	var buf bytes.Buffer
+	buf := acquireRenderBuf()
+	defer releaseRenderBuf(buf)
 	locale := te.requestLocale(ctx)
 
 	if req.Component != "" {
 		// Component render — bare fragment, no layout.
-		if err := te.renderComponent(req.Component, locale, req.Data, &buf); err != nil {
+		if err := te.renderComponent(req.Component, locale, req.Data, buf); err != nil {
 			ctx.Status(500)
-			ctx.WriteString(fmt.Sprintf("breeze/render: component %q: %v", req.Component, err))
-			return
+			return ctx.WriteString(fmt.Sprintf("breeze/render: component %q: %v", req.Component, err))
 		}
-		ctx.HTML(buf.Bytes())
-		return
+		// Copied: see RenderComponent for why a pooled buffer's bytes must
+		// not become a response body.
+		return ctx.HTML(append([]byte(nil), buf.Bytes()...))
 	}
 
 	if req.View != "" {
@@ -622,20 +739,18 @@ func (te *TemplateEngine) RenderJSON(ctx *Context) {
 		t, err := te.getView(req.View, locale)
 		if err != nil {
 			ctx.Status(500)
-			ctx.WriteString(fmt.Sprintf("breeze/render: view %q: %v", req.View, err))
-			return
+			return ctx.WriteString(fmt.Sprintf("breeze/render: view %q: %v", req.View, err))
 		}
-		if err := te.execView(t, req.View, locale, req.Data, true /* always partial */, &buf); err != nil {
+		body, err := te.execView(t, req.View, locale, req.Data, true /* always partial */, buf)
+		if err != nil {
 			ctx.Status(500)
-			ctx.WriteString(fmt.Sprintf("breeze/render: view %q exec: %v", req.View, err))
-			return
+			return ctx.WriteString(fmt.Sprintf("breeze/render: view %q exec: %v", req.View, err))
 		}
-		ctx.HTML(buf.Bytes())
-		return
+		return ctx.HTML(body)
 	}
 
 	ctx.Status(400)
-	ctx.WriteString(`breeze/render: request must include "view" or "component"`)
+	return ctx.WriteString(`breeze/render: request must include "view" or "component"`)
 }
 
 // ─── Router integration ───────────────────────────────────────────────────────
@@ -658,12 +773,15 @@ func (r *Router) View(
 	// Blocking: rendering parses the template from disk on a cache miss, and
 	// on every request in dev mode. It also takes the engine's write lock to
 	// populate the cache. None of that may run on a gnet event loop.
-	r.HandleBlocking(GET, pattern, func(ctx *Context) {
+	r.HandleBlocking(GET, pattern, func(ctx *Context) error {
 		var data any
 		if dataFn != nil {
 			data = dataFn(ctx)
 		}
-		engine.RenderView(ctx, viewName, data)
+		// Propagated, not discarded: a view that fails to parse is a deployment
+		// fault, and returning it is what gets it into the operator's log. The
+		// browser still receives RenderView's own 500 body either way.
+		return engine.RenderView(ctx, viewName, data)
 	})
 }
 
@@ -674,8 +792,8 @@ func (r *Router) View(
 // Usage inside a handler:
 //
 //	ctx.Render(engine, "home", map[string]any{"title": "Home"})
-func (ctx *Context) Render(engine *TemplateEngine, viewName string, data any) {
-	engine.RenderView(ctx, viewName, data)
+func (ctx *Context) Render(engine *TemplateEngine, viewName string, data any) error {
+	return engine.RenderView(ctx, viewName, data)
 }
 
 // ─── Server-side fragment helpers ────────────────────────────────────────────
@@ -683,14 +801,22 @@ func (ctx *Context) Render(engine *TemplateEngine, viewName string, data any) {
 // RenderComponent renders a single component as a bare HTML fragment.
 // No layout, no SPA script injection. Designed for endpoints that feed
 // breeze.fetch() / breeze.poll() on the client.
-func (te *TemplateEngine) RenderComponent(ctx *Context, componentName string, data any) {
-	var buf bytes.Buffer
-	if err := te.renderComponent(componentName, te.requestLocale(ctx), data, &buf); err != nil {
+//
+// Returns the render error for the same reason RenderView does: the 500 goes to the
+// browser, the cause goes to the operator.
+func (te *TemplateEngine) RenderComponent(ctx *Context, componentName string, data any) error {
+	buf := acquireRenderBuf()
+	defer releaseRenderBuf(buf)
+	if err := te.renderComponent(componentName, te.requestLocale(ctx), data, buf); err != nil {
 		ctx.Status(500)
-		ctx.WriteString(fmt.Sprintf("component error: %v", err))
-		return
+		_ = ctx.WriteString(fmt.Sprintf("component error: %v", err))
+		return fmt.Errorf("rendering component %q: %w", componentName, err)
 	}
-	ctx.HTML(buf.Bytes())
+	// Copied out of the pooled buffer, not handed over. The response body
+	// outlives this call — on the async write path gnet returns before the
+	// bytes reach the socket — so returning buf.Bytes() would let the next
+	// render overwrite a response already in flight.
+	return ctx.HTML(append([]byte(nil), buf.Bytes()...))
 }
 
 // Fragment registers a GET route that returns a bare HTML fragment — either a
@@ -717,12 +843,13 @@ func (r *Router) Fragment(
 	dataFn func(*Context) any,
 ) {
 	// Blocking for the same reason as View: a cache miss parses from disk.
-	r.HandleBlocking(GET, pattern, func(ctx *Context) {
+	r.HandleBlocking(GET, pattern, func(ctx *Context) error {
 		var data any
 		if dataFn != nil {
 			data = dataFn(ctx)
 		}
-		engine.RenderComponent(ctx, componentName, data)
+		// Propagated for the same reason as View's.
+		return engine.RenderComponent(ctx, componentName, data)
 	})
 }
 
@@ -739,8 +866,9 @@ func (r *Router) Fragment(
 func (r *Router) EnableReRender(engine *TemplateEngine) {
 	// Blocking: RenderJSON resolves an arbitrary view or component by name,
 	// which may parse it from disk.
-	r.HandleBlocking(POST, "/breeze/render", func(ctx *Context) {
-		engine.RenderJSON(ctx)
+	r.HandleBlocking(POST, "/breeze/render", func(ctx *Context) error {
+		// Propagated for the same reason as View's.
+		return engine.RenderJSON(ctx)
 	})
 }
 
@@ -784,23 +912,56 @@ var spaJSMin string
 // sees the commented source, and production does not.
 var useReadableRuntime atomic.Bool
 
-func breezeRuntime() string {
-	js := spaJSMin
-	// A build that somehow lost its generated bundle must still serve a
-	// working runtime rather than an empty <script>.
-	if useReadableRuntime.Load() || js == "" {
-		js = spaJS
-	}
+// runtimeTagMin and runtimeTagDev hold the wrapped <script> for each bundle,
+// built at most once each.
+//
+// The wrapping used to happen per call, which meant every full page response
+// allocated and copied the whole runtime — 20KB minified, 74KB readable — to
+// produce a string that is a compile-time constant in all but which of two
+// variants is selected. sync.OnceValue rather than an init(): a process serves
+// one variant, so building both would spend the RSS this indirection exists to
+// avoid.
+var (
+	runtimeTagMin = sync.OnceValue(func() string { return wrapRuntime(spaJSMin) })
+	runtimeTagDev = sync.OnceValue(func() string { return wrapRuntime(spaJS) })
+)
+
+func wrapRuntime(js string) string {
 	return `<script id="__breeze_spa__">` + js + `</script>`
 }
 
-// breezeDataScript wraps the page JSON in a non-executing script tag so the
-// client can read it with breeze.data() without it polluting the global scope.
-func breezeDataScript(dataJSON []byte) string {
-	return `<script id="__breeze_data__" type="application/json">` +
-		string(dataJSON) +
-		`</script>` + "\n"
+func breezeRuntime() string {
+	// A build that somehow lost its generated bundle must still serve a
+	// working runtime rather than an empty <script>.
+	if useReadableRuntime.Load() || spaJSMin == "" {
+		return runtimeTagDev()
+	}
+	return runtimeTagMin()
 }
+
+// appendDataScript wraps the page JSON in a non-executing script tag so the
+// client can read it with breeze.data() without it polluting the global scope.
+//
+// It appends onto dst rather than returning a string, because both callers are
+// assembling a response and would otherwise allocate a string to hold a
+// concatenation they immediately copy again. Page data is per-request and cannot
+// be cached the way the runtime is, so this is the only way that copy goes away.
+func appendDataScript(dst []byte, dataJSON []byte) []byte {
+	dst = append(dst, dataScriptOpen...)
+	dst = append(dst, dataJSON...)
+	return append(dst, dataScriptClose...)
+}
+
+// dataScriptLen is the exact length appendDataScript will add, so a caller can
+// size its buffer once and never grow it.
+func dataScriptLen(dataJSON []byte) int {
+	return len(dataScriptOpen) + len(dataJSON) + len(dataScriptClose)
+}
+
+const (
+	dataScriptOpen  = `<script id="__breeze_data__" type="application/json">`
+	dataScriptClose = `</script>` + "\n"
+)
 
 // ─── Preload ──────────────────────────────────────────────────────────────────
 

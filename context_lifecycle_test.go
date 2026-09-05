@@ -143,9 +143,12 @@ func TestWorkerPool_SubmitDoesNotBlock(t *testing.T) {
 // the same middleware twice.
 func TestContextNextNoDoubleExecution(t *testing.T) {
 	execCount := 0
-	mw1 := func(ctx *Context) { execCount++; ctx.Next() }
-	mw2 := func(ctx *Context) { execCount++; ctx.Next() }
-	handler := func(ctx *Context) { execCount++ /* do not call Next */ }
+	mw1 := func(ctx *Context) error { execCount++; return ctx.Next() }
+	mw2 := func(ctx *Context) error { execCount++; return ctx.Next() }
+	handler := func(ctx *Context) error {
+		execCount++ /* do not call Next */
+		return nil
+	}
 
 	ctx := &Context{
 		middlewares: []HandlerFunc{mw1, mw2, handler},
@@ -162,7 +165,10 @@ func TestContextNextNoDoubleExecution(t *testing.T) {
 // after the chain is exhausted is safe (no panic, no re-execution).
 func TestContextNextDoesNotLoop(t *testing.T) {
 	execCount := 0
-	handler := func(ctx *Context) { execCount++ }
+	handler := func(ctx *Context) error {
+		execCount++
+		return nil
+	}
 
 	ctx := &Context{
 		middlewares: []HandlerFunc{handler},
@@ -207,8 +213,11 @@ func TestContextNewContext(t *testing.T) {
 // TestContextSetMiddlewareChain verifies the chain is set correctly.
 func TestContextSetMiddlewareChain(t *testing.T) {
 	execCount := 0
-	mw := func(ctx *Context) { execCount++; ctx.Next() }
-	handler := func(ctx *Context) { execCount++ }
+	mw := func(ctx *Context) error { execCount++; return ctx.Next() }
+	handler := func(ctx *Context) error {
+		execCount++
+		return nil
+	}
 
 	ctx := NewContext(GET, "/test")
 	ctx.SetMiddlewareChain([]HandlerFunc{mw}, handler)

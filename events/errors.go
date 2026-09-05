@@ -19,6 +19,15 @@ import (
 // dispatcher and reported as a nil error, because stopping is a normal
 // control-flow outcome rather than an error. Metrics count a stopped
 // dispatch under Stopped, not Failures.
+//
+// The name is not ErrStop, and that is deliberate rather than an oversight.
+// This value exists to be *returned by a listener*, so the call site reads
+// `return events.Stop` — a statement about control flow, in a position where
+// `return events.ErrStop` would claim something failed. It is documented under this
+// name in events/README.md and emitted under it by every generated listener stub,
+// so it is also API that cannot be renamed without breaking callers.
+//
+//lint:ignore ST1012 named for its call site (`return events.Stop`), and exported API.
 var Stop = errors.New("events: stop propagation")
 
 // ErrBusClosed is returned by emit and registration APIs after [Bus.Close]

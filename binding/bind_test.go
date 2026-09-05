@@ -204,8 +204,7 @@ func TestValidate_Required(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var f Form
-			f = tt.input
+			f := tt.input
 			// Direct validation by binding with empty sources.
 			err := Bind(&f)
 
@@ -478,8 +477,7 @@ func TestValidate_MultipleRules(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var f Form
-			f = tt.input
+			f := tt.input
 			err := Bind(&f)
 
 			if tt.wantErrors == 0 {
@@ -524,8 +522,7 @@ func TestValidate_PointerFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var f Form
-			f = tt.input
+			f := tt.input
 			err := Bind(&f)
 
 			if (err != nil) != tt.wantErr {

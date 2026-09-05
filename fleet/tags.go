@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/nelthaarion/breeze"
-	"github.com/nelthaarion/breeze/dashboard"
 )
 
 // Caps. Defaults come from §10 (max_tags_per_span, max_baggage_bytes); the key
@@ -95,11 +94,6 @@ type requestState struct {
 	// tags are this span's own attributes. Nil until the first Tag call, so
 	// a request that never tags allocates nothing.
 	tags map[string]string
-
-	// recorder is the dashboard's timeline capture for this request, held so
-	// the emitted span can reuse the steps the dashboard already collected
-	// instead of instrumenting them twice. Nil when unsampled.
-	recorder *dashboard.TimelineRecorder
 
 	// tr is the tracer that created this state, held so Inject can use the
 	// configured transport's own header encoding and so the finished span

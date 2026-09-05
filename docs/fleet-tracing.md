@@ -234,16 +234,36 @@ failure modes.
 
 ## Running the example
 
-The complete three-service example is in `cmd/fleet-example`. The checked-in
-Compose file builds each service from the repository's multi-stage `Dockerfile`
-with `BREEZE_TARGET` and starts a gateway, auth service, orders service, and
-aggregator. Each container is gated on the previous one reporting healthy, so
-the first request cannot race startup:
+The complete three-service example is in `cmd/fleet-example`. The Compose file
+there uses runtime-only images: `cmd/fleet-example/build.ps1` cross-compiles the
+working tree on the host and `Dockerfile.prebuilt` copies the binaries in. Nothing
+is compiled inside a container, so what runs is the code currently checked out
+rather than whatever the module proxy serves for this import path — which matters
+while `fleet/` is unreleased. Each container is gated on the previous one reporting
+healthy, so the first request cannot race startup:
 
 ```bash
+powershell -File cmd/fleet-example/build.ps1     # or: pwsh -File ...
 docker compose -f cmd/fleet-example/docker-compose.yml up --build
 curl http://localhost:3000/api/orders/123
 ```
+
+Re-run the build script after changing Go code; `docker compose build` alone will
+not recompile it.
+
+The gateway additionally serves an in-process MCP control endpoint on `:2100` —
+app-runtime mode, `runtime`-scoped token, `fleet-demo-mcp-token`:
+
+```bash
+curl -H "Authorization: Bearer fleet-demo-mcp-token" http://127.0.0.1:2100/mcp/features
+```
+
+Both permission layers are visible in that answer. App-runtime mode removed the
+generating and provisioning tools from the registry — there is no source tree in the
+container for them to act on — and the `runtime` scope then withheld the fleet tools
+from this particular token, so `breeze_get_trace` returns a structured refusal naming
+the `fleet` capability. `BREEZE_MCP_SCOPE` widens it; removing the line issues an
+unscoped token; unsetting `BREEZE_MCP_PORT` disables the endpoint entirely.
 
 Every service exposes `/healthz` for those probes and deliberately excludes it
 from tracing, along with the orders service's `/openapi.json` and `/chaos/*`

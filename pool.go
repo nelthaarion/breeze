@@ -224,6 +224,7 @@ func releaseResponse(r *HTTPResponse) {
 	r.Headers = nil
 	r.headersShared = false
 	r.rawHeaders = nil
+	r.ctypePinned = false
 	r.Body = nil
 	responsePool.Put(r)
 }

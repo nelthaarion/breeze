@@ -176,6 +176,23 @@ type ModelConfig struct {
 	Name   string        `yaml:"name"`
 	Table  string        `yaml:"table"`
 	Fields []FieldConfig `yaml:"fields"`
+	// Filename overrides the file the model is written to, within the directory
+	// the kind writes into. Empty means the existing convention: the snake_case
+	// form of Name plus ".go".
+	//
+	// It is declared here rather than only as a CLI flag because that is what
+	// makes it settable both ways at once and visible in the JSON Schema without
+	// anything in internal/mcp/ changing — the property this whole file exists
+	// to provide. The flag name is read off this tag, not written out again.
+	Filename string `yaml:"filename"`
+	// Package overrides the package clause of the generated file. Empty means
+	// the existing convention: the name of the directory it lands in.
+	//
+	// An override is validated as a Go identifier and checked against the
+	// packages already declared in that directory, because a file whose package
+	// disagrees with its neighbours does not compile and the compiler's error
+	// names neither the flag nor the config key that caused it.
+	Package string `yaml:"package"`
 }
 
 // FieldConfig is one field of a model.

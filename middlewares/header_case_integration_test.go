@@ -91,10 +91,10 @@ func TestJWT_HappyPathViaParseHTTPRequest(t *testing.T) {
 		AccessSecret:  secret,
 		SigningMethod: jwt.SigningMethodHS256,
 	})
-	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
+	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
 		handlerCalled = true
 		storedClaims, _ = ctx.Get("user")
-		ctx.WriteString("ok")
+		return ctx.WriteString("ok")
 	})
 
 	if !handlerCalled {
@@ -129,8 +129,10 @@ func TestJWT_MissingHeaderViaParseHTTPRequest(t *testing.T) {
 		AccessSecret:  secret,
 		SigningMethod: jwt.SigningMethodHS256,
 	})
-	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
+	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
 		handlerCalled = true
+
+		return nil
 	})
 
 	if handlerCalled {
@@ -158,8 +160,10 @@ func TestJWT_InvalidTokenViaParseHTTPRequest(t *testing.T) {
 		AccessSecret:  secret,
 		SigningMethod: jwt.SigningMethodHS256,
 	})
-	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
+	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
 		handlerCalled = true
+
+		return nil
 	})
 
 	if handlerCalled {
@@ -191,9 +195,9 @@ func TestJWT_LowercaseHeaderKeyViaParseHTTPRequest(t *testing.T) {
 		AccessSecret:  secret,
 		SigningMethod: jwt.SigningMethodHS256,
 	})
-	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
+	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
 		handlerCalled = true
-		ctx.WriteString("ok")
+		return ctx.WriteString("ok")
 	})
 
 	if !handlerCalled {
@@ -214,8 +218,8 @@ func TestCompression_GzipViaParseHTTPRequest(t *testing.T) {
 	ctx := parseRequest(t, raw)
 
 	mw := CompressionMiddleware()
-	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
-		ctx.HTML(originalBody)
+	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
+		return ctx.HTML(originalBody)
 	})
 
 	if ctx.Res == nil {
@@ -252,8 +256,8 @@ func TestCompression_NoAcceptEncodingViaParseHTTPRequest(t *testing.T) {
 	ctx := parseRequest(t, raw)
 
 	mw := CompressionMiddleware()
-	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
-		ctx.HTML(originalBody)
+	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
+		return ctx.HTML(originalBody)
 	})
 
 	if ctx.Res == nil {
@@ -278,8 +282,8 @@ func TestCompression_BrotliViaParseHTTPRequest(t *testing.T) {
 	ctx := parseRequest(t, raw)
 
 	mw := CompressionMiddleware()
-	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
-		ctx.HTML(originalBody)
+	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
+		return ctx.HTML(originalBody)
 	})
 
 	if ctx.Res == nil {
@@ -305,8 +309,8 @@ func TestETag_FirstRequestSetsETagViaParseHTTPRequest(t *testing.T) {
 	ctx := parseRequest(t, raw)
 
 	mw := cache.ETagMiddleware()
-	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
-		ctx.WriteString("version-1-body")
+	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
+		return ctx.WriteString("version-1-body")
 	})
 
 	if ctx.Res == nil {
@@ -333,8 +337,8 @@ func TestETag_IfNoneMatchReturns304ViaParseHTTPRequest(t *testing.T) {
 		"\r\n")
 	ctx1 := parseRequest(t, raw1)
 	mw := cache.ETagMiddleware()
-	runChain(ctx1, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
-		ctx.WriteString("version-1-body")
+	runChain(ctx1, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
+		return ctx.WriteString("version-1-body")
 	})
 	etag := ctx1.GetHeader("ETag")
 	if etag == "" {
@@ -347,8 +351,8 @@ func TestETag_IfNoneMatchReturns304ViaParseHTTPRequest(t *testing.T) {
 		"If-None-Match: " + etag + "\r\n" +
 		"\r\n")
 	ctx2 := parseRequest(t, raw2)
-	runChain(ctx2, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
-		ctx.WriteString("version-1-body")
+	runChain(ctx2, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
+		return ctx.WriteString("version-1-body")
 	})
 
 	if ctx2.Res.Status != 304 {
@@ -366,8 +370,8 @@ func TestETag_IfNoneMatchMismatchReturns200ViaParseHTTPRequest(t *testing.T) {
 	raw1 := []byte("GET /api/data HTTP/1.1\r\nHost: example.com\r\n\r\n")
 	ctx1 := parseRequest(t, raw1)
 	mw := cache.ETagMiddleware()
-	runChain(ctx1, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
-		ctx.WriteString("v1")
+	runChain(ctx1, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
+		return ctx.WriteString("v1")
 	})
 
 	// Second request with non-matching If-None-Match.
@@ -376,8 +380,8 @@ func TestETag_IfNoneMatchMismatchReturns200ViaParseHTTPRequest(t *testing.T) {
 		"If-None-Match: \"stale-etag-that-does-not-match\"\r\n" +
 		"\r\n")
 	ctx2 := parseRequest(t, raw2)
-	runChain(ctx2, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
-		ctx.WriteString("v1")
+	runChain(ctx2, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
+		return ctx.WriteString("v1")
 	})
 
 	if ctx2.Res.Status != 200 {
@@ -404,8 +408,10 @@ func TestCORS_OptionsPreflightViaParseHTTPRequest(t *testing.T) {
 
 	var handlerCalled bool
 	mw := CORSMiddleware(opts)
-	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
+	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
 		handlerCalled = true
+
+		return nil
 	})
 
 	// CORS should short-circuit OPTIONS with 204.
@@ -451,8 +457,10 @@ func TestCORS_GetRequestSetsHeadersViaParseHTTPRequest(t *testing.T) {
 	mw := CORSMiddleware(opts)
 	// Handler does NOT call WriteString/JSON/HTML — it leaves ctx.Res
 	// alone so the CORS headers survive.
-	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
+	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
 		handlerCalled = true
+
+		return nil
 	})
 
 	if !handlerCalled {
@@ -489,8 +497,10 @@ func TestJWT_ExpiredTokenViaParseHTTPRequest(t *testing.T) {
 		AccessSecret:  secret,
 		SigningMethod: jwt.SigningMethodHS256,
 	})
-	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) {
+	runChain(ctx, []breeze.HandlerFunc{mw}, func(ctx *breeze.Context) error {
 		handlerCalled = true
+
+		return nil
 	})
 
 	if handlerCalled {

@@ -23,12 +23,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"sync"
+	"sync/atomic"
 )
 
 // captureMu serialises captures.
 //
 // os.Stdout is process-global, so two concurrent captures would each restore
+
 // whatever they happened to see, and one would restore the other's pipe as the
 // real stdout — permanently. rpc dispatch can run handlers concurrently, so this
 // is a real possibility rather than a theoretical one.
@@ -38,14 +41,63 @@ import (
 // too.
 var captureMu sync.Mutex
 
+// captureHolder identifies the goroutine currently inside captureStdout, or is
+// empty when no capture is running.
+//
+// This exists because the lock above is not reentrant, and the mistake it
+// prevents is easy to make and expensive to diagnose: a caller that wraps a
+// capture around something which captures internally — a tool, or a sandbox run —
+// waits for a lock its own goroutine is holding. sync.Mutex has no owner and no
+// deadlock detection, so the runtime cannot see that nothing will ever release
+// it. The process does not crash and no test fails; the call simply never
+// returns, and `go test` reports it ten minutes later as a package-wide timeout
+// with a stack dump that names the lock rather than the nesting.
+//
+// Reporting it instead turns that into an immediate, located failure.
+var captureHolder atomic.Value
+
+// goroutineID returns the current goroutine's id.
+//
+// Parsing it out of a stack header is not something to do on a hot path, and
+// this is not one: it runs twice per generator invocation, each of which is
+// already writing files. It is the only way to identify a goroutine from
+// portable Go, and identity is the whole point — the guard has to distinguish
+// "this goroutine is nesting" (a bug, and a hang) from "another goroutine is
+// waiting" (correct, and what the lock is for).
+func goroutineID() string {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	// The header is "goroutine 123 [running]:\n".
+	fields := bytes.Fields(buf[:n])
+	if len(fields) < 2 {
+		return ""
+	}
+	return string(fields[1])
+}
+
 // captureStdout runs fn with os.Stdout redirected, returning what fn printed.
 //
 // The returned error is fn's own. A failure to set up the pipe is reported
 // separately, because the two mean different things to a caller: one is a bad
 // request, the other is a broken process.
+//
+// Captures must not nest. A nested call is refused rather than deadlocking; see
+// captureHolder.
 func captureStdout(fn func() error) (string, error) {
+	self := goroutineID()
+	if holder, ok := captureHolder.Load().(string); ok && holder != "" && holder == self {
+		return "", fmt.Errorf("mcp: captureStdout is already running on goroutine %s: "+
+			"nesting it would deadlock, because the lock that makes stdout redirection and chdir "+
+			"safe is process-wide and not reentrant; call the inner operation directly instead of "+
+			"wrapping it in another capture", self)
+	}
+
 	captureMu.Lock()
-	defer captureMu.Unlock()
+	captureHolder.Store(self)
+	defer func() {
+		captureHolder.Store("")
+		captureMu.Unlock()
+	}()
 
 	r, w, err := os.Pipe()
 	if err != nil {

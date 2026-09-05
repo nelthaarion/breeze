@@ -62,7 +62,6 @@ func TraceIDOf(ctx *breeze.Context) string {
 	return st.tc.TraceIDHex()
 }
 
-
 // Middleware returns the Breeze middleware that traces every request.
 //
 // With a disabled or nil tracer it returns a pass-through that calls ctx.Next()
@@ -70,13 +69,13 @@ func TraceIDOf(ctx *breeze.Context) string {
 // tracing turned off costs one function call per request.
 func Middleware(t *Tracer) breeze.HandlerFunc {
 	if !t.Enabled() {
-		return func(ctx *breeze.Context) { ctx.Next() }
+		return func(ctx *breeze.Context) error { return ctx.Next() }
 	}
 
 	service := t.cfg.ServiceName
 	resolve := t.cfg.RouteResolver
 
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 
 		// ── Inbound: adopt or start a trace ──────────────────────────
 		//
@@ -117,7 +116,12 @@ func Middleware(t *Tracer) breeze.HandlerFunc {
 		ctx.Set(ctxStateKey, st)
 
 		// ── Run the rest of the chain ────────────────────────────────
-		ctx.Next()
+		//
+		// Held rather than returned: the span emitted below is the whole point of this
+		// middleware, and a failing request is the one a trace is most needed for.
+		// Returning early would make errors invisible to Fleet — the exact opposite of
+		// what tracing is for.
+		chainErr := ctx.Next()
 
 		// ── Outbound: emit the span ──────────────────────────────────
 		//
@@ -147,7 +151,7 @@ func Middleware(t *Tracer) breeze.HandlerFunc {
 		// span, no export.
 		kind := exportFor(st.sampled, status, errText)
 		if kind == exportNone {
-			return
+			return chainErr
 		}
 
 		// Strings from ctx.Req are views into the connection's read
@@ -198,6 +202,8 @@ func Middleware(t *Tracer) breeze.HandlerFunc {
 		}
 
 		t.RecordSpan(s)
+
+		return chainErr
 	}
 }
 

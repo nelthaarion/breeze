@@ -47,7 +47,13 @@ func fail(ctx *breeze.Context, cfg *Config, status int, err error) {
 // returns a pointer suitable for sharing across all requests to the handler.
 // Normalizing per-handler (not per-request) keeps the hot path allocation-free:
 // no defaults are recomputed on each request.
-func prepareConfig(cfg Config) *Config {
+//
+// It also returns the provider's diagnostic counters, resolved here because this is
+// the one place every constructor passes through and the only place that can still
+// see whether CookieSecret was supplied — normalize() fills it with a random value,
+// after which the two cases are indistinguishable.
+func prepareConfig(cfg Config) (*Config, *flowCounts) {
+	generatedKey := cfg.CookieSecret == ""
 	cfg.mustNormalize()
-	return &cfg
+	return &cfg, noteFlow(&cfg, generatedKey)
 }

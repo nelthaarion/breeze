@@ -3,6 +3,7 @@ package breeze
 import (
 	"fmt"
 	"runtime/debug"
+	"sync/atomic"
 
 	"github.com/panjf2000/gnet/v2"
 )
@@ -11,6 +12,11 @@ type Breeze struct {
 	*gnet.BuiltinEventEngine
 	Router *Router
 	Pool   *WorkerPool
+
+	// listenPort is the port passed to Run, recorded so code that has the
+	// application but not its bootstrap can learn the address it is answering
+	// on. See ListenPort.
+	listenPort atomic.Int64
 
 	// inlineExec runs non-blocking routes directly on the gnet event-loop
 	// goroutine instead of dispatching them to the worker pool. See
@@ -24,6 +30,19 @@ type Breeze struct {
 
 	// WebSocket support — initialised lazily by WebSocket().
 	wsHubFields
+
+	// Auto-MCP support — the tagged-route endpoint's address, recorded by
+	// EnableMCP. Declared in mcp_server.go, beside the code that uses it.
+	mcpFields
+
+	// ErrorHandler turns an error returned by a handler or middleware into a
+	// response. Nil means the framework default; see error.go.
+	//
+	// Exported and settable rather than a constructor argument, because an
+	// application usually decides its error format after it has routes worth
+	// failing, and because a nil field is a legible "I have not chosen" — which
+	// handleChainError treats as the default rather than as an absent response.
+	ErrorHandler ErrorHandler
 }
 
 // compactThreshold: compact the leftover slice when the unused capacity
@@ -53,12 +72,16 @@ var (
 // deprecated breeze.NewWorkerPool(n) also works (it uses OverflowSpawn
 // for backward compatibility).
 func New(router *Router, pool *WorkerPool) *Breeze {
-	return &Breeze{
+	s := &Breeze{
 		BuiltinEventEngine: &gnet.BuiltinEventEngine{},
 		Router:             router,
 		Pool:               pool,
 		inlineExec:         true,
 	}
+	// Publish the router, pool, Auto-MCP and WebSocket probes. Four registry
+	// appends, once, at construction; see diag.go.
+	s.registerCoreDiagnostics()
+	return s
 }
 
 // SetInlineExecution enables or disables inline handler execution.
@@ -130,9 +153,10 @@ func (s *Breeze) SetInlineExecution(enabled bool) {
 // What is NOT safe is keeping any of those strings after the handler returns:
 //
 //	var lastPath string
-//	app.Handle(GET, "/x", func(c *breeze.Context) {
+//	app.Handle(GET, "/x", func(c *breeze.Context) error {
 //	    lastPath = c.Req.Path          // ✗ dangles once the handler returns
 //	    lastPath = strings.Clone(c.Req.Path) // ✓
+//	    return nil
 //	})
 //
 // The failure mode is not a crash — the bytes stay mapped and readable — it is
@@ -368,7 +392,12 @@ func (s *Breeze) runInline(c gnet.Conn, ctx *Context) {
 		}
 	}()
 
-	ctx.Next()
+	if err := ctx.Next(); err != nil {
+		// The error becomes a response here rather than being logged and dropped.
+		// handleChainError always leaves ctx.Res non-nil, so the write below sends
+		// it — which is the whole contract Part 1's error return depends on.
+		s.handleChainError(ctx, err)
+	}
 
 	if ctx.Res != nil {
 		bp := acquireWireBuf()
@@ -395,7 +424,11 @@ func (s *Breeze) dispatch(c gnet.Conn, ctx *Context) {
 				_ = c.AsyncWrite(resp500, nil)
 			}
 		}()
-		ctx.Next()
+		if err := ctx.Next(); err != nil {
+			// Same contract as runInline: the error resolves to a response before
+			// the write below, so it cannot be lost on the worker path either.
+			s.handleChainError(ctx, err)
+		}
 		if ctx.Res != nil {
 			// Bytes allocates: AsyncWrite returns before the write happens
 			// and keeps the slice until the poller drains it, so this one
@@ -430,6 +463,10 @@ func (s *Breeze) OnClose(c gnet.Conn, err error) gnet.Action {
 }
 
 func (s *Breeze) Run(port int, multiCore bool) error {
+	// Recorded before the bind, so anything reading it during startup sees the
+	// port this call is for rather than zero. A failed bind leaves it set, which
+	// is harmless: Run returns the error and the process does not go on to serve.
+	s.listenPort.Store(int64(port))
 	return gnet.Run(
 		s,
 		fmt.Sprintf("tcp://:%d", port),
@@ -444,4 +481,20 @@ func (s *Breeze) Run(port int, multiCore bool) error {
 		// ring buffer before spilling to its linked-list buffer.
 		gnet.WithWriteBufferCap(64<<10),
 	)
+}
+
+// ListenPort reports the port passed to Run, or 0 before Run is called.
+//
+// This exists because a subsystem can be handed the application without being
+// handed its bootstrap. The dashboard's API Explorer is the case that needed it:
+// it makes a request back into the service it is installed in, and pinning that
+// request to the real listener is what stops the endpoint from being a
+// server-side request forgery primitive. Deriving the port from the request's
+// Host header instead would mean a caller-supplied header decided where the
+// server connected — the same hole in a different field.
+//
+// Atomic because Run is usually the main goroutine while readers are handlers on
+// event-loop or worker goroutines.
+func (s *Breeze) ListenPort() int {
+	return int(s.listenPort.Load())
 }

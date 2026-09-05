@@ -90,27 +90,29 @@ func ScalarMiddleware(router *breeze.Router, opts ScalarOptions) breeze.HandlerF
 	// OpenAPI document (and, for the UI, the page around it) on every request —
 	// milliseconds of work for a route that is hit by hand a few times a day.
 	// That is the opposite of what belongs on an event loop.
-	router.HandleBlocking(breeze.GET, opts.JSONPath, func(ctx *breeze.Context) {
+	router.HandleBlocking(breeze.GET, opts.JSONPath, func(ctx *breeze.Context) error {
 		data := scalar.Generate()
 		ctx.SetHeader("Content-Type", "application/json")
 		ctx.SetHeader("Access-Control-Allow-Origin", "*")
 		ctx.Status(200)
 		ctx.Res.Body = data
+
+		return nil
 	})
 
 	// Register the Scalar UI endpoint (if a path is configured).
 	if opts.UIPath != "" {
 		jsonPath := opts.JSONPath // capture for closure
-		router.HandleBlocking(breeze.GET, opts.UIPath, func(ctx *breeze.Context) {
+		router.HandleBlocking(breeze.GET, opts.UIPath, func(ctx *breeze.Context) error {
 			data := scalar.GenerateUI(jsonPath)
-			ctx.HTML(data)
+			return ctx.HTML(data)
 		})
 	}
 
 	// Return a pass-through middleware (OpenAPI doc collection happens at
 	// route registration via Doc(), not at request time).
-	return func(ctx *breeze.Context) {
-		ctx.Next()
+	return func(ctx *breeze.Context) error {
+		return ctx.Next()
 	}
 }
 
@@ -149,8 +151,8 @@ func Doc(method, path string, doc scalar.RouteDoc) breeze.HandlerFunc {
 	scalar.RegisterRoute(method, path, doc)
 
 	// The returned HandlerFunc is a transparent pass-through at runtime.
-	return func(ctx *breeze.Context) {
-		ctx.Next()
+	return func(ctx *breeze.Context) error {
+		return ctx.Next()
 	}
 }
 

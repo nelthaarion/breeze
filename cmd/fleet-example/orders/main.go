@@ -58,18 +58,18 @@ func main() {
 	router.Use(skipUntraced(fleet.Middleware(tr)))
 	router.Use(coll.Middleware())
 
-	router.Handle(breeze.GET, "/healthz", func(ctx *breeze.Context) {
-		ctx.JSON(map[string]string{"status": "ok", "service": "orders-service"})
+	router.Handle(breeze.GET, "/healthz", func(ctx *breeze.Context) error {
+		return ctx.JSON(map[string]string{"status": "ok", "service": "orders-service"})
 	})
 
 	// The document the aggregator's SchemaRegistry fetches whenever the hash in
 	// this service's heartbeat changes.
-	router.Handle(breeze.GET, "/openapi.json", func(ctx *breeze.Context) {
+	router.Handle(breeze.GET, "/openapi.json", func(ctx *breeze.Context) error {
 		ctx.SetHeader("Content-Type", "application/json")
-		ctx.WriteString(string(openAPIDocument))
+		return ctx.WriteString(string(openAPIDocument))
 	})
 
-	router.Handle(breeze.POST, "/internal/orders/:id", func(ctx *breeze.Context) {
+	router.Handle(breeze.POST, "/internal/orders/:id", func(ctx *breeze.Context) error {
 		id := ctx.Param("id")
 		fleet.Tag(ctx, "payment_provider", "stripe")
 
@@ -79,8 +79,7 @@ func main() {
 			coll.PushLogCtx(ctx, "error", "orders-service payment provider timed out for order "+id, "app")
 
 			ctx.Status(500)
-			ctx.JSON(map[string]string{"error": "payment provider timeout"})
-			return
+			return ctx.JSON(map[string]string{"error": "payment provider timeout"})
 		}
 
 		// PushLogCtx, so this line carries the trace id and lands in the
@@ -90,22 +89,21 @@ func main() {
 		// request that flipped it, not a step in anyone's trace.
 		coll.PushLogCtx(ctx, "info", "orders-service charged order "+id, "app")
 
-
 		// debug_note is the deliberate schema mismatch: undeclared, on a
 		// closed schema, so Contract Violations reports it as an error within
 		// seconds of this response being sampled.
-		ctx.JSON(map[string]any{"id": id, "state": "paid", "debug_note": "not declared in the response schema"})
+		return ctx.JSON(map[string]any{"id": id, "state": "paid", "debug_note": "not declared in the response schema"})
 	})
 
-	router.Handle(breeze.POST, "/chaos/fail", func(ctx *breeze.Context) {
+	router.Handle(breeze.POST, "/chaos/fail", func(ctx *breeze.Context) error {
 		fail.Store(true)
 		coll.PushLog("warning", "orders-service chaos enabled: now failing every order", "app")
-		ctx.JSON(map[string]bool{"failing": true})
+		return ctx.JSON(map[string]bool{"failing": true})
 	})
-	router.Handle(breeze.POST, "/chaos/recover", func(ctx *breeze.Context) {
+	router.Handle(breeze.POST, "/chaos/recover", func(ctx *breeze.Context) error {
 		fail.Store(false)
 		coll.PushLog("info", "orders-service chaos disabled: serving normally", "app")
-		ctx.JSON(map[string]bool{"failing": false})
+		return ctx.JSON(map[string]bool{"failing": false})
 	})
 
 	fmt.Printf("orders-service :%d — POST /chaos/fail toggles 500s\n", port)
@@ -125,15 +123,16 @@ func main() {
 //     span, and this service — the deepest hop in the fleet — starts rendering
 //     as an entry point in the topology graph alongside the gateway.
 func skipUntraced(traced breeze.HandlerFunc) breeze.HandlerFunc {
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 		if ctx.Req != nil {
 			p := ctx.Req.Path
 			if p == "/healthz" || p == "/openapi.json" || strings.HasPrefix(p, "/chaos/") {
-				ctx.Next()
-				return
+				return ctx.Next()
 			}
 		}
 		traced(ctx)
+
+		return nil
 	}
 }
 

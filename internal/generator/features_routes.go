@@ -77,6 +77,12 @@ func registerStatic() {
 				if !strings.HasPrefix(*prefix, "/") {
 					return featureOutput{}, fmt.Errorf("--prefix must start with a slash, got %q", *prefix)
 				}
+				// --root is both embedded in the generated ServeStatic call and
+				// used below to create the directory, so an unchecked value
+				// serves a directory outside the project *and* creates one.
+				if err := validatePathFlag("root", *root); err != nil {
+					return featureOutput{}, err
+				}
 
 				body := fmt.Sprintf(`func setupStatic(app *breeze.Breeze, router *breeze.Router) {
 	router.ServeStatic(%q, %q)
@@ -114,6 +120,10 @@ func registerVideo() {
 			opaque := fs.Bool("opaque", false, "hide filesystem detail from error responses")
 
 			return func(ctx featureCtx) (featureOutput, error) {
+				if err := validatePathFlag("root", *root); err != nil {
+					return featureOutput{}, err
+				}
+
 				var extra strings.Builder
 				var imports []string
 
@@ -264,6 +274,20 @@ func registerTemplates() {
 			spa := fs.Bool("spa", true, "enable client-side navigation via EnableReRender")
 
 			return func(ctx featureCtx) (featureOutput, error) {
+				// All three name directories or files the generator creates, and
+				// all three are embedded in the generated TemplateConfig, so an
+				// escape here both writes outside the project and produces an app
+				// that reads templates from there at runtime.
+				for _, f := range []struct{ name, value string }{
+					{"views", *viewsDir},
+					{"components", *componentsDir},
+					{"layout", *layout},
+				} {
+					if err := validatePathFlag(f.name, f.value); err != nil {
+						return featureOutput{}, err
+					}
+				}
+
 				reRender := ""
 				if *spa {
 					reRender = `

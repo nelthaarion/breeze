@@ -18,6 +18,7 @@ package generator
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -70,10 +71,10 @@ func (c *ProjectConfig) validateFleet() []string {
 	var errs []string
 
 	switch {
-	case !contains(fleetTransports, c.Fleet.Transport):
+	case !slices.Contains(fleetTransports, c.Fleet.Transport):
 		errs = append(errs, fmt.Sprintf("fleet.transport %q is not one of %s",
 			c.Fleet.Transport, strings.Join(fleetTransports, ", ")))
-	case !contains(fleetImplementedTransports, c.Fleet.Transport):
+	case !slices.Contains(fleetImplementedTransports, c.Fleet.Transport):
 		errs = append(errs, fmt.Sprintf(
 			"fleet.transport %q is defined by the Fleet specification but has no transport implementation in the fleet package yet, so it cannot be generated â€” currently generatable: %s",
 			c.Fleet.Transport, strings.Join(fleetImplementedTransports, ", ")))
@@ -82,10 +83,10 @@ func (c *ProjectConfig) validateFleet() []string {
 	// Backend is meaningful only for the events transport. Setting it elsewhere
 	// is a no-op rather than an error, but a *wrong* value is still reported so
 	// a typo does not lie dormant until the transport is switched.
-	if !contains(fleetBackends, c.Fleet.Backend) {
+	if !slices.Contains(fleetBackends, c.Fleet.Backend) {
 		errs = append(errs, fmt.Sprintf("fleet.backend %q is not one of %s",
 			c.Fleet.Backend, strings.Join(fleetBackends, ", ")))
-	} else if c.Fleet.Transport == "events" && !contains(fleetImplementedBackends, c.Fleet.Backend) {
+	} else if c.Fleet.Transport == "events" && !slices.Contains(fleetImplementedBackends, c.Fleet.Backend) {
 		errs = append(errs, fmt.Sprintf(
 			"fleet.backend %q has no implementation in the events package yet â€” currently generatable: %s",
 			c.Fleet.Backend, strings.Join(fleetImplementedBackends, ", ")))
@@ -215,7 +216,7 @@ func (c *ProjectConfig) validateRoutes() []string {
 		seen[r.Resource] = true
 
 		for _, m := range r.Methods {
-			if !contains(httpMethods, strings.ToUpper(m)) {
+			if !slices.Contains(httpMethods, strings.ToUpper(m)) {
 				errs = append(errs, fmt.Sprintf("route %s method %q is not an HTTP method", r.Resource, m))
 			}
 		}
@@ -512,13 +513,4 @@ func (c *ProjectConfig) ResolveModelOrder() ([]ModelConfig, error) {
 		visit(name)
 	}
 	return out, nil
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

@@ -25,7 +25,7 @@ import (
 // subtle.ConstantTimeCompare) to avoid timing side channels.
 func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 	if cfg.DisableAuth || cfg.Username == "" || cfg.Password == "" {
-		return func(ctx *breeze.Context) { ctx.Next() }
+		return func(ctx *breeze.Context) error { return ctx.Next() }
 	}
 	wantUser := []byte(cfg.Username)
 	wantPass := hashPass(cfg.Password)
@@ -34,7 +34,7 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 		base = "/dashboard"
 	}
 	loginPath := base + "/login"
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 		// Allow the login page itself and the login POST endpoint without auth.
 		p := ctx.Req.Path
 		if p == loginPath || p == base {
@@ -46,8 +46,7 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 		if token != "" {
 			if username, ok := sessions.valid(token); ok {
 				ctx.Set("breeze.dashboard.user", username)
-				ctx.Next()
-				return
+				return ctx.Next()
 			}
 		}
 		// No valid session — check for Basic Auth as a fallback (API clients).
@@ -58,8 +57,7 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 				subtle.ConstantTimeCompare([]byte(user), wantUser) == 1 &&
 				subtle.ConstantTimeCompare(hashPass(pass), wantPass) == 1 {
 				ctx.Set("breeze.dashboard.user", user)
-				ctx.Next()
-				return
+				return ctx.Next()
 			}
 		}
 		// For API requests (JSON), return 401 JSON. For browser requests,
@@ -75,7 +73,7 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 				Body: []byte(`{"error":"unauthorized","login":"` + loginPath + `"}`),
 			}
 			ctx.Abort()
-			return
+			return nil
 		}
 		// For SPA partial requests, return 401 so the SPA runtime falls back
 		// to a full navigation (which will then redirect to login).
@@ -88,7 +86,7 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 				Body: []byte("unauthorized"),
 			}
 			ctx.Abort()
-			return
+			return nil
 		}
 		// Browser navigation: redirect to login.
 		ctx.Res = &breeze.HTTPResponse{
@@ -99,6 +97,8 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 			Body: []byte("redirecting to login..."),
 		}
 		ctx.Abort()
+
+		return nil
 	}
 }
 

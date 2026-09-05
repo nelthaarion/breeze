@@ -1,0 +1,55 @@
+version: 2
+
+builds:
+  - id: breeze
+    main: ./cmd/breeze
+    binary: breeze
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+  - id: breeze-mcp
+    main: ./cmd/breeze-mcp
+    binary: breeze-mcp
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: breeze
+    builds:
+      - breeze
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Os }}_{{ .Arch }}
+
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+  - id: breeze-mcp
+    builds:
+      - breeze-mcp
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}-mcp_{{ .Os }}_{{ .Arch }}
+
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: nelthaarion
+    name: breeze

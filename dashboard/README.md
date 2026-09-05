@@ -65,8 +65,16 @@ Detailed Go runtime metrics: Goroutines, Heap Alloc, Heap Sys, Stack In Use, GC 
 #### 5. Routes Explorer
 Every registered route with Method, Path, Requests, Avg Latency, Max Latency, Last Request, and Errors. Search by path or method.
 
+Routes wrapped in `scalar.Doc` also carry their own summary, description and tags, joined from the OpenAPI registry when the page is read. A route with no documentation is marked `documented: false` — which matters beyond presentation, because a route absent from the registry is also absent from the generated OpenAPI document, and therefore invisible to every client generator and every agent reading the spec.
+
 #### 6. API Explorer
 A native API client built into the dashboard (no Scalar redirect). Select any registered endpoint, set headers/body, and execute. The response is pretty-printed and one-click copy buttons generate ready-to-run snippets in **curl, Go, JavaScript, Python, C#, and PHP**.
+
+Documented routes get real request forms: body, query, path-parameter and header groups are derived from the route's `RouteDoc`, with each field's type and its `description:"…"` struct tag. Undocumented routes fall back to path parameters inferred from the pattern, typed as string.
+
+**The target is this service only.** The explorer sends its request to `127.0.0.1` on the port the application is listening on; a relative path is resolved against it, and an absolute URL is accepted only when it names that same origin. Redirects are returned rather than followed.
+
+This is a hard constraint rather than a convenience. A request the server makes comes from inside the deployment, so an unrestricted URL field would let anyone who reaches this endpoint read the cloud metadata service, any internal hostname the container can resolve, and every other port on the host — none of which they could reach directly. The dashboard's Basic Auth is not a sufficient gate for that, because it is disabled entirely when `Username` or `Password` is empty.
 
 #### 7. Database Browser
 Browse every table with pagination, search, and column metadata (type, nullable, primary key, index, defaults, foreign-key references). Read-only unless both `Config.AllowWrites` is `true` and the application has called `Collector.SetDBWriter` with a `DBWriter` implementation — in which case rows can be created, edited inline, and deleted directly from the browser. See [DBWriter](#dbwriter-optional-crud) below.
@@ -263,6 +271,7 @@ dashboard/
   api.go           — REST API handlers (all 14 pages)
   video_live.go    — Per-file live stream tracker (opt-in via AttachVideo)
   api_explorer.go  — API Explorer + multi-language code generation
+  explorer_target.go — Confines an explorer request to this service (SSRF guard)
   install.go       — Install() entry point + push API
   attach.go        — Attach() one-liner convenience
   spa.go           — SPA() returns the dashboard HTML shell

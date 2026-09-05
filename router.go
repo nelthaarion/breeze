@@ -6,7 +6,25 @@ import (
 	"strings"
 )
 
-type HandlerFunc func(*Context)
+// HandlerFunc is a route handler or middleware.
+//
+// # Why it returns an error
+//
+// It used to return nothing, which made "this request failed" unrepresentable.
+// Every handler had to decide for itself what a failure looked like on the wire,
+// so a nil map lookup became a 200 with an empty body in one place and a 500 in
+// another, and a middleware could not stop a chain without also inventing the
+// response. Returning an error moves that decision to one place: the handler says
+// what went wrong, and the framework's error path decides what the client sees.
+//
+// A non-nil error from any link in the chain — middleware or handler — stops the
+// chain and is handed to Breeze.ErrorHandler. It always produces a real response;
+// see errorHandler in error.go for why silence is not an option.
+//
+// Returning nil after writing a response is the normal case. Returning nil
+// without writing anything is also legal and yields a 404-shaped empty response,
+// exactly as before.
+type HandlerFunc func(*Context) error
 
 type route struct {
 	method   Method
@@ -142,6 +160,10 @@ type Router struct {
 	middlewares   []HandlerFunc
 	staticDir     string
 	autoServeRoot bool
+	// mcpTools holds the routes tagged with MCPTool, in registration order.
+	// It is the only place Auto-MCP learns which routes are exposed, so an
+	// untagged route cannot appear as a tool by any path.
+	mcpTools []mcpRoute
 
 	// byMethod is the per-method route index described above. r.routes stays
 	// the authoritative registration-ordered list for Routes()/RoutesInfo().
@@ -157,6 +179,21 @@ type Router struct {
 	// the chain is dispatched as blocking work — and reports 404 when the file
 	// is missing, which is what the lookup used to fall through to anyway.
 	autoIndexChain []HandlerFunc
+
+	// staticMounts records what ServeStatic was called with, for the "static"
+	// diagnostic probe.
+	//
+	// The routes themselves are already in r.routes, but a wildcard route gives
+	// no way to recover the directory behind it — and "which directory is this
+	// serving from" is the whole question when a static mount returns 404 for a
+	// file the developer can see on disk. Appended at registration only.
+	staticMounts []staticMount
+}
+
+// staticMount is one ServeStatic call, kept for diagnostics.
+type staticMount struct {
+	prefix string
+	root   string
 }
 
 func NewRouter() *Router {
@@ -164,16 +201,15 @@ func NewRouter() *Router {
 		staticDir:     "./public",
 		autoServeRoot: true,
 	}
-	r.autoIndexChain = []HandlerFunc{func(ctx *Context) {
+	r.autoIndexChain = []HandlerFunc{func(ctx *Context) error {
 		// staticDir is read here rather than captured so SetStaticDir keeps
 		// working after construction.
 		data, err := os.ReadFile(filepath.Join(r.staticDir, "index.html"))
 		if err != nil {
 			ctx.Status(404)
-			ctx.WriteString("Not Found")
-			return
+			return ctx.WriteString("Not Found")
 		}
-		ctx.HTML(data)
+		return ctx.HTML(data)
 	}}
 	return r
 }
@@ -280,6 +316,28 @@ func (r *Router) Handle(method Method, pattern string, handler HandlerFunc, midd
 		}
 	}
 
+	// Pull out any MCP tool tag before the middleware slice is copied.
+	//
+	// A tag declares what the route is; it is not a step in the chain. Leaving
+	// it in would put a no-op call in front of every request to this route,
+	// and would mean the chain an MCP call runs differs from the chain an HTTP
+	// call runs — the one property Auto-MCP most needs to hold.
+	//
+	// The filtered slice is built with a zero-capacity reslice so appending
+	// cannot write into the caller's backing array.
+	var mcpSpec *mcpToolSpec
+	if len(middlewares) > 0 {
+		kept := middlewares[:0:0]
+		for _, mw := range middlewares {
+			if spec := mcpSpecOf(mw); spec != nil {
+				mcpSpec = spec
+				continue
+			}
+			kept = append(kept, mw)
+		}
+		middlewares = kept
+	}
+
 	// Capture per-route middlewares for the final handler closure.
 	// We copy the slice so the caller can't mutate it after registration.
 	var routeMWs []HandlerFunc
@@ -292,10 +350,10 @@ func (r *Router) Handle(method Method, pattern string, handler HandlerFunc, midd
 	// Find method. OnTraffic uses findRoute (which returns the actual
 	// handler + routeMWs) to build the chain in one allocation, avoiding
 	// the double-build that finalHandler causes.
-	finalHandler := func(ctx *Context) {
+	finalHandler := func(ctx *Context) error {
 		ctx.middlewares = append(routeMWs, handler)
 		ctx.index = -1
-		ctx.Next()
+		return ctx.Next()
 	}
 
 	rt := &route{
@@ -316,6 +374,12 @@ func (r *Router) Handle(method Method, pattern string, handler HandlerFunc, midd
 
 	r.routes = append(r.routes, rt)
 	r.indexRoute(rt)
+
+	// Recorded after the route is built so the tool holds the same *route the
+	// index holds, and therefore the same chain — rebuilt in place by Use.
+	if mcpSpec != nil {
+		r.mcpTools = append(r.mcpTools, mcpRoute{spec: mcpSpec, rt: rt})
+	}
 }
 
 // HandleBlocking registers a route whose chain performs blocking work — file
@@ -366,7 +430,7 @@ func (r *Router) indexRoute(rt *route) {
 	}
 }
 
-// matchesSegments reports whether rt would match a request path split into
+// matchesSegments reports whether r would match a request path split into
 // segs. It is the registration-time counterpart of the matching loop in lookup
 // and must agree with it: a disagreement would either put a shadowed route in
 // the exact-path map (wrong route served) or keep an unshadowed one out of it
@@ -374,17 +438,17 @@ func (r *Router) indexRoute(rt *route) {
 //
 // Params are treated as matching anything, which is what makes this a shadow
 // test rather than an equality test.
-func (rt *route) matchesSegments(segs []string) bool {
-	if rt.hasWildcard {
+func (r *route) matchesSegments(segs []string) bool {
+	if r.hasWildcard {
 		// A wildcard route matches any path at least as long as its prefix.
-		if len(segs) < len(rt.segments) {
+		if len(segs) < len(r.segments) {
 			return false
 		}
-	} else if len(rt.segments) != len(segs) {
+	} else if len(r.segments) != len(segs) {
 		return false
 	}
-	for i, rseg := range rt.segments {
-		if !rt.paramIndex[i] && rseg != segs[i] {
+	for i, rseg := range r.segments {
+		if !r.paramIndex[i] && rseg != segs[i] {
 			return false
 		}
 	}

@@ -14,3 +14,23 @@
 # Coverage artifacts
 *.out
 coverage.html
+/.claude/
+
+# Host-built binaries for cmd/fleet-example's runtime-only images. Produced by
+# cmd/fleet-example/build.ps1 and consumed by Dockerfile.prebuilt; they are
+# platform-specific build output, not source.
+/.compose-bin/
+
+# One-shot migration tooling. Each tool here is written for a single breaking
+# change, run once across the tree, and then dead — it is not part of the
+# framework and carries its own go.mod so it is invisible to `go build ./...`.
+# Kept locally in case a migration has to be re-run against a stale branch,
+# never committed.
+/.migration/
+
+# Build and debug residue. Thirteen files of this shape were committed once
+# (build.log, vet.log, c_topo.json, and a file literally named
+# "$($f.FullName)" from an unexpanded PowerShell interpolation), so the
+# patterns are here rather than relying on care.
+*.log
+/c_*.json

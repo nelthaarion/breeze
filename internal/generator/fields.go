@@ -277,22 +277,3 @@ func sqlType(f field) string {
 	}
 	return "TEXT"
 }
-
-// zeroLiteral is a printable zero value for a field type, used by generated
-// example code so the stub compiles before the user fills it in.
-func zeroLiteral(f field) string {
-	switch f.Type {
-	case "string":
-		return `""`
-	case "bool":
-		return "false"
-	case "[]string":
-		return "nil"
-	case "time.Time":
-		return "time.Time{}"
-	case "time.Duration":
-		return "0"
-	default:
-		return "0"
-	}
-}

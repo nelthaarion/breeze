@@ -248,6 +248,9 @@ func registerI18n() {
 				if len(list) == 0 {
 					return featureOutput{}, fmt.Errorf("--locales cannot be empty")
 				}
+				if err := validatePathFlag("dir", *dir); err != nil {
+					return featureOutput{}, err
+				}
 				def := list[0]
 
 				body := fmt.Sprintf(`// I18n holds the loaded message catalogs. Look up a translation with the
@@ -313,6 +316,22 @@ func registerJWT() {
 					extra.WriteString("\t\tEnableRefreshToken: true,\n")
 				}
 
+				// The refresh secret gets its own check, because setupJwt would
+				// otherwise pass on a config whose refresh path verifies against
+				// "" — and a forged refresh token is exchanged for an access
+				// token the middleware signs itself. JWTAuthMiddleware panics on
+				// it either way; this names the variable.
+				var refreshCheck string
+				if *refresh {
+					refreshCheck = fmt.Sprintf(`
+	if os.Getenv(%[1]q) == "" {
+		log.Fatal(%[1]q + " is not set and refresh tokens are enabled. A refresh token " +
+			"verified against an empty secret can be forged, and the middleware would " +
+			"exchange it for a genuine access token.")
+	}
+`, *secretEnv+"_REFRESH")
+				}
+
 				body := fmt.Sprintf(`// JWTAuth returns the bearer-token middleware for routes that require a
 // signed caller.
 //
@@ -334,17 +353,19 @@ func JWTAuth() breeze.HandlerFunc {
 
 func setupJwt(app *breeze.Breeze, router *breeze.Router) {
 	// Nothing global â€” see JWTAuth above. An empty secret is not a
-	// configuration detail: HS256 verification against "" fails for every
-	// token, so the routes you meant to protect become permanently
-	// unreachable. Say so at boot rather than leaving it to be diagnosed from
-	// a wall of 401s.
+	// configuration detail: an empty string is a valid HMAC key, so every token
+	// an attacker signs with "" verifies, carrying whatever claims they chose —
+	// including any role. JWTAuthMiddleware panics on it; this fails first, and
+	// names the variable to set.
 	if os.Getenv(%[1]q) == "" {
-		log.Println("warning: %[1]s is not set â€” JWTAuth will reject every token")
+		log.Fatal("%[1]s is not set. Verifying against an empty secret accepts any token an attacker signs, so this build refuses to start.")
 	}
-}`, *secretEnv, extra.String(), *contextKey)
+%[4]s}`, *secretEnv, extra.String(), *contextKey, refreshCheck)
 
 				notes := []string{
-					fmt.Sprintf("Set %s before starting the app.", *secretEnv),
+					fmt.Sprintf("Set %s before starting the app. The app now exits without it: "+
+						"an empty signing secret accepts forged tokens rather than rejecting them.",
+						*secretEnv),
 					"Apply per route: router.Handle(breeze.GET, \"/me\", handlers.Me, JWTAuth()).",
 				}
 				if *refresh {

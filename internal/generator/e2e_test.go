@@ -116,7 +116,9 @@ func scaffoldE2E(t *testing.T, name string) {
 	if !strings.Contains(string(content), "require "+breezeModulePath) {
 		b.WriteString("\nrequire " + breezeModulePath + " v0.0.0\n")
 	}
-	b.WriteString("\nreplace " + breezeModulePath + " => " + filepath.ToSlash(repoRoot) + "\n")
+	b.WriteString("\nreplace " + breezeModulePath + " => ")
+	b.WriteString(filepath.ToSlash(repoRoot))
+	b.WriteString("\n")
 
 	if err := os.WriteFile(goMod, []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)

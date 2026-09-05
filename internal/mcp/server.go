@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/nelthaarion/breeze/rpc"
 )
@@ -29,6 +30,25 @@ type Server struct {
 	order []string
 	// version is reported in the handshake.
 	version string
+	// mode is the server kind, reported in the handshake as breezeServerKind and
+	// used by NewServerForMode to decide what gets registered at all. Set by that
+	// constructor; NewServer leaves it unset because NewServer is the internal
+	// "everything" builder that every mode filters down from.
+	mode ServerMode
+
+	// scope is the capability set of the token this server answers for.
+	//
+	// A field on the Server rather than a per-request value because a token is minted
+	// with its scope and never changes it: one Server serves one credential, which is
+	// what makes the initialize snapshot accurate for the whole session. A future
+	// multi-token server would carry this per connection instead, and the handshake
+	// would then have to be built per connection too — the comment in protocol.go on
+	// BreezeCapabilities says why that is not needed today.
+	scope Scope
+
+	// logger receives one Event per dispatched call, or nil. See observe.go for why the
+	// events carry no argument values.
+	logger Logger
 }
 
 // tool is one callable.
@@ -55,6 +75,15 @@ func NewServer(version string) *Server {
 	s.registerMethods()
 	registerGeneratorTools(s)
 	registerIntrospectionTools(s)
+	registerPlanningTools(s)
+	registerChangeSetTools(s)
+	registerKnowledgeTools(s)
+	registerVerificationTools(s)
+	registerSimulationTools(s)
+	registerLiveTools(s)
+	registerFleetTools(s)
+	registerProvisioningTools(s)
+
 	s.sortTools()
 
 	return s
@@ -85,6 +114,36 @@ func (s *Server) sortTools() {
 	sort.Strings(s.order)
 }
 
+// visibleNames is the tools this server's token may call, sorted.
+//
+// Separate from order because order is the registry and this is what a caller may
+// see. Used in the unknown-tool message so a refusal never advertises a capability
+// the caller does not have.
+func (s *Server) visibleNames() []string {
+	if !s.scope.IsScoped() {
+		return s.order
+	}
+	out := make([]string, 0, len(s.order))
+	for _, name := range s.order {
+		if s.scope.AllowsTool(name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// SetScope narrows what this server's token may call.
+//
+// A setter rather than a NewServer parameter because scope is a property of the
+// credential the transport authenticated, and the transport is constructed after the
+// Server. NewNetworkServer calls this from its own configuration, so the two cannot
+// disagree about which token they are serving.
+func (s *Server) SetScope(scope Scope) { s.scope = scope }
+
+// Scope reports the capability set in force, so a transport can answer a question
+// about permissions without a second copy of the state.
+func (s *Server) Scope() Scope { return s.scope }
+
 // registerMethods wires the three MCP methods.
 //
 // All three are registered as blocking. The generators touch the filesystem and
@@ -107,6 +166,7 @@ func (s *Server) registerMethods() {
 
 // handleInitialize answers the handshake.
 func (s *Server) handleInitialize(ctx *rpc.Context) {
+	s.emit(Event{Kind: EventHandshake})
 	ctx.Result(initializeResult{
 		ProtocolVersion: protocolVersion,
 		Capabilities:    serverCapabilities{},
@@ -114,13 +174,52 @@ func (s *Server) handleInitialize(ctx *rpc.Context) {
 			Name:    serverName,
 			Version: s.version,
 		},
+		BreezeServerKind:   s.mode,
+		BreezeCapabilities: s.capabilityReport(),
 	})
 }
 
+// capabilityReport builds the capability half of the handshake.
+//
+// It reports the effective scope intersected with what this server actually has: an
+// app-runtime server whose token grants "provisioning" does not claim provisioning,
+// because there is no provisioning tool registered to reach. Reporting the raw token
+// scope would tell an agent it may do something that will then fail as an unknown
+// tool, which is the least useful order to learn those two facts in.
+func (s *Server) capabilityReport() *capabilityReport {
+	present := map[Capability]bool{}
+	for name := range s.tools {
+		if c, ok := capabilityOf(name); ok {
+			present[c] = true
+		}
+	}
+
+	granted := make([]Capability, 0, len(present))
+	for _, c := range s.scope.Granted() {
+		if present[c] {
+			granted = append(granted, c)
+		}
+	}
+
+	return &capabilityReport{
+		Granted: capabilityNames(granted),
+		Known:   capabilityNames(KnownCapabilities()),
+		Scoped:  s.scope.IsScoped(),
+	}
+}
+
 // handleToolsList enumerates the tools.
+//
+// Filtered by the connection's scope, which is what actually enforces it: the
+// initialize payload tells an agent what to expect, this decides what it can see. A
+// tool withheld here is simply not advertised, so a well-behaved agent never attempts
+// it — and handleToolsCall refuses it anyway for one that does.
 func (s *Server) handleToolsList(ctx *rpc.Context) {
 	list := make([]toolDescriptor, 0, len(s.order))
 	for _, name := range s.order {
+		if !s.scope.AllowsTool(name) {
+			continue
+		}
 		t := s.tools[name]
 		list = append(list, toolDescriptor{
 			Name:        t.name,
@@ -150,9 +249,45 @@ func (s *Server) handleToolsCall(ctx *rpc.Context) {
 		// name inside its params is what does not resolve.
 		//
 		// The known names are listed because the caller is often a model that
-		// guessed, and a list turns a dead end into a correction.
+		// guessed, and a list turns a dead end into a correction. Only the visible
+		// ones: listing a tool the caller cannot call would be an invitation to
+		// retry something that will be refused identically.
+		s.emit(Event{Kind: EventToolUnknown, Tool: p.Name})
 		ctx.Errorf(rpc.CodeInvalidParams,
-			fmt.Sprintf("unknown tool %q; available: %s", p.Name, strings.Join(s.order, ", ")))
+			fmt.Sprintf("unknown tool %q; available: %s", p.Name, strings.Join(s.visibleNames(), ", ")))
+		return
+	}
+
+	// Out of scope is refused as a structured tool result rather than a JSON-RPC
+	// error, because the request was well-formed and the tool does exist: the answer
+	// is "no", which is an outcome a model can read and act on. A -32602 would say
+	// the call was malformed, which is a different and misleading thing.
+	//
+	// Checked here as well as in tools/list because a client may have cached a
+	// listing, or may be calling a name it read in documentation.
+	if !s.scope.AllowsTool(p.Name) {
+		capability, classified := capabilityOf(p.Name)
+		detail := map[string]any{
+			"tool":               p.Name,
+			"refused":            true,
+			"reason":             "outside this token's granted capabilities",
+			"granted":            capabilityNames(s.scope.Granted()),
+			"known":              capabilityNames(KnownCapabilities()),
+			"retry_will_succeed": false,
+		}
+		if classified {
+			detail["requires"] = string(capability)
+		}
+		s.emit(Event{
+			Kind:   EventToolRefused,
+			Tool:   p.Name,
+			Reason: string(capability),
+		})
+		ctx.Result(structuredErrorResult(
+			fmt.Sprintf("%s is outside this token's scope; it requires the %q capability, which this "+
+				"token was not granted. A different token is needed — retrying will not help.",
+				p.Name, capability),
+			detail))
 		return
 	}
 
@@ -160,13 +295,40 @@ func (s *Server) handleToolsCall(ctx *rpc.Context) {
 	// for a long-lived editor integration means the user's tools stop working
 	// with no explanation. Converting it to a failed tool result keeps the
 	// session alive and puts the reason in front of whoever can act on it.
+	started := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
+			// The panic value is not logged. It is composed at the panic site and can
+			// hold anything the panicking code had in hand — a path, a captured output,
+			// an argument. It goes to the caller, who asked for this tool; it does not
+			// go to a log file that outlives the process. Event.Tool says which tool,
+			// which is what a log is for.
+			s.emit(Event{
+				Kind:     EventToolPanic,
+				Tool:     t.name,
+				Outcome:  OutcomeError,
+				ArgNames: argumentNames(p.Arguments),
+				Duration: time.Since(started),
+			})
 			ctx.Result(errorResult(fmt.Sprintf("%s panicked: %v", t.name, r)))
 		}
 	}()
 
-	ctx.Result(t.run(p.Arguments))
+	result := t.run(p.Arguments)
+
+	outcome := OutcomeOK
+	if result.IsError {
+		outcome = OutcomeError
+	}
+	s.emit(Event{
+		Kind:     EventToolCall,
+		Tool:     t.name,
+		Outcome:  outcome,
+		ArgNames: argumentNames(p.Arguments),
+		Duration: time.Since(started),
+	})
+
+	ctx.Result(result)
 }
 
 // decodeArgs unmarshals a tool's arguments.

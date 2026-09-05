@@ -69,7 +69,10 @@ func sampledConfig() TracerConfig {
 }
 
 // ok is a handler that returns 200.
-func ok(ctx *breeze.Context) { ctx.Status(200) }
+func ok(ctx *breeze.Context) error {
+	ctx.Status(200)
+	return nil
+}
 
 // exactlyOne fails the test unless a single span was exported.
 func exactlyOne(t *testing.T, spans []Span) Span {
@@ -89,12 +92,14 @@ func TestMiddlewareDisabledIsPassThrough(t *testing.T) {
 	req := newRequest(breeze.GET, "/orders", nil)
 	reached := false
 
-	spans, ctx := traced(t, TracerConfig{Enabled: false}, req, func(c *breeze.Context) {
+	spans, ctx := traced(t, TracerConfig{Enabled: false}, req, func(c *breeze.Context) error {
 		reached = true
 		if _, ok := stateFrom(c); ok {
 			t.Error("a disabled tracer still attached request state")
 		}
 		c.Status(200)
+
+		return nil
 	})
 
 	if !reached {
@@ -116,9 +121,11 @@ func TestMiddlewareNilTracerIsPassThrough(t *testing.T) {
 	ctx.Req = req
 
 	reached := false
-	ctx.SetMiddlewareChain([]breeze.HandlerFunc{Middleware(nil)}, func(c *breeze.Context) {
+	ctx.SetMiddlewareChain([]breeze.HandlerFunc{Middleware(nil)}, func(c *breeze.Context) error {
 		reached = true
 		c.Status(200)
+
+		return nil
 	})
 	ctx.Next()
 
@@ -158,9 +165,11 @@ func TestMiddlewareRecordsTheRequestFacts(t *testing.T) {
 	before := time.Now().UnixNano()
 
 	spans, _ := traced(t, TracerConfig{Enabled: true, SampleRate: 1.0, ServiceName: "orders-service"}, req,
-		func(c *breeze.Context) {
+		func(c *breeze.Context) error {
 			time.Sleep(2 * time.Millisecond) // give the duration something to measure
 			c.Status(201)
+
+			return nil
 		})
 
 	s := exactlyOne(t, spans)
@@ -198,9 +207,9 @@ func TestMiddlewareSpanCoversTheWholeChain(t *testing.T) {
 		ServiceName: "svc", AggregatorURL: "http://aggregator", Transport: rt,
 	})
 
-	slow := func(c *breeze.Context) {
+	slow := func(c *breeze.Context) error {
 		time.Sleep(5 * time.Millisecond)
-		c.Next()
+		return c.Next()
 	}
 
 	ctx := breeze.NewContext(req.Method, req.Path)
@@ -324,8 +333,10 @@ func TestMiddlewareDropsUnsampledSuccess(t *testing.T) {
 func TestMiddlewareAlwaysReportsErrors(t *testing.T) {
 	req := newRequest(breeze.GET, "/orders", nil)
 
-	spans, _ := traced(t, TracerConfig{Enabled: true, SampleRate: 0}, req, func(c *breeze.Context) {
+	spans, _ := traced(t, TracerConfig{Enabled: true, SampleRate: 0}, req, func(c *breeze.Context) error {
 		c.Status(503)
+
+		return nil
 	})
 
 	s := exactlyOne(t, spans)
@@ -350,9 +361,9 @@ func TestMiddlewareErrorTextExcludesTheResponseBody(t *testing.T) {
 	req := newRequest(breeze.GET, "/orders", nil)
 	secret := "card number 4111111111111111"
 
-	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) {
+	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) error {
 		c.Status(500)
-		c.WriteString(secret)
+		return c.WriteString(secret)
 	})
 
 	s := exactlyOne(t, spans)
@@ -370,8 +381,10 @@ func TestMiddlewareErrorTextExcludesTheResponseBody(t *testing.T) {
 func TestMiddlewareClientErrorsAreNotFailures(t *testing.T) {
 	req := newRequest(breeze.GET, "/orders/nope", nil)
 
-	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) {
+	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) error {
 		c.Status(404)
+
+		return nil
 	})
 
 	s := exactlyOne(t, spans)
@@ -388,8 +401,10 @@ func TestMiddlewareClientErrorsAreNotFailures(t *testing.T) {
 func TestMiddlewareUnsampledClientErrorIsDropped(t *testing.T) {
 	req := newRequest(breeze.GET, "/orders/nope", nil)
 
-	spans, _ := traced(t, TracerConfig{Enabled: true, SampleRate: 0}, req, func(c *breeze.Context) {
+	spans, _ := traced(t, TracerConfig{Enabled: true, SampleRate: 0}, req, func(c *breeze.Context) error {
 		c.Status(404)
+
+		return nil
 	})
 
 	if len(spans) != 0 {
@@ -403,7 +418,9 @@ func TestMiddlewareUnsampledClientErrorIsDropped(t *testing.T) {
 func TestMiddlewareHandlesAMissingResponse(t *testing.T) {
 	req := newRequest(breeze.GET, "/orders", nil)
 
-	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) {})
+	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) error {
+		return nil
+	})
 
 	s := exactlyOne(t, spans)
 	if s.Status != 0 {
@@ -424,11 +441,13 @@ func TestMiddlewareHandlesAMissingResponse(t *testing.T) {
 func TestMiddlewareAttachesTheDashboardTimeline(t *testing.T) {
 	req := newRequest(breeze.GET, "/orders", nil)
 
-	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) {
+	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) error {
 		rec := dashboard.NewTimelineRecorder(dashboard.Config{MaxTimelineEntries: 32})
 		c.Set(dashboardTimelineKey, rec)
 		rec.Step("ORM Query")(map[string]any{"rows": 42})
 		c.Status(200)
+
+		return nil
 	})
 
 	s := exactlyOne(t, spans)
@@ -484,10 +503,12 @@ func TestTimelineStepsFromIgnoresAForeignValue(t *testing.T) {
 func TestMiddlewareCarriesTagsOntoTheSpan(t *testing.T) {
 	req := newRequest(breeze.GET, "/orders/123", nil)
 
-	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) {
+	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) error {
 		Tag(c, "order_id", "123")
 		Tag(c, "payment_provider", "stripe")
 		c.Status(200)
+
+		return nil
 	})
 
 	s := exactlyOne(t, spans)
@@ -510,11 +531,13 @@ func TestMiddlewareInheritsBaggageAsTags(t *testing.T) {
 		HeaderBaggage:     Baggage{"order_id": "123"}.String(),
 	})
 
-	spans, ctx := traced(t, sampledConfig(), req, func(c *breeze.Context) {
+	spans, ctx := traced(t, sampledConfig(), req, func(c *breeze.Context) error {
 		// The inherited value must be visible to a handler that tags on
 		// top of it, not merely present on the wire.
 		Tag(c, "local", "yes")
 		c.Status(200)
+
+		return nil
 	})
 
 	st, found := stateFrom(ctx)
@@ -547,10 +570,12 @@ func TestMiddlewareExposesStateForPropagation(t *testing.T) {
 	req := newRequest(breeze.GET, "/orders", nil)
 	var injected MapCarrier
 
-	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) {
+	spans, _ := traced(t, sampledConfig(), req, func(c *breeze.Context) error {
 		injected = MapCarrier{}
 		Inject(c, injected)
 		c.Status(200)
+
+		return nil
 	})
 
 	s := exactlyOne(t, spans)
@@ -816,10 +841,12 @@ func TestMiddlewareSpanTagsAreASnapshot(t *testing.T) {
 	var captured *requestState
 	ctx := breeze.NewContext(req.Method, req.Path)
 	ctx.Req = req
-	ctx.SetMiddlewareChain([]breeze.HandlerFunc{Middleware(tr)}, func(c *breeze.Context) {
+	ctx.SetMiddlewareChain([]breeze.HandlerFunc{Middleware(tr)}, func(c *breeze.Context) error {
 		Tag(c, "order_id", "123")
 		captured, _ = stateFrom(c)
 		c.Status(200)
+
+		return nil
 	})
 	ctx.Next()
 

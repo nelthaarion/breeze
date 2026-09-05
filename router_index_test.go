@@ -41,8 +41,12 @@ func lookupPath(t *testing.T, r *Router, method Method, path string) *route {
 func TestStaticMapExcludesShadowedRoute(t *testing.T) {
 	r := NewRouter()
 	r.autoServeRoot = false
-	r.Handle(GET, "/users/:id", func(*Context) {})
-	r.Handle(GET, "/users/me", func(*Context) {})
+	r.Handle(GET, "/users/:id", func(*Context) error {
+		return nil
+	})
+	r.Handle(GET, "/users/me", func(*Context) error {
+		return nil
+	})
 
 	if mapHolds(r, GET, "users/me") {
 		t.Fatal("shadowed static route was admitted to the exact-path map")
@@ -65,9 +69,15 @@ func TestStaticMapExcludesShadowedRoute(t *testing.T) {
 func TestStaticMapAdmitsRouteAfterWildcard(t *testing.T) {
 	r := NewRouter()
 	r.autoServeRoot = false
-	r.HandleBlocking(GET, "/files/*", func(*Context) {})
-	r.Handle(GET, "/users", func(*Context) {})
-	r.Handle(GET, "/", func(*Context) {})
+	r.HandleBlocking(GET, "/files/*", func(*Context) error {
+		return nil
+	})
+	r.Handle(GET, "/users", func(*Context) error {
+		return nil
+	})
+	r.Handle(GET, "/", func(*Context) error {
+		return nil
+	})
 
 	if !mapHolds(r, GET, "users") {
 		t.Error("/users was kept out of the exact-path map by an unrelated wildcard")
@@ -90,8 +100,12 @@ func TestStaticMapAdmitsRouteAfterWildcard(t *testing.T) {
 func TestStaticMapAdmitsDifferentSegmentCount(t *testing.T) {
 	r := NewRouter()
 	r.autoServeRoot = false
-	r.Handle(GET, "/users/:id", func(*Context) {})
-	r.Handle(GET, "/health", func(*Context) {})
+	r.Handle(GET, "/users/:id", func(*Context) error {
+		return nil
+	})
+	r.Handle(GET, "/health", func(*Context) error {
+		return nil
+	})
 
 	if !mapHolds(r, GET, "health") {
 		t.Error("/health was kept out of the map by a two-segment param route")
@@ -107,8 +121,12 @@ func TestStaticMapAdmitsDifferentSegmentCount(t *testing.T) {
 func TestStaticMapRootWildcardShadowsEverything(t *testing.T) {
 	r := NewRouter()
 	r.autoServeRoot = false
-	r.HandleBlocking(GET, "/*", func(*Context) {})
-	r.Handle(GET, "/users", func(*Context) {})
+	r.HandleBlocking(GET, "/*", func(*Context) error {
+		return nil
+	})
+	r.Handle(GET, "/users", func(*Context) error {
+		return nil
+	})
 
 	if mapHolds(r, GET, "users") {
 		t.Fatal("root wildcard did not shadow a later static route")
@@ -131,7 +149,9 @@ func TestStaticMapEligibilityMatchesScan(t *testing.T) {
 	r := NewRouter()
 	r.autoServeRoot = false
 	for _, p := range paths {
-		r.Handle(GET, p, func(*Context) {})
+		r.Handle(GET, p, func(*Context) error {
+			return nil
+		})
 	}
 
 	// Concrete request paths, including ones that only a param or wildcard

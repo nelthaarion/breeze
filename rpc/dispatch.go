@@ -167,6 +167,11 @@ func (s *Server) appendSingle(buf []byte, v []byte, conn gnet.Conn) ([]byte, boo
 
 	m, ok := s.reg.lookup(req.Method)
 	if !ok {
+		// Recorded before the early return for notifications, because a
+		// notification for an unregistered method is exactly as much of a
+		// misconfiguration as a request for one — and it is worse to diagnose,
+		// since a notification gets no error response at all.
+		noteUnknownMethod(req.Method)
 		if notification {
 			return buf, false
 		}
@@ -182,6 +187,7 @@ func (s *Server) appendSingle(buf []byte, v []byte, conn gnet.Conn) ([]byte, boo
 	ctx.index = -1
 
 	runChain(ctx)
+	callCounter.Hit()
 
 	if notification {
 		// The handler ran — a notification is a real call, it just has no

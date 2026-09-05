@@ -44,14 +44,14 @@ func main() {
 	router.Use(skipUntraced(fleet.Middleware(tr)))
 	router.Use(coll.Middleware())
 
-	router.Handle(breeze.GET, "/healthz", func(ctx *breeze.Context) {
-		ctx.JSON(map[string]string{"status": "ok", "service": "auth-service"})
+	router.Handle(breeze.GET, "/healthz", func(ctx *breeze.Context) error {
+		return ctx.JSON(map[string]string{"status": "ok", "service": "auth-service"})
 	})
 
 	ordersURL := env("ORDERS_URL", "http://localhost:3002")
 
 	// HandleBlocking: this handler calls orders over HTTP.
-	router.HandleBlocking(breeze.GET, "/internal/auth/:id", func(ctx *breeze.Context) {
+	router.HandleBlocking(breeze.GET, "/internal/auth/:id", func(ctx *breeze.Context) error {
 		id := ctx.Param("id")
 
 		// The gateway's order_id arrives as baggage and is already on this
@@ -69,8 +69,7 @@ func main() {
 			coll.PushLogCtx(ctx, "error", "auth-service could not build the orders request: "+err.Error(), "app")
 
 			ctx.Status(500)
-			ctx.JSON(map[string]string{"error": "internal error"})
-			return
+			return ctx.JSON(map[string]string{"error": "internal error"})
 		}
 
 		resp, err := fleet.WrapClient(http.DefaultClient, ctx).Do(req)
@@ -78,8 +77,7 @@ func main() {
 			coll.PushLogCtx(ctx, "error", "auth-service could not reach orders-service: "+err.Error(), "app")
 
 			ctx.Status(502)
-			ctx.JSON(map[string]string{"error": err.Error()})
-			return
+			return ctx.JSON(map[string]string{"error": err.Error()})
 		}
 		defer resp.Body.Close()
 
@@ -96,7 +94,7 @@ func main() {
 
 			ctx.Status(resp.StatusCode)
 		}
-		ctx.JSON(map[string]any{"authorized": true, "orders": result})
+		return ctx.JSON(map[string]any{"authorized": true, "orders": result})
 	})
 
 	fmt.Printf("auth-service :%d\n", port)
@@ -106,12 +104,13 @@ func main() {
 // skipUntraced keeps liveness probes out of the trace list. See the gateway's
 // copy for why this is an application-level decision rather than a framework one.
 func skipUntraced(traced breeze.HandlerFunc) breeze.HandlerFunc {
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 		if ctx.Req != nil && ctx.Req.Path == "/healthz" {
-			ctx.Next()
-			return
+			return ctx.Next()
 		}
 		traced(ctx)
+
+		return nil
 	}
 }
 

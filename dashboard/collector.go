@@ -25,6 +25,15 @@ type Collector struct {
 	cfg    Config
 	router *breeze.Router
 
+	// app is the application the dashboard is installed in, or nil when the
+	// Collector was built without one (every test that calls newCollector, and
+	// any caller that only wants the recording API).
+	//
+	// It is held for exactly one reason: the API Explorer has to know which port
+	// this service is listening on so it can send its request there and nowhere
+	// else. See explorerTarget.
+	app *breeze.Breeze
+
 	// hub is set by Install() once the Breeze engine is available.
 	hub *wsHub
 
@@ -63,7 +72,6 @@ type Collector struct {
 	// The rest are cold (sampler-driven or per-session) and can share.
 	requestsTotal  paddedCounter
 	errorsTotal    atomic.Int64
-	requestsPerSec atomic.Int64 // updated by sampler
 	activeSessions atomic.Int64
 
 	// Cache stats counters (incremented by middleware/cache.go via hooks).

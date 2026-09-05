@@ -32,10 +32,6 @@ func RegisterGeneratedRoutes(router *breeze.Router) {
 `
 }
 
-func blockMarkers(name string) (start, end string) {
-	return markersFor(routeMarkerPrefix, name)
-}
-
 // ensureImports adds each import line to the import block if it isn't
 // already present â€” e.g. the project's handlers package, or (for resource
 // generation) the swagger and middleware packages. It's a no-op for any

@@ -178,10 +178,20 @@ func (h *wsHub) snapshotMessage() string {
 // pushEvent queues a single live event for the next batch flush.
 // Called from the hot path (request, query, log, event recorders), so it
 // does no encoding and no I/O — just an append under a short mutex.
-func (h *wsHub) pushEvent(kind string, payload any) {
+//
+// Generic, and a free function because Go does not permit type parameters on
+// methods. The type parameter is what makes the early return free: with a
+// `payload any` parameter the caller boxes the value — allocating, because a
+// RequestRecord does not fit in a pointer word — before the call can check
+// whether anyone is listening. A server whose dashboard nobody has open was
+// paying that allocation per slow request to hand a value to a function that
+// immediately dropped it. Boxing now happens at the append below, on the path
+// that actually keeps the value.
+func pushEvent[T any](h *wsHub, kind string, payload T) {
 	if h.clientCount() == 0 {
 		return // nobody watching → no work
 	}
+	now := time.Now().UTC().Format(time.RFC3339)
 	h.pmu.Lock()
 	if len(h.pending) >= wsMaxBatch {
 		// Drop the oldest to bound memory under a burst.
@@ -190,7 +200,7 @@ func (h *wsHub) pushEvent(kind string, payload any) {
 	}
 	h.pending = append(h.pending, wsEvent{
 		Channel: kind,
-		Time:    time.Now().UTC().Format(time.RFC3339),
+		Time:    now,
 		Data:    payload,
 	})
 	h.pmu.Unlock()

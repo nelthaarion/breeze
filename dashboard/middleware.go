@@ -32,9 +32,11 @@ import (
 // # Critical: capture-before-Next pattern
 //
 // All values derived from ctx (IP, method, path, user-agent) are captured
-// BEFORE ctx.Next() is called. After ctx.Next() returns, the handler may
-// have closed the connection. See the crash analysis in PHASE 1-9 of the
-// runtime audit for details.
+// BEFORE ctx.Next() is called, because after ctx.Next() returns the handler may
+// have released the request back to the pool — every string on ctx.Req points
+// into a pooled read buffer, and reading one afterwards yields whatever the next
+// request wrote there. The failure mode is not a crash but a captured record
+// attributed to the wrong request, which is worse.
 func Middleware(c *Collector) breeze.HandlerFunc {
 	base := strings.TrimSuffix(c.cfg.BasePath, "/")
 	if base == "" {
@@ -45,18 +47,16 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 	// on every request.
 	timelineEnabled := c.cfg.Timeline
 
-	return func(ctx *breeze.Context) {
+	return func(ctx *breeze.Context) error {
 		if !c.cfg.Enabled {
-			ctx.Next()
-			return
+			return ctx.Next()
 		}
 
 		// Skip instrumenting the dashboard's own routes.
 		// This is a single string comparison — no allocation.
 		p := ctx.Req.Path
 		if p == base || strings.HasPrefix(p, base+"/") {
-			ctx.Next()
-			return
+			return ctx.Next()
 		}
 
 		// ── FAST PATH: just count + time ──────────────────────────────────
@@ -81,7 +81,12 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 
 		// Continue the chain first — we need the duration + status to
 		// decide whether to capture the full record.
-		ctx.Next()
+		//
+		// The error is held rather than returned: this middleware's entire purpose is
+		// the timing, counters and captured record below, and a failing request is
+		// precisely the one an operator opens the dashboard to look at. Returning
+		// early would make errors the only requests the dashboard never sees.
+		chainErr := ctx.Next()
 
 		duration := time.Since(start)
 		status := 0
@@ -119,7 +124,7 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 		if !shouldCapture {
 			// Nobody is watching and the request isn't interesting.
 			// We're done — zero allocations, zero locks (beyond the atomic).
-			return
+			return chainErr
 		}
 
 		// ── SLOW PATH: capture full record ────────────────────────────────
@@ -180,7 +185,7 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 		// pushEvent checks clientCount() internally and is a no-op
 		// when nobody is connected.
 		if c.hub != nil {
-			c.hub.pushEvent("request", r)
+			pushEvent(c.hub, "request", r)
 		}
 
 		// Update per-route aggregation.
@@ -208,9 +213,11 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 			}
 			c.RecordTimeline(tl)
 			if c.hub != nil {
-				c.hub.pushEvent("timeline", tl)
+				pushEvent(c.hub, "timeline", tl)
 			}
 		}
+
+		return chainErr
 	}
 }
 

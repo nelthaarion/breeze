@@ -71,6 +71,8 @@ func NewCollector(cfg Config) *Collector {
 		childCounts: make(map[uint64]int),
 		stream:      newSignalStream(),
 	}
+	// One registry append, at construction. Publish is untouched.
+	RegisterDiagnostics(c)
 	return c
 }
 

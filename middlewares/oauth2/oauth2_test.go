@@ -294,7 +294,10 @@ func TestFullFlowCookieMode(t *testing.T) {
 	called := false
 	protected.SetMiddlewareChain(
 		[]breeze.HandlerFunc{Auth(cfg)},
-		func(*breeze.Context) { called = true },
+		func(*breeze.Context) error {
+			called = true
+			return nil
+		},
 	)
 	protected.Next()
 	if !called {
@@ -356,7 +359,10 @@ func TestOptionalContinuesWithoutSession(t *testing.T) {
 	next := false
 	ctx.SetMiddlewareChain(
 		[]breeze.HandlerFunc{Optional(cfg)},
-		func(*breeze.Context) { next = true },
+		func(*breeze.Context) error {
+			next = true
+			return nil
+		},
 	)
 	ctx.Next()
 	if !next {

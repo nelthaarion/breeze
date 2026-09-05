@@ -1,6 +1,8 @@
 package breeze
 
 import (
+	"strings"
+
 	"github.com/goccy/go-json"
 	"github.com/nelthaarion/breeze/binding"
 	"github.com/panjf2000/gnet/v2"
@@ -46,6 +48,85 @@ type Context struct {
 	store map[string]any
 }
 
+// setContentType installs a body method's content type without discarding
+// headers a middleware already set.
+//
+// # The bug this exists to prevent
+//
+// The three body methods used to assign `r.Headers = hdrsJSON` outright. Every
+// header set before them was therefore dropped, and the middlewares that set
+// headers all do so *before* ctx.Next() — because that is the only place they can:
+// after Next returns, the handler has already written the response. So
+// CORSMiddleware and SecurityMiddleware were computing a dozen headers per request
+// and having every one of them silently discarded by the handler's ctx.JSON call.
+// Nothing errored. A browser simply never saw Access-Control-Allow-Origin.
+//
+// # Why the fast path survives
+//
+// headersShared is the discriminator, and it answers exactly the right question:
+// it is true when Headers is one of the package-level shared maps, which is only
+// the case when nothing has called SetHeader. So an untouched response still gets
+// the shared map and the precomputed wire block — zero allocations, no map range
+// at serialization time — and only a response someone has actually written a
+// header to takes the slower branch.
+//
+// A shared map is also replaced rather than merged, which covers
+// `ctx.WriteString(...); ctx.JSON(...)`: the second call's content type is the
+// correct one and there is nothing of the caller's to preserve.
+//
+// # Why an existing Content-Type wins
+//
+// A caller who set one chose it deliberately — `application/problem+json` for an
+// RFC 9457 body is the case in this repository — and a body method overriding it
+// would make ctx.JSON unusable for anything but the default type. Emitting both
+// would be worse still: RFC 9110 §5.3 lets a recipient treat a duplicated
+// Content-Type as malformed.
+//
+// "Set by a caller" is tracked with a flag rather than inferred from the map's
+// contents, because the map cannot answer the question. A body method leaves a
+// Content-Type behind too, so `ctx.WriteString(...)` followed by `ctx.JSON(...)` on a
+// response some middleware had already touched would find "text/plain" present and
+// keep it — sending a JSON body labelled as text. The flag distinguishes the caller's
+// choice from a previous body method's default, and only the former is preserved.
+func (r *HTTPResponse) setContentType(shared map[string]string, raw []byte, ctype string) {
+	if r.Headers == nil || r.headersShared {
+		r.Headers = shared
+		r.headersShared = true
+		r.rawHeaders = raw
+		return
+	}
+
+	// A private map: SetHeader has been called, so its contents are the
+	// caller's and must be kept. rawHeaders no longer describes them.
+	r.rawHeaders = nil
+	if r.ctypePinned {
+		return
+	}
+	// Delete before assigning, so a previous body method's differently-cased key
+	// cannot survive alongside this one. Both would go on the wire.
+	deleteContentType(r.Headers)
+	r.Headers["Content-Type"] = ctype
+}
+
+// deleteContentType removes any Content-Type key regardless of capitalisation.
+//
+// Case-insensitive because the map is written to the wire verbatim, so a caller's
+// "content-type" and a body method's "Content-Type" would both be sent. It is a scan
+// of a map with at most a handful of entries, on a path that is already off the fast
+// branch.
+func deleteContentType(h map[string]string) {
+	for k := range h {
+		if isContentType(k) {
+			delete(h, k)
+		}
+	}
+}
+
+// isContentType reports whether k names the Content-Type header.
+func isContentType(k string) bool {
+	return len(k) == len("Content-Type") && strings.EqualFold(k, "Content-Type")
+}
+
 // statusOrDefault returns the status code already set on ctx.Res, if any,
 // so that calling Status() before a body method (WriteString/JSON/HTML)
 // is not silently discarded. Falls back to def when no status was set yet.
@@ -56,40 +137,57 @@ func (ctx *Context) statusOrDefault(def int) int {
 	return def
 }
 
-func (ctx *Context) WriteString(s string) {
+// WriteString writes a plain-text body.
+//
+// It returns an error for signature consistency with JSON, not because it can
+// fail: there is nothing here to go wrong, and it always returns nil. Having the
+// three body methods differ in signature would mean a handler's shape depended on
+// which one it happened to call, and switching a response from text to JSON would
+// then be a two-line change instead of a one-line one.
+func (ctx *Context) WriteString(s string) error {
 	r := ctx.ensureResponse()
 	r.Status = ctx.statusOrDefault(200)
-	r.Headers = hdrsText
 	r.Body = []byte(s)
-	r.headersShared = true
-	r.rawHeaders = rawText
+	r.setContentType(hdrsText, rawText, "text/plain")
+	return nil
 }
 
-func (ctx *Context) JSON(data any) {
+// JSON marshals data and writes it as the response body.
+//
+// # Why the error is returned as well as written
+//
+// A value that will not marshal is a bug in the handler, not a bad request, and it
+// used to be reported as a 400 with `{"message":"error parsing json"}` — a response
+// that blames the client for the server's mistake and gives nobody the actual
+// marshalling error.
+//
+// It now returns the error so the caller can propagate it to the framework's error
+// path, and a 500 with the cause logged is what a caller who does propagate gets.
+// The 400 body is still written first, so a handler that ignores the return value
+// behaves exactly as it did before rather than sending nothing at all.
+func (ctx *Context) JSON(data any) error {
 	d, err := json.Marshal(data)
 	r := ctx.ensureResponse()
 	if err != nil {
 		r.Status = ctx.statusOrDefault(400)
-		r.Headers = hdrsJSON
 		r.Body = []byte(`{"message":"error parsing json"}`)
-		r.headersShared = true
-		r.rawHeaders = rawJSON
-		return
+		r.setContentType(hdrsJSON, rawJSON, "application/json")
+		return err
 	}
 	r.Status = ctx.statusOrDefault(200)
-	r.Headers = hdrsJSON
 	r.Body = d
-	r.headersShared = true
-	r.rawHeaders = rawJSON
+	r.setContentType(hdrsJSON, rawJSON, "application/json")
+	return nil
 }
 
-func (ctx *Context) HTML(data []byte) {
+// HTML writes an HTML body. Returns nil always; see WriteString for why it returns
+// anything at all.
+func (ctx *Context) HTML(data []byte) error {
 	r := ctx.ensureResponse()
 	r.Status = ctx.statusOrDefault(200)
-	r.Headers = hdrsHTML
 	r.Body = data
-	r.headersShared = true
-	r.rawHeaders = rawHTML
+	r.setContentType(hdrsHTML, rawHTML, "text/html; charset=utf-8")
+	return nil
 }
 
 // Status sets (or overrides) the response status code.
@@ -140,6 +238,13 @@ func (ctx *Context) SetHeader(key, value string) {
 	}
 	if r.Headers == nil {
 		r.Headers = make(map[string]string, 2)
+	}
+	// A caller naming Content-Type is choosing it, and setContentType must not
+	// override that with a body method's default. Recorded as a flag because the
+	// map cannot distinguish this write from the one a body method makes.
+	if isContentType(key) {
+		deleteContentType(r.Headers)
+		r.ctypePinned = true
 	}
 	r.Headers[key] = value
 }
@@ -247,15 +352,38 @@ func (ctx *Context) SetMiddlewareChain(middlewares []HandlerFunc, handler Handle
 	ctx.index = -1
 }
 
-func (ctx *Context) Next() {
+// Next runs the remaining chain and returns the first error any link produced.
+//
+// # Why the error comes back rather than being handled here
+//
+// A middleware's own return value is what the framework acts on, and a middleware
+// that calls Next is responsible for what it does with Next's result. The common
+// shape is to pass it straight through:
+//
+//	func Logging(ctx *breeze.Context) error {
+//	    start := time.Now()
+//	    err := ctx.Next()
+//	    log.Printf("%s %v", ctx.Req.Path, time.Since(start))
+//	    return err
+//	}
+//
+// A middleware that swallows it — `_ = ctx.Next()` — is choosing to treat the
+// failure as handled, which is legitimate for something like a fallback but must be
+// deliberate. Handling the error inside Next would remove that choice, and would
+// also mean a middleware could not run cleanup code around a failing handler.
+//
+// Returning at the first error is what stops the chain: the links after the failing
+// one never run, and neither does the rest of any middleware that propagates.
+func (ctx *Context) Next() error {
 	ctx.index++
 	if ctx.index >= len(ctx.middlewares) {
-		return
+		return nil
 	}
 	fn := ctx.middlewares[ctx.index]
-	if fn != nil {
-		fn(ctx)
+	if fn == nil {
+		return nil
 	}
+	return fn(ctx)
 }
 
 // Bind decodes and validates an incoming request into dst using the JSON

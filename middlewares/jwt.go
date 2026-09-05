@@ -50,6 +50,27 @@ func DefaultUnauthorizedHandler(ctx *breeze.Context, err error) {
 
 // JWTAuthMiddleware returns a JWT authentication middleware.
 //
+// # An empty secret is refused
+//
+// This panics when AccessSecret is empty, and when EnableRefreshToken is set
+// without a RefreshSecret. That is not defensiveness about a typo; it closes a
+// complete authentication bypass.
+//
+// HS256 signs with whatever key it is given, including a zero-length one. A
+// middleware constructed with no secret therefore accepts any token an attacker
+// signs with "" — which anyone can do, because the key is public knowledge. Every
+// request would arrive authenticated, with attacker-chosen claims, including
+// "role": "admin". Nothing in the request or the logs would look wrong.
+//
+// A panic at construction is the only correct response. Returning an error would
+// have to be checked, and a middleware constructor's error is exactly the kind
+// that gets assigned to _ in a setup function; refusing every request would turn a
+// misconfiguration into an outage with no explanation. This fails at startup, in
+// the developer's terminal, naming the field — the same choice oauth2's
+// mustNormalize makes for the same reason.
+//
+// # Claims storage
+//
 // FIX: The original code stored claims via ctx.SetParam with
 // fmt.Sprintf("%v", claims), which produced an unparseable Go map
 // representation like "map[exp:...]". Downstream handlers could not
@@ -62,6 +83,31 @@ func DefaultUnauthorizedHandler(ctx *breeze.Context, err error) {
 // allocation, capacity 4). This is cheaper than fmt.Sprintf + SetParam
 // which allocated a formatted string on every authenticated request.
 func JWTAuthMiddleware(opts JWTOptions) breeze.HandlerFunc {
+	if opts.AccessSecret == "" {
+		panic("breeze/middleware: JWTAuthMiddleware requires a non-empty AccessSecret. " +
+			"An empty secret is a valid HMAC key, so every token an attacker signs with \"\" " +
+			"would be accepted with whatever claims they chose — including any role. Set " +
+			"AccessSecret from the environment.")
+	}
+	if opts.EnableRefreshToken && opts.RefreshSecret == "" {
+		panic("breeze/middleware: JWTAuthMiddleware has EnableRefreshToken set but no " +
+			"RefreshSecret. Refresh tokens would then be verified against an empty key, so an " +
+			"attacker-signed refresh token would mint a valid access token. Set RefreshSecret, " +
+			"or leave EnableRefreshToken off.")
+	}
+
+	// Recorded before the defaults below overwrite the nils, or every report
+	// would claim a custom lookup and a custom 401 handler.
+	facts := jwtFacts{
+		SecretBytes:     len(opts.AccessSecret),
+		RefreshEnabled:  opts.EnableRefreshToken,
+		RefreshBytes:    len(opts.RefreshSecret),
+		RequiredRoles:   opts.RequiredRoles,
+		CustomLookup:    opts.TokenLookup != nil,
+		CustomValidator: opts.ClaimsValidator != nil,
+		CustomUnauth:    opts.OnUnauthorized != nil,
+	}
+
 	if opts.SigningMethod == nil {
 		opts.SigningMethod = jwt.SigningMethodHS256
 	}
@@ -78,11 +124,19 @@ func JWTAuthMiddleware(opts JWTOptions) breeze.HandlerFunc {
 		opts.OnUnauthorized = DefaultUnauthorizedHandler
 	}
 
-	return func(ctx *breeze.Context) {
+	jwtInstalled.Store(true)
+	// The facts the probe reports, held separately from opts on purpose: opts
+	// carries the secrets, jwtFacts carries their lengths. See jwtFacts.
+	facts.Algorithm = opts.SigningMethod.Alg()
+	facts.ContextKey = opts.UserContextKey
+	jwtConfig.Store(&facts)
+
+	return func(ctx *breeze.Context) error {
 		accessToken, refreshToken, err := opts.TokenLookup(ctx)
 		if err != nil {
 			opts.OnUnauthorized(ctx, err)
-			return
+			jwtCounter.Miss()
+			return nil
 		}
 
 		claims, valid := validateJWT(accessToken, opts.AccessSecret, opts.SigningMethod)
@@ -105,7 +159,8 @@ func JWTAuthMiddleware(opts JWTOptions) breeze.HandlerFunc {
 
 		if !valid {
 			opts.OnUnauthorized(ctx, fmt.Errorf("invalid token"))
-			return
+			jwtCounter.Miss()
+			return nil
 		}
 
 		// Check roles if specified.
@@ -120,21 +175,24 @@ func JWTAuthMiddleware(opts JWTOptions) breeze.HandlerFunc {
 			}
 			if !found {
 				opts.OnUnauthorized(ctx, fmt.Errorf("insufficient role"))
-				return
+				jwtCounter.Miss()
+				return nil
 			}
 		}
 
 		// Extra claims validation.
 		if opts.ClaimsValidator != nil && !opts.ClaimsValidator(claims) {
 			opts.OnUnauthorized(ctx, fmt.Errorf("claims validation failed"))
-			return
+			jwtCounter.Miss()
+			return nil
 		}
 
 		// FIX: Store claims as a typed value instead of a fmt.Sprintf string.
 		// Downstream handlers retrieve with:
 		//   claims, ok := ctx.Get("user").(jwt.MapClaims)
 		ctx.Set(opts.UserContextKey, claims)
-		ctx.Next()
+		jwtCounter.Hit()
+		return ctx.Next()
 	}
 }
 

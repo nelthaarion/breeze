@@ -84,4 +84,14 @@ type HTTPResponse struct {
 	// always falls back to serializing from the map and the two can never
 	// disagree about what the response actually contains.
 	rawHeaders []byte
+	// ctypePinned is true when a caller set Content-Type explicitly through
+	// SetHeader, as opposed to a body method installing its own default.
+	//
+	// It exists because the map cannot answer that question: a body method leaves a
+	// Content-Type in it too, so a second body method would find one present and
+	// have no way to tell whose it was. Pinned means the caller's choice survives —
+	// application/problem+json from ctx.JSON is the case this makes possible —
+	// while an unpinned type is replaced, so WriteString followed by JSON does not
+	// send a JSON body labelled text/plain.
+	ctypePinned bool
 }

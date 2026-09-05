@@ -3,5 +3,8 @@ name: "breeze-codeql-config"
 queries:
   - uses: security-and-quality
 
-paths-ignore:
-  - example_template/**
+# No paths-ignore. The one entry here excluded example_template/**, which no
+# longer exists — that example is now cmd/templates-example, and everything under
+# cmd/ is first-party code that ships in the module and should be scanned like
+# any other package. An exclusion for a moved path is worse than no exclusion:
+# it silently stops matching and nobody notices the coverage came back.

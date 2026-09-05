@@ -35,8 +35,8 @@ func main() {
 	// the read-side Basic Auth: an orchestrator's probe has no credentials, and
 	// requiring them would make a healthy aggregator report as unhealthy. It
 	// discloses nothing beyond the fact that the process is up.
-	router.Handle(breeze.GET, "/healthz", func(ctx *breeze.Context) {
-		ctx.JSON(map[string]string{"status": "ok", "service": "fleet-aggregator"})
+	router.Handle(breeze.GET, "/healthz", func(ctx *breeze.Context) error {
+		return ctx.JSON(map[string]string{"status": "ok", "service": "fleet-aggregator"})
 	})
 
 	defer agg.Close(context.Background())

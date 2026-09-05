@@ -310,78 +310,74 @@ func main() {
 	// These are real endpoints. The dashboard middleware captures every
 	// request automatically — no manual instrumentation needed.
 
-	router.Handle(breeze.GET, "/", func(ctx *breeze.Context) {
-		ctx.WriteString("Breeze API server. Visit /dashboard for the developer dashboard.")
+	router.Handle(breeze.GET, "/", func(ctx *breeze.Context) error {
+		return ctx.WriteString("Breeze API server. Visit /dashboard for the developer dashboard.")
 	})
 
 	// GET /api/users — list all users
-	router.Handle(breeze.GET, "/api/users", func(ctx *breeze.Context) {
+	router.Handle(breeze.GET, "/api/users", func(ctx *breeze.Context) error {
 		users := store.All()
-		ctx.JSON(map[string]any{
+		return ctx.JSON(map[string]any{
 			"users": users,
 			"total": len(users),
 		})
 	})
 
 	// POST /api/users — create a new user
-	router.Handle(breeze.POST, "/api/users", func(ctx *breeze.Context) {
+	router.Handle(breeze.POST, "/api/users", func(ctx *breeze.Context) error {
 		var req struct {
 			Name  string `json:"name"`
 			Email string `json:"email"`
 		}
 		if err := json.Unmarshal(ctx.Req.Body, &req); err != nil {
 			ctx.Status(400)
-			ctx.JSON(map[string]string{"error": "invalid JSON body"})
-			return
+			return ctx.JSON(map[string]string{"error": "invalid JSON body"})
 		}
 		if req.Name == "" || req.Email == "" {
 			ctx.Status(422)
-			ctx.JSON(map[string]string{"error": "name and email are required"})
-			return
+			return ctx.JSON(map[string]string{"error": "name and email are required"})
 		}
 		u := store.Create(req.Name, req.Email)
 		ctx.Status(201)
-		ctx.JSON(u)
+		return ctx.JSON(u)
 	})
 
 	// GET /api/users/:id — get a single user
-	router.Handle(breeze.GET, "/api/users/:id", func(ctx *breeze.Context) {
+	router.Handle(breeze.GET, "/api/users/:id", func(ctx *breeze.Context) error {
 		idStr := ctx.Param("id")
 		id, err := strconv.Atoi(idStr)
 		if err != nil {
 			ctx.Status(400)
-			ctx.JSON(map[string]string{"error": "invalid user id"})
-			return
+			return ctx.JSON(map[string]string{"error": "invalid user id"})
 		}
 		u, ok := store.Get(id)
 		if !ok {
 			ctx.Status(404)
-			ctx.JSON(map[string]string{"error": "user not found"})
-			return
+			return ctx.JSON(map[string]string{"error": "user not found"})
 		}
-		ctx.JSON(u)
+		return ctx.JSON(u)
 	})
 
 	// DELETE /api/users/:id — delete a user
-	router.Handle(breeze.DELETE, "/api/users/:id", func(ctx *breeze.Context) {
+	router.Handle(breeze.DELETE, "/api/users/:id", func(ctx *breeze.Context) error {
 		idStr := ctx.Param("id")
 		id, err := strconv.Atoi(idStr)
 		if err != nil {
 			ctx.Status(400)
-			ctx.JSON(map[string]string{"error": "invalid user id"})
-			return
+			return ctx.JSON(map[string]string{"error": "invalid user id"})
 		}
 		if !store.Delete(id) {
 			ctx.Status(404)
-			ctx.JSON(map[string]string{"error": "user not found"})
-			return
+			return ctx.JSON(map[string]string{"error": "user not found"})
 		}
 		ctx.Status(204)
+
+		return nil
 	})
 
 	// GET /api/health — application-level health endpoint (separate from dashboard)
-	router.Handle(breeze.GET, "/api/health", func(ctx *breeze.Context) {
-		ctx.JSON(map[string]any{
+	router.Handle(breeze.GET, "/api/health", func(ctx *breeze.Context) error {
+		return ctx.JSON(map[string]any{
 			"status":   "ok",
 			"users":    store.Count(),
 			"uptime_s": int64(time.Since(startTime).Seconds()),

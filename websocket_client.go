@@ -102,6 +102,15 @@ var (
 
 	// ErrWSClosedByPeer reports a Close frame received from the peer.
 	ErrWSClosedByPeer = errors.New("websocket: closed by peer")
+
+	// ErrWSHandshakeTooLong reports a status line or header longer than
+	// WSClientConfig.MaxHandshakeLineLength.
+	//
+	// Its own sentinel rather than a plain ErrWSHandshakeFailed, because the two
+	// call for different responses: a rejected upgrade is a configuration or
+	// authorisation problem to fix, while this is a peer sending something no
+	// conforming server sends, which is a peer to stop dialling.
+	ErrWSHandshakeTooLong = errors.New("websocket: handshake line too long")
 )
 
 // ─── Configuration ────────────────────────────────────────────────────────────
@@ -142,6 +151,18 @@ type WSClientConfig struct {
 	// rather than allocating.
 	MaxPayload int
 
+	// MaxHandshakeLineLength caps one line of the upgrade response — the status
+	// line, or any single header. Zero means wsDefaultHandshakeLine (8 KiB).
+	//
+	// This is a memory bound, not a compatibility knob. Reading a line stops at a
+	// newline, so a peer that sends bytes and never one grows the read buffer
+	// until the handshake deadline: several seconds of a hostile peer writing as
+	// fast as the link allows, which is not a size any real response approaches.
+	// The default is above every legitimate status line and header by a wide
+	// margin — a long Set-Cookie is a few hundred bytes — so a conforming peer
+	// never meets it.
+	MaxHandshakeLineLength int
+
 	// DisableAutoPong stops the read pump answering an inbound Ping with a Pong.
 	// Answering is the default because a peer that pings to check liveness will
 	// otherwise drop a connection that is working.
@@ -162,7 +183,8 @@ const wsClientReadBuffer = 4 << 10
 // ─── Client-side connection state ─────────────────────────────────────────────
 
 // wsClientState is the part of a dialled connection an accepted one has no use
-// for: the callbacks, and the guarantee that OnClose runs exactly once.
+// for: the callbacks, the queue that makes registration order irrelevant, and the
+// guarantee that OnClose runs exactly once.
 //
 // Callbacks are stored behind a mutex rather than being constructor arguments so
 // that DialWS can return before they are set. The alternative — callbacks in the
@@ -170,45 +192,165 @@ const wsClientReadBuffer = 4 << 10
 // connection it belongs to, which is the wrong way round for a peer table that
 // keys on the connection.
 //
-// Frames that arrive before OnMessage is registered are dropped, not queued. A
-// queue here would be an unbounded buffer fed by a peer, which is a memory
-// exhaustion vector; the window is between DialWS returning and the next few
-// statements, and a P2P handshake that races it was going to race the network
-// anyway.
+// # Why registration order cannot matter
+//
+// OnMessage, OnClose and Recv each start the read pump, so any of them may be the
+// first, and the connection can close between that first call and the next line of
+// the caller's code. An earlier version gated close notification on a sync.Once
+// that captured whatever callback was set at that instant: a caller registering
+// OnClose before OnMessage — or registering only OnClose — could have the close
+// fire against a nil callback and never be told, and a data frame arriving in the
+// same window was dropped. DialWS's own documentation promised neither could
+// happen.
+//
+// So close is *recorded* rather than merely dispatched, and a callback registered
+// afterwards is invoked immediately with the code and reason already known; and
+// messages arriving before a consumer exists are queued rather than discarded.
 type wsClientState struct {
+	// deliverMu serialises callback invocation. Without it, a flush running on
+	// the registering goroutine and a live message on the read goroutine could
+	// overlap, or arrive out of order — and a P2P protocol's message order is
+	// usually load-bearing.
+	//
+	// Consequence worth knowing: OnMessage and Recv must not be called from
+	// inside a message callback. The callback runs holding this mutex, and Go's
+	// mutexes are not reentrant.
+	deliverMu sync.Mutex
+
 	mu        sync.Mutex
 	onMessage func(opcode byte, payload []byte)
 	onClose   func(code uint16, reason string)
 
-	// closeFired makes OnClose exactly-once. Both Close and the read pump reach
-	// it — a local Close and a peer disconnect can happen in the same instant —
-	// and an application decrementing a peer count in OnClose must not be told
-	// twice.
-	closeFired sync.Once
+	// closed records that the connection has ended, and with what. Held as state
+	// rather than dispatched and forgotten, so a later OnClose registration can
+	// still be answered.
+	closed      bool
+	closeCode   uint16
+	closeReason string
+
+	// closeDelivered is true once some callback has actually run for that close.
+	// It is what makes the notification exactly-once across both the firing path
+	// and the late-registration path: an application decrementing a peer count
+	// must not be told twice, and must not go untold.
+	closeDelivered bool
+
+	// pending holds messages that arrived before a consumer was registered.
+	//
+	// Bounded, because it is a buffer fed by a peer: unbounded would be a memory
+	// exhaustion vector reachable by dialling and never registering. The window
+	// it covers is the few statements between DialWS returning and OnMessage, so
+	// the cap only has to absorb a burst, not a backlog.
+	pending []wsMessage
+
+	// droppedBeforeRegistration counts messages discarded because pending was
+	// full. Reaching this means a caller left a connection without a consumer for
+	// long enough to receive 32 messages, which is a caller bug — but a silent
+	// one, so the count exists for a diagnostic to find.
+	droppedBeforeRegistration int
 
 	subprotocol string
 }
 
-// fireClose runs the close callback once, whoever calls it first.
+// wsPendingMessages is how many messages are held for a consumer that has not
+// registered yet.
+//
+// Equal to wsRecvQueue deliberately: when Recv activates it drains this queue into
+// that channel, and a queue larger than the channel's buffer could not be handed
+// over without either blocking the caller's first Recv on its own backlog or
+// dropping what it was about to receive.
+const wsPendingMessages = wsRecvQueue
+
+// fireClose records the close and notifies, at most once for the connection.
 func (cs *wsClientState) fireClose(code uint16, reason string) {
-	cs.closeFired.Do(func() {
-		cs.mu.Lock()
-		fn := cs.onClose
+	cs.mu.Lock()
+	if cs.closed {
+		// A local Close and a peer disconnect can land in the same instant, and
+		// every exit path in the read pump reaches here. The first one describes
+		// the close; the rest are consequences of it.
 		cs.mu.Unlock()
-		if fn != nil {
-			fn(code, reason)
-		}
-	})
+		return
+	}
+	cs.closed, cs.closeCode, cs.closeReason = true, code, reason
+	fn := cs.onClose
+	if fn != nil {
+		cs.closeDelivered = true
+	}
+	cs.mu.Unlock()
+
+	// Outside the lock: the callback is application code and may call back into
+	// this connection.
+	if fn != nil {
+		fn(code, reason)
+	}
 }
 
-// deliver hands a complete message to the registered callback.
+// setOnClose registers the close callback, answering an already-closed connection
+// immediately.
+//
+// The immediate call runs on the registering goroutine rather than the read pump's,
+// which is the only way to answer a close that has already happened. A caller
+// cannot distinguish the two, and the alternative is the callback never running.
+func (cs *wsClientState) setOnClose(fn func(code uint16, reason string)) {
+	cs.mu.Lock()
+	cs.onClose = fn
+	if fn == nil || !cs.closed || cs.closeDelivered {
+		cs.mu.Unlock()
+		return
+	}
+	cs.closeDelivered = true
+	code, reason := cs.closeCode, cs.closeReason
+	cs.mu.Unlock()
+
+	fn(code, reason)
+}
+
+// setOnMessage registers the message callback and hands it anything that arrived
+// before it existed.
+func (cs *wsClientState) setOnMessage(fn func(opcode byte, payload []byte)) {
+	cs.deliverMu.Lock()
+	defer cs.deliverMu.Unlock()
+
+	cs.mu.Lock()
+	cs.onMessage = fn
+	queued := cs.pending
+	cs.pending = nil
+	cs.mu.Unlock()
+
+	if fn == nil {
+		return
+	}
+	// Under deliverMu, so a message the read pump delivers in the meantime waits
+	// and lands after these rather than interleaving with them.
+	for _, msg := range queued {
+		fn(msg.Opcode, msg.Payload)
+	}
+}
+
+// takePending removes and returns the queue. Called with deliverMu held.
+func (cs *wsClientState) takePending() []wsMessage {
+	cs.mu.Lock()
+	queued := cs.pending
+	cs.pending = nil
+	cs.mu.Unlock()
+	return queued
+}
+
+// deliver hands a complete message to the registered callback, or queues it when
+// no consumer exists yet. Called with deliverMu held.
 func (cs *wsClientState) deliver(opcode byte, payload []byte) {
 	cs.mu.Lock()
 	fn := cs.onMessage
-	cs.mu.Unlock()
-	if fn != nil {
-		fn(opcode, payload)
+	if fn == nil {
+		if len(cs.pending) < wsPendingMessages {
+			cs.pending = append(cs.pending, wsMessage{Opcode: opcode, Payload: payload})
+		} else {
+			cs.droppedBeforeRegistration++
+		}
+		cs.mu.Unlock()
+		return
 	}
+	cs.mu.Unlock()
+	fn(opcode, payload)
 }
 
 // ─── net.Conn as a wsRawConn ──────────────────────────────────────────────────
@@ -431,7 +573,7 @@ func wsClientHandshake(nc net.Conn, br *bufio.Reader, u *url.URL, cfg WSClientCo
 		return "", fmt.Errorf("websocket: write handshake: %w", err)
 	}
 
-	status, headers, err := readWSHandshakeResponse(br)
+	status, headers, err := readWSHandshakeResponse(br, cfg.MaxHandshakeLineLength)
 	if err != nil {
 		return "", err
 	}
@@ -525,8 +667,13 @@ func wsOffered(offers []string, selected string) bool {
 
 // readWSHandshakeResponse reads the status line and headers, stopping at the
 // blank line so any frames the peer already sent stay buffered in br.
-func readWSHandshakeResponse(br *bufio.Reader) (int, map[string]string, error) {
-	line, err := br.ReadString('\n')
+//
+// maxLine bounds each line. Two limits are needed, not one: wsMaxHandshakeHeaders
+// bounds how many lines arrive and this bounds how long one may be, and a peer can
+// exhaust memory through either — a million short headers, or one header that never
+// ends.
+func readWSHandshakeResponse(br *bufio.Reader, maxLine int) (int, map[string]string, error) {
+	line, err := readWSLine(br, maxLine)
 	if err != nil {
 		return 0, nil, fmt.Errorf("websocket: read status line: %w", err)
 	}
@@ -541,7 +688,7 @@ func readWSHandshakeResponse(br *bufio.Reader) (int, map[string]string, error) {
 
 	headers := make(map[string]string, 8)
 	for range wsMaxHandshakeHeaders {
-		line, err := br.ReadString('\n')
+		line, err := readWSLine(br, maxLine)
 		if err != nil {
 			return 0, nil, fmt.Errorf("websocket: read headers: %w", err)
 		}
@@ -556,8 +703,57 @@ func readWSHandshakeResponse(br *bufio.Reader) (int, map[string]string, error) {
 	}
 	// A peer that never sends the blank line would otherwise keep this loop
 	// reading until the deadline, growing the map with every line.
-	return 0, nil, fmt.Errorf("websocket: handshake response exceeded %d headers", wsMaxHandshakeHeaders)
+	return 0, nil, fmt.Errorf("%w: response exceeded %d headers",
+		ErrWSHandshakeFailed, wsMaxHandshakeHeaders)
 }
+
+// readWSLine reads one newline-terminated line, refusing before the buffer grows
+// past maxLine.
+//
+// bufio.Reader.ReadString('\n') cannot be used here: it accumulates until it finds
+// the delimiter, so a peer that sends bytes without one grows an unbounded buffer
+// and the only limit is the handshake deadline. ReadSlice returns what fits in the
+// reader's own fixed buffer and reports ErrBufferFull instead, which turns the
+// question from "how long will it read" into "how many fixed-size chunks", and that
+// is a number this can count.
+//
+// The limit is checked before appending, not after, so the refusal happens at the
+// limit rather than one chunk past it.
+func readWSLine(br *bufio.Reader, maxLine int) (string, error) {
+	if maxLine <= 0 {
+		maxLine = wsDefaultHandshakeLine
+	}
+
+	var b strings.Builder
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if b.Len()+len(chunk) > maxLine {
+			return "", fmt.Errorf("%w: exceeded %d bytes", ErrWSHandshakeTooLong, maxLine)
+		}
+		// Copied: ReadSlice returns a view into the reader's buffer, which the
+		// next read overwrites.
+		b.Write(chunk)
+
+		if err == nil {
+			return b.String(), nil
+		}
+		if err != bufio.ErrBufferFull {
+			// EOF or a socket error, with whatever arrived before it. The caller
+			// reports it; a partial line is not a line.
+			return "", err
+		}
+		// Buffer full without a newline: keep going, having counted this chunk.
+	}
+}
+
+// wsDefaultHandshakeLine is the per-line cap when the config leaves it at zero.
+//
+// 8 KiB is what net/http allows for a single header line by default, and it is
+// enormous next to anything a WebSocket upgrade response carries: the status line
+// is under 40 bytes, and the longest header a real server sends is a Set-Cookie of
+// a few hundred. It exists to bound the adversarial case, not to police the
+// legitimate one.
+const wsDefaultHandshakeLine = 8 << 10
 
 // wsMaxHandshakeHeaders bounds the handshake response. Any real 101 carries a
 // handful; a peer sending thousands is either broken or feeding a memory leak.
@@ -767,6 +963,11 @@ func (r *wsClientReader) handleContinuation(frame *wsFrame) bool {
 // alternative, dispatching each message to a pool, would reorder a peer's
 // messages, and a P2P protocol's ordering is usually load-bearing.
 func (r *wsClientReader) deliver(opcode byte, payload []byte) {
+	// Held across the whole delivery, so a registration flushing the queue on
+	// another goroutine cannot interleave with this message or land after it.
+	r.wc.clientState.deliverMu.Lock()
+	defer r.wc.clientState.deliverMu.Unlock()
+
 	if r.recvActive.Load() {
 		r.recv <- wsMessage{Opcode: opcode, Payload: payload}
 		return
@@ -861,6 +1062,15 @@ func (r *wsClientReader) readFrame() (*wsFrame, error) {
 // the peer sent them. A slow callback delays that peer only — which is why the
 // ordering can be guaranteed at all.
 //
+// Registration order does not matter. Messages that arrived before this call are
+// delivered to it immediately, in order, on the registering goroutine, so
+// registering OnClose or calling Recv first cannot lose them. Up to
+// wsPendingMessages are held that way; a connection left without a consumer for
+// longer than that is a caller bug and the excess is discarded.
+//
+// Do not call this from inside a message callback: delivery is serialised, and the
+// callback runs holding that lock.
+//
 // Registering a second time replaces the first. On an accepted connection this is
 // a no-op: an inbound connection's messages go to the WSHandler given to
 // [Breeze.WebSocket], which is the registration for that direction.
@@ -868,9 +1078,7 @@ func (wc *WSConn) OnMessage(fn func(opcode byte, payload []byte)) {
 	if wc.clientState == nil {
 		return
 	}
-	wc.clientState.mu.Lock()
-	wc.clientState.onMessage = fn
-	wc.clientState.mu.Unlock()
+	wc.clientState.setOnMessage(fn)
 	wc.clientReader.start()
 }
 
@@ -882,15 +1090,19 @@ func (wc *WSConn) OnMessage(fn func(opcode byte, payload []byte)) {
 // dropped without one — 1006 is precisely the "no close frame arrived" signal, so
 // a P2P layer can tell an orderly peer shutdown from a network failure.
 //
+// Registration order does not matter here either. If the connection has already
+// closed by the time this is called — which it can be, since OnMessage and Recv
+// also start the read pump — the callback runs immediately, on the calling
+// goroutine, with the recorded code and reason. Exactly-once holds across both
+// paths: a callback answered on registration is not called again.
+//
 // This is where a redial belongs. Reconnection is deliberately not built in; see
 // the file comment.
 func (wc *WSConn) OnClose(fn func(code uint16, reason string)) {
 	if wc.clientState == nil {
 		return
 	}
-	wc.clientState.mu.Lock()
-	wc.clientState.onClose = fn
-	wc.clientState.mu.Unlock()
+	wc.clientState.setOnClose(fn)
 	wc.clientReader.start()
 }
 
@@ -970,6 +1182,9 @@ func (wc *WSConn) IsClient() bool { return wc.client }
 // call switches delivery to this path, and mixing the two would mean each message
 // arriving at exactly one of them with no way to predict which.
 //
+// Messages that arrived before the first call are not lost — they are moved into
+// this path on activation and returned before any that arrive afterwards.
+//
 // Not safe for concurrent use by multiple goroutines — two receivers would each
 // get an arbitrary half of the stream, which is never what a protocol wants.
 func (wc *WSConn) Recv() (opcode byte, payload []byte, err error) {
@@ -977,7 +1192,7 @@ func (wc *WSConn) Recv() (opcode byte, payload []byte, err error) {
 		return 0, nil, errors.New("websocket: Recv is only valid on a dialled connection")
 	}
 	r := wc.clientReader
-	r.recvActive.Store(true)
+	wc.activateRecv()
 	r.start()
 
 	msg, ok := <-r.recv
@@ -985,6 +1200,35 @@ func (wc *WSConn) Recv() (opcode byte, payload []byte, err error) {
 		return 0, nil, ErrWSClosedByPeer
 	}
 	return msg.Opcode, msg.Payload, nil
+}
+
+// activateRecv switches delivery to the channel and moves anything already queued
+// into it.
+//
+// Under deliverMu, so the read goroutine cannot deliver between the flag being set
+// and the queue being drained — which would put a later message ahead of an earlier
+// one in the channel.
+//
+// The queue is drained non-blockingly. It is capped at the channel's own buffer
+// size, so in practice everything fits; the default guards the one case where it
+// cannot rather than deadlocking a caller against its own backlog.
+func (wc *WSConn) activateRecv() {
+	cs := wc.clientState
+	cs.deliverMu.Lock()
+	defer cs.deliverMu.Unlock()
+
+	if wc.clientReader.recvActive.Swap(true) {
+		return // already active; the queue was drained then
+	}
+	for _, msg := range cs.takePending() {
+		select {
+		case wc.clientReader.recv <- msg:
+		default:
+			cs.mu.Lock()
+			cs.droppedBeforeRegistration++
+			cs.mu.Unlock()
+		}
+	}
 }
 
 // wsRecvQueue is how many messages Recv buffers ahead of the caller.

@@ -456,7 +456,7 @@ func (s *Breeze) OnClose(c gnet.Conn, err error) gnet.Action {
 
 	// WebSocket cleanup on unexpected close (e.g. TCP RST, network drop).
 	if state, ok := s.isWSConn(fd); ok {
-		s.cleanupWS(fd, state.wc, state.handler, 1006, "abnormal closure")
+		s.cleanupWS(fd, state.wc, state, 1006, "abnormal closure")
 	}
 
 	return gnet.None

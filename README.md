@@ -307,6 +307,12 @@ hub := app.WebSocket("/ws", &breeze.WSHandlerFunc{
 
 Binary & text frames, ping/pong, fragmentation, graceful close — all RFC 6455.
 
+A connection's messages reach its handler **in the order the peer sent them**, one
+at a time. Delivery is per-connection FIFO, so a handler parsing a stream can rely
+on it; two different connections are still handled concurrently. `OnClose` runs
+after every message already delivered, so per-connection state torn down there
+cannot be used afterwards.
+
 ### Dialling out
 
 `DialWS` is the symmetric other half: a Breeze process connecting *to* a WebSocket

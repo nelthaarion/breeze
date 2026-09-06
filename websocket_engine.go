@@ -1,6 +1,8 @@
 package breeze
 
 import (
+	"fmt"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 
@@ -19,6 +21,181 @@ type wsConnState struct {
 	handler WSHandler
 	// maxPayload is per-connection so different routes can set different limits.
 	maxPayload int
+
+	// dispatch delivers to the handler in arrival order. See wsDispatchQueue.
+	dispatch *wsDispatchQueue
+}
+
+// ─── Ordered per-connection dispatch ─────────────────────────────────────────
+
+// wsEvent is one thing to hand a handler: a complete message, or the close.
+//
+// Close travels the same queue as messages rather than being submitted separately,
+// because the ordering guarantee is worthless if OnClose can overtake the last
+// OnMessage — an application that flushes per-connection state in OnClose would
+// then be handed a message after it had already torn that state down.
+type wsEvent struct {
+	isClose bool
+
+	opcode  byte
+	payload []byte
+
+	code   uint16
+	reason string
+}
+
+// wsDispatchQueue delivers a connection's events to its handler strictly in the
+// order they arrived.
+//
+// # The bug this exists to fix
+//
+// dispatchMessage used to Submit each message to the worker pool as its own task.
+// The pool has many workers, so two messages from one connection could be picked up
+// by two workers and run in either order — and did: ten sequentially numbered
+// messages sent back-to-back arrived as [0 4 1 2 3 5 8 6 7 9] on one run and in
+// order on the next. It also made the server the only asymmetric half of Breeze's
+// WebSocket support, since websocket_client.go's read pump has always delivered in
+// order, and the gnet transport's per-connection loop does too.
+//
+// # Why this preserves order, and why a mutex would not
+//
+// A per-connection mutex held across the handler call prevents two messages running
+// at once and does nothing about order: with both already queued on different pool
+// workers, whichever reaches the lock first wins, and that is a scheduling
+// coincidence.
+//
+// This is a single-consumer queue instead. running is true for exactly as long as
+// one drain task exists for this connection, so at most one consumer is ever
+// popping, and it pops from the front. Two properties make it airtight:
+//
+//   - No two drains overlap. running is set under the lock by whichever push
+//     found it false, and cleared only by a drain that has found the queue empty,
+//     also under the lock.
+//   - No wakeup is lost. push appends under the lock. A push that sees
+//     running == true is guaranteed to be seen, because the live drain re-acquires
+//     the lock before every pop and only exits after observing an empty queue
+//     while holding it — so an append that happened before that observation was
+//     already drained, and one that happens after finds running == false and
+//     starts a new drain.
+//
+// A drain occupies a pool worker only while it has something to deliver, which is
+// why this is a queue plus a flag rather than a goroutine per connection: a server
+// with ten thousand idle WebSocket connections keeps no goroutines for them.
+type wsDispatchQueue struct {
+	wc      *WSConn
+	handler WSHandler
+	pool    *WorkerPool
+
+	mu    sync.Mutex
+	queue []wsEvent
+
+	// running means one drain task exists for this connection.
+	running bool
+
+	// sealed means the close event has been queued. Nothing follows a close, so
+	// a late message is dropped rather than delivered after the handler has been
+	// told the connection is gone.
+	sealed bool
+}
+
+// wsDispatchQueueDepth is how many undelivered events one connection may hold.
+//
+// Bounded because it is a buffer a peer fills and a handler drains: unbounded, a
+// peer that sends faster than the handler consumes grows it until the process dies.
+// The real memory bound is this times maxPayload, so the number is deliberately
+// modest — a handler that has fallen 256 messages behind is not going to catch up,
+// and the connection is closed instead of being allowed to consume the server.
+const wsDispatchQueueDepth = 256
+
+// push appends an event and starts a drain if none is running.
+//
+// It reports false when the queue is full, which the caller treats as grounds to
+// close the connection. Called from the event loop, so it never blocks: applying
+// backpressure by waiting here would stall every other connection on that loop.
+func (q *wsDispatchQueue) push(ev wsEvent) bool {
+	q.mu.Lock()
+	if q.sealed {
+		q.mu.Unlock()
+		return true // already closed; the event is not an error, just moot
+	}
+	if ev.isClose {
+		q.sealed = true
+	} else if len(q.queue) >= wsDispatchQueueDepth {
+		q.mu.Unlock()
+		return false
+	}
+	q.queue = append(q.queue, ev)
+
+	start := !q.running
+	if start {
+		q.running = true
+	}
+	q.mu.Unlock()
+
+	if start {
+		if q.pool != nil {
+			q.pool.Submit(q.drain)
+		} else {
+			go q.drain()
+		}
+	}
+	return true
+}
+
+// drain delivers events until the queue is empty.
+//
+// The handler runs outside the lock: it is application code, it may call back into
+// this connection, and holding the lock across it would deadlock a handler that
+// sends and then closes.
+func (q *wsDispatchQueue) drain() {
+	for {
+		q.mu.Lock()
+		if len(q.queue) == 0 {
+			q.running = false
+			q.mu.Unlock()
+			return
+		}
+		ev := q.queue[0]
+		// The slot is cleared so the event's payload is not kept alive by the
+		// backing array after delivery.
+		q.queue[0] = wsEvent{}
+		q.queue = q.queue[1:]
+		q.mu.Unlock()
+
+		q.call(ev)
+
+		if ev.isClose {
+			// Nothing is queued after a close, so there is nothing left to drain.
+			// running stays true, which is correct: it stops a late push from
+			// starting a second drain.
+			return
+		}
+	}
+}
+
+// call invokes the handler for one event, containing a panic.
+//
+// This has to be here rather than relying on WorkerPool.runTask's own recover.
+// Under the old design each message was its own pool task, so a panicking handler
+// killed that task and nothing else. Now one drain delivers many messages, and a
+// panic escaping it would unwind past the loop with running still true — leaving
+// the connection permanently undrained, every later message queued behind a
+// consumer that no longer exists. That is a worse failure than the panic.
+//
+// The message matches WorkerPool's own, since this is the same class of event and
+// an operator grepping for it should find both.
+func (q *wsDispatchQueue) call(ev wsEvent) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[Breeze][WebSocket][PANIC] %v\n%s\n", r, debug.Stack())
+		}
+	}()
+
+	if ev.isClose {
+		q.handler.OnClose(q.wc, ev.code, ev.reason)
+		return
+	}
+	q.handler.OnMessage(q.wc, ev.opcode, ev.payload)
 }
 
 // wsMaxPayloadDefault is 4 MiB — enough for most real-world messages while
@@ -136,6 +313,11 @@ func (s *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
 			wc:         wc,
 			handler:    handler,
 			maxPayload: wsMaxPayloadDefault,
+			dispatch: &wsDispatchQueue{
+				wc:      wc,
+				handler: handler,
+				pool:    s.Pool,
+			},
 		}
 		s.wsConns.Store(ctx.Conn.Fd(), state)
 		s.wsCount.Add(1)
@@ -202,7 +384,7 @@ func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 		if consumed == -1 {
 			// Protocol error — send close and drop.
 			wc.Close(WsCloseProtocolError, "protocol error")
-			s.cleanupWS(fd, wc, state.handler, WsCloseProtocolError, "protocol error")
+			s.cleanupWS(fd, wc, state, WsCloseProtocolError, "protocol error")
 			return gnet.Close
 		}
 		if frame == nil {
@@ -232,7 +414,7 @@ func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 			echo := buildWSFrame(wsOpClose, payload)
 			frame.release()
 			_ = c.AsyncWrite(echo, nil)
-			s.cleanupWS(fd, wc, state.handler, code, reason)
+			s.cleanupWS(fd, wc, state, code, reason)
 			return gnet.Close
 
 		case wsOpText, wsOpBinary:
@@ -244,7 +426,7 @@ func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 		default:
 			// Unknown opcode — close with WsCloseUnsupportedData (1003).
 			wc.Close(WsCloseUnsupportedData, "unsupported opcode")
-			s.cleanupWS(fd, wc, state.handler, WsCloseUnsupportedData, "unsupported opcode")
+			s.cleanupWS(fd, wc, state, WsCloseUnsupportedData, "unsupported opcode")
 			frame.release()
 			return gnet.Close
 		}
@@ -273,7 +455,7 @@ func (s *Breeze) handleDataFrame(wc *WSConn, state *wsConnState, frame *wsFrame)
 		payload := frame.payload
 		opcode := frame.opcode
 		frame.release()
-		s.dispatchMessage(wc, state.handler, opcode, payload)
+		s.dispatchMessage(wc, state, opcode, payload)
 		return
 	}
 	// Begin fragmented message.
@@ -291,24 +473,36 @@ func (s *Breeze) handleContinuation(wc *WSConn, state *wsConnState, frame *wsFra
 		wc.fragBuf = wc.fragBuf[:0]
 		opcode := wc.fragOp
 		frame.release()
-		s.dispatchMessage(wc, state.handler, opcode, payload)
+		s.dispatchMessage(wc, state, opcode, payload)
 		return
 	}
 	frame.release()
 }
 
-// dispatchMessage routes a complete message to the handler via the worker pool.
-func (s *Breeze) dispatchMessage(wc *WSConn, handler WSHandler, opcode byte, payload []byte) {
-	task := func() { handler.OnMessage(wc, opcode, payload) }
-	if s.Pool != nil {
-		s.Pool.Submit(task)
-	} else {
-		go task()
+// dispatchMessage hands a complete message to the connection's ordered queue.
+//
+// Per-connection FIFO, not merely one-at-a-time: see wsDispatchQueue for why the
+// worker pool cannot be handed each message directly, and why a mutex would not
+// have been enough.
+//
+// A full queue closes the connection. The alternative is dropping the message,
+// which would silently break a protocol the handler is trying to parse — a peer
+// that has outrun its handler by wsDispatchQueueDepth messages is better told than
+// quietly given a stream with holes in it.
+func (s *Breeze) dispatchMessage(wc *WSConn, state *wsConnState, opcode byte, payload []byte) {
+	if state.dispatch.push(wsEvent{opcode: opcode, payload: payload}) {
+		return
 	}
+	wc.Close(WsCloseMessageTooBig, "receive queue full")
 }
 
 // cleanupWS removes a WebSocket connection from all registries and notifies the handler.
-func (s *Breeze) cleanupWS(fd int, wc *WSConn, handler WSHandler, code uint16, reason string) {
+//
+// The close goes through the same ordered queue as messages, so OnClose runs after
+// every message already delivered to it rather than racing them on another pool
+// worker. An application that tears down per-connection state in OnClose would
+// otherwise be handed a message after that state was gone.
+func (s *Breeze) cleanupWS(fd int, wc *WSConn, state *wsConnState, code uint16, reason string) {
 	wc.closed.Store(true)
 	s.wsHub.unregister(wc)
 	// LoadAndDelete, not Delete: cleanupWS is reachable both from a Close frame
@@ -320,12 +514,9 @@ func (s *Breeze) cleanupWS(fd int, wc *WSConn, handler WSHandler, code uint16, r
 	}
 	s.wsRxBufs.Delete(fd)
 
-	task := func() { handler.OnClose(wc, code, reason) }
-	if s.Pool != nil {
-		s.Pool.Submit(task)
-	} else {
-		go task()
-	}
+	// push seals the queue, so this is idempotent for the same reason
+	// LoadAndDelete is: both paths into cleanupWS may run for one connection.
+	state.dispatch.push(wsEvent{isClose: true, code: code, reason: reason})
 }
 
 // parseClosePayload extracts the close code and reason from a Close frame payload.

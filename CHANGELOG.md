@@ -12,6 +12,66 @@ claiming to be the next release. They are now `###` subsections under this one
 heading, in reverse chronological order, which is what a reader collapsing the file
 to `##` needs in order to see one unreleased block and eight releases.
 
+### Inbound WebSocket messages were delivered out of order
+
+#### Fixed
+
+- **A connection's messages could reach its handler in the wrong order.**
+  `dispatchMessage` submitted each inbound message to the worker pool as its own
+  task, so two messages from one connection could be picked up by two workers and
+  run in either order. Ten sequentially numbered messages sent back-to-back came
+  back as `[0 4 1 2 3 5 8 6 7 9]` on one run and correctly ordered on the next,
+  which is why it survived: any single run had a fair chance of looking fine.
+
+  A handler parsing a stream cannot recover from this. It is also the one place
+  Breeze's two WebSocket directions disagreed — `websocket_client.go`'s read pump
+  has always delivered in order, and the gnet transport's per-connection loop does
+  too.
+
+  Delivery now goes through a per-connection single-consumer queue
+  (`wsDispatchQueue`). A `running` flag means exactly one drain task exists per
+  connection at a time, and it pops from the front, so order is a property of the
+  structure rather than of scheduling.
+
+  **A per-connection mutex would not have fixed this.** It makes deliveries
+  non-overlapping and says nothing about which of two already-queued messages
+  acquires the lock first. That is the same coincidence that caused the bug.
+
+  A drain occupies a pool worker only while it has something to deliver, so this
+  is a queue plus a flag rather than a goroutine per connection: ten thousand idle
+  WebSocket connections keep no goroutines.
+
+- **`OnClose` could overtake messages still queued ahead of it.** It was its own
+  pool task. An application that releases per-connection state in `OnClose` would
+  then be handed a message with that state already gone. Close now travels the
+  same queue, so it lands after everything delivered before it.
+
+#### Security
+
+- **The queue is bounded** at 256 events per connection, and a connection that
+  overruns it is closed with 1009 rather than having messages dropped. It is a
+  buffer a peer fills and a handler drains, so unbounded it is a memory
+  exhaustion vector; dropping instead of closing would silently hand a handler a
+  stream with holes in it.
+
+- **A panicking handler no longer strands its connection.** One drain now
+  delivers many messages, so a panic escaping it would leave `running` true with
+  nothing consuming — every later message on that connection queued behind a
+  consumer that no longer exists, and a connection that goes silent rather than
+  losing one message. `wsDispatchQueue.call` recovers per event, which the old
+  pool-task-per-message design got from `WorkerPool.runTask` for free.
+
+#### Tests
+
+- `TestInboundMessagesArriveInOrder` sends 32 tagged messages back-to-back and
+  repeats the exchange 30 times, because a single run does not distinguish fixed
+  from lucky. Verified against the bug: reinstating the old dispatch fails it on
+  iteration 1. `TestInboundOrderHoldsWithASlowHandler` repeats it with a 1 ms
+  handler, which is where the reordering was easiest to produce.
+- `TestOnCloseArrivesAfterEveryMessage` and
+  `TestOrderedDispatchDoesNotStrandAConnectionOnPanic` cover the two failure modes
+  above. All four pass under `-race -count=5`.
+
 ### Outbound WebSocket: `breeze.DialWS`
 
 #### Added

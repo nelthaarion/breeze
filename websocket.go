@@ -1,11 +1,13 @@
 package breeze
 
 import (
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"math"
+	"net"
 	"sync"
 	"sync/atomic"
 
@@ -250,16 +252,116 @@ func buildWSFrame(opcode byte, payload []byte) []byte {
 
 // ─── WSConn ───────────────────────────────────────────────────────────────────
 
-// WSConn wraps a gnet.Conn with WebSocket framing and is the handle
+// buildWSFrameMasked encodes a client-to-server frame.
+//
+// RFC 6455 §5.3 requires a client to mask every frame it sends, with a fresh
+// 32-bit key per frame from a source unpredictable to the peer. A conforming
+// server closes the connection on an unmasked client frame — Breeze's own
+// parseWSFrame tolerates both, but that is not something to rely on when the
+// peer may be any implementation.
+//
+// crypto/rand, not math/rand: the masking key exists to stop a hostile
+// intermediary steering the plaintext of a proxied stream, so a predictable
+// sequence defeats the point. A read failure returns nil, which Send reports as
+// an error rather than sending an unmasked frame.
+func buildWSFrameMasked(opcode byte, payload []byte) []byte {
+	payLen := len(payload)
+
+	var headerSize int
+	switch {
+	case payLen <= 125:
+		headerSize = 2
+	case payLen <= 65535:
+		headerSize = 4
+	default:
+		headerSize = 10
+	}
+	headerSize += 4 // mask key
+
+	if payLen > math.MaxInt-headerSize {
+		return nil
+	}
+
+	frame := make([]byte, headerSize+payLen)
+	frame[0] = 0x80 | opcode // FIN=1
+	switch {
+	case payLen <= 125:
+		frame[1] = 0x80 | byte(payLen)
+	case payLen <= 65535:
+		frame[1] = 0x80 | 126
+		binary.BigEndian.PutUint16(frame[2:], uint16(payLen))
+	default:
+		frame[1] = 0x80 | 127
+		binary.BigEndian.PutUint64(frame[2:], uint64(payLen))
+	}
+
+	var key [4]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		return nil
+	}
+	copy(frame[headerSize-4:], key[:])
+	copy(frame[headerSize:], payload)
+	if payLen > 0 {
+		// Masking is its own inverse, so the routine the server uses to unmask an
+		// inbound frame masks an outbound one.
+		unmaskXOR(frame[headerSize:], key)
+	}
+	return frame
+}
+
+// ─── WSConn ───────────────────────────────────────────────────────────────────
+
+// wsRawConn is the transport surface WSConn needs.
+//
+// Both directions supply one. Inbound it is a gnet.Conn, which already has these
+// three methods; outbound it is the adapter below over a dialed net.Conn. That is
+// what lets a dialed connection be a *WSConn rather than a parallel type, so
+// WSHub, WSHandler and every application helper work on a connection this process
+// accepted and one it dialled without knowing which is which.
+//
+// Deliberately three methods and not gnet.Conn's forty: everything else on that
+// interface is inbound-only (Next, Peek, Fd, InboundBuffered), and requiring them
+// would mean the adapter faking a read path the client half does not use.
+type wsRawConn interface {
+	AsyncWrite(buf []byte, callback gnet.AsyncCallback) error
+	Close() error
+	RemoteAddr() net.Addr
+}
+
+// ─── WSConn ───────────────────────────────────────────────────────────────────
+
+// WSConn wraps a connection with WebSocket framing and is the handle
 // exposed to user handlers.
+//
+// One type serves both directions. An inbound connection is created by the
+// upgrade handler over the gnet.Conn the request arrived on; an outbound one is
+// created by [DialWS] over a dialled socket. The difference is confined to two
+// fields — the transport underneath and whether sends are masked — because RFC
+// 6455 §5.3 requires a client to mask every frame it sends and forbids a server
+// from masking any.
 type WSConn struct {
-	conn   gnet.Conn
+	conn   wsRawConn
 	hub    *WSHub
 	closed atomic.Bool
+
+	// client is true for a dialled connection, and decides masking. It is not a
+	// configuration knob: the RFC makes it a property of which end of the
+	// connection this is.
+	client bool
 
 	// fragBuf accumulates continuation frames until FIN=1.
 	fragBuf []byte
 	fragOp  byte
+
+	// clientState is nil for an accepted connection. It carries what only a
+	// dialled one needs: the read pump's handler registration and its close
+	// bookkeeping. Kept in a separate struct so an accepted connection — the
+	// common case, one per client of a server — does not grow by its fields.
+	clientState *wsClientState
+
+	// clientReader is the blocking read pump, non-nil only for a dialled
+	// connection. See websocket_client.go.
+	clientReader *wsClientReader
 }
 
 // Send writes a text or binary message to this specific client.
@@ -268,11 +370,19 @@ func (wc *WSConn) Send(opcode byte, payload []byte) error {
 	if wc.closed.Load() {
 		return errors.New("websocket: connection closed")
 	}
-	frame := buildWSFrame(opcode, payload)
+	frame := wc.buildFrame(opcode, payload)
 	if frame == nil {
 		return errors.New("websocket: payload too large")
 	}
 	return wc.conn.AsyncWrite(frame, nil)
+}
+
+// buildFrame encodes one frame for this connection's role.
+func (wc *WSConn) buildFrame(opcode byte, payload []byte) []byte {
+	if wc.client {
+		return buildWSFrameMasked(opcode, payload)
+	}
+	return buildWSFrame(opcode, payload)
 }
 
 // SendText is a convenience wrapper for text messages.
@@ -286,6 +396,9 @@ func (wc *WSConn) SendBinary(msg []byte) error {
 }
 
 // Close sends a Close frame then marks the connection closed.
+//
+// A dialled connection additionally runs its OnClose callback exactly once, from
+// here or from the read pump, whichever notices first.
 func (wc *WSConn) Close(code uint16, reason string) {
 	if wc.closed.Swap(true) {
 		return // already closed
@@ -293,8 +406,11 @@ func (wc *WSConn) Close(code uint16, reason string) {
 	payload := make([]byte, 2+len(reason))
 	binary.BigEndian.PutUint16(payload, code)
 	copy(payload[2:], reason)
-	_ = wc.conn.AsyncWrite(buildWSFrame(wsOpClose, payload), nil)
-	wc.conn.Close()
+	_ = wc.conn.AsyncWrite(wc.buildFrame(wsOpClose, payload), nil)
+	_ = wc.conn.Close()
+	if wc.clientState != nil {
+		wc.clientState.fireClose(code, reason)
+	}
 }
 
 // RemoteAddr returns the remote address string.
@@ -436,11 +552,13 @@ func (h *WSHandlerFunc) OnConnect(c *WSConn) {
 		h.Connect(c)
 	}
 }
+
 func (h *WSHandlerFunc) OnMessage(c *WSConn, op byte, p []byte) {
 	if h.Message != nil {
 		h.Message(c, op, p)
 	}
 }
+
 func (h *WSHandlerFunc) OnClose(c *WSConn, code uint16, reason string) {
 	if h.Close != nil {
 		h.Close(c, code, reason)

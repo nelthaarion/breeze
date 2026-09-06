@@ -12,6 +12,96 @@ claiming to be the next release. They are now `###` subsections under this one
 heading, in reverse chronological order, which is what a reader collapsing the file
 to `##` needs in order to see one unreleased block and eight releases.
 
+### Outbound WebSocket: `breeze.DialWS`
+
+#### Added
+
+- **`breeze.DialWS(url, WSClientConfig)`** — a Breeze process can now dial a
+  WebSocket server. The inbound half was complete; there was no way to open a
+  connection, which blocked moving a P2P networking layer onto Breeze since
+  every node in one both accepts and dials.
+
+  Full RFC 6455 client: the `Sec-WebSocket-Key`/`Accept` exchange with
+  verification, mandatory frame masking, binary and text frames, ping/pong,
+  fragmented-frame reassembly, and the close handshake. `wss://` through
+  `crypto/tls`, matching `client/client.go` — gnet has no TLS of its own.
+
+- **`WSConn.OnMessage`, `OnClose`, `Ping`, `Pong`, `Recv`, `Subprotocol`,
+  `IsClient`** for a dialled connection. Callbacks are registered after the dial
+  rather than passed in the config, so a handler can name the connection it
+  belongs to — the right way round for a peer table keyed on the connection.
+
+#### Changed
+
+- **`DialWS` returns the same `*WSConn` the inbound side hands a `WSHandler`.**
+  That was the point of building it rather than a separate client type: a
+  dispatch loop holding accepted and dialled peers in one table would otherwise
+  need two of every code path, with nothing stopping it getting one wrong.
+
+  `WSConn.conn` changed from `gnet.Conn` to `wsRawConn`, a three-method interface
+  (`AsyncWrite`, `Close`, `RemoteAddr`) that `gnet.Conn` already satisfies. No
+  inbound behaviour changed. Three methods rather than gnet's forty because
+  everything else on that interface is inbound-only, and requiring it would mean
+  the outbound adapter faking a read path it does not use.
+
+- Frame encoding split by role. RFC 6455 §5.3 requires a client to mask every
+  frame it sends and §5.1 forbids a server from masking any, so
+  `buildWSFrameMasked` joins `buildWSFrame` and `WSConn.client` selects. Masking
+  keys come from `crypto/rand`: the key exists to stop a hostile intermediary
+  steering a proxied stream, which a predictable sequence would not do.
+
+#### Not included, deliberately
+
+- **Reconnection and backoff.** A redial policy needs peer scoring, whether the
+  address is still in the validator set, and how long to wait. A connection
+  primitive can answer none of those. `OnClose` reports 1006 for a drop with no
+  close frame and the peer's code otherwise, which is the signal a redial loop
+  needs to tell an orderly shutdown from a network failure.
+
+- **gnet for the outbound path.** `client/client.go` dials on gnet for one I/O
+  model in both directions; this does not, and the reason is stated in
+  `websocket_client.go`. gnet's client mode delivers reads to an engine-owned
+  handler, and Breeze's engine handler dispatches by file descriptor through
+  HTTP/WebSocket state — so an outbound connection would have to be registered
+  into a *running server*, and `DialWS` could not be called by a process that
+  does not serve. A P2P node dials before, and often without, listening.
+
+  The cost, stated because a consumer sizing per-connection resource use needs
+  it: one goroutine blocked in a read plus one 4 KiB `bufio.Reader` per dialled
+  connection. At tens to low hundreds of peers that is a few hundred KiB. At tens
+  of thousands it would be the wrong design, and the fix is gnet's `Enroll`;
+  `DialWS` returns a `*WSConn` either way, so the signature survives that change.
+
+#### Security
+
+- **A dialled connection does not join the server's `WSHub`.** The hub is the
+  registry of connections this server accepted, and `Broadcast` walks it — an
+  outbound connection in there would be sent server-side traffic and counted
+  among this server's own clients.
+
+- **Reserved handshake headers cannot be overridden.** `Host`, `Upgrade`,
+  `Connection`, `Sec-WebSocket-Key`, `-Version` and `-Protocol` are dropped from
+  `Config.Header`; a caller-supplied `Sec-WebSocket-Key` would defeat the accept
+  check that exists to catch a peer which is not a WebSocket endpoint. CR and LF
+  are stripped from every header name and value, because a newline there is
+  request splitting.
+
+- **The handshake response is bounded** at 100 headers. A peer that never sends
+  the terminating blank line would otherwise grow the header map until the
+  deadline.
+
+- **A frame's declared length is checked before allocating**, and a fragmented
+  message's reassembled total is checked as well — the per-frame limit alone is
+  the number an attacker does not control, since many small fragments reach the
+  same total.
+
+- **A peer selecting an unoffered subprotocol is refused**, rather than the
+  connection continuing to speak a protocol this side never agreed to.
+
+- **One deadline covers the handshake and is then cleared.** A P2P connection is
+  idle for most of its life, so a lingering read deadline would close healthy
+  peers; liveness is `Ping`'s job instead.
+
 ### `breeze-mcp` run by hand: a guide, and how to get the token
 
 #### Fixed

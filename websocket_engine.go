@@ -143,7 +143,10 @@ func (s *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
 
 		// Send 101 Switching Protocols — suppress normal response path.
 		handshake := wsHandshakeResponse(key)
-		ctx.Conn.AsyncWrite(handshake, nil)
+		// The write is queued on the event loop; a failure here means the
+		// connection is already gone, which OnClose reports. There is nothing
+		// useful to do with the error at this point in the upgrade.
+		_ = ctx.Conn.AsyncWrite(handshake, nil)
 		ctx.Res = nil // prevent Breeze from writing an additional response
 
 		// Notify the handler (runs in the worker pool via the normal exec path).

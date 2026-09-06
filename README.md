@@ -307,6 +307,30 @@ hub := app.WebSocket("/ws", &breeze.WSHandlerFunc{
 
 Binary & text frames, ping/pong, fragmentation, graceful close — all RFC 6455.
 
+### Dialling out
+
+`DialWS` is the symmetric other half: a Breeze process connecting *to* a WebSocket
+server rather than accepting one. It returns the same `*WSConn`, so a peer table
+holds one type for connections it accepted and connections it dialled.
+
+```go
+conn, err := breeze.DialWS("ws://peer:9000/p2p", breeze.WSClientConfig{
+	HandshakeTimeout: 5 * time.Second,
+	Header:           map[string]string{"Authorization": "Bearer " + token},
+})
+if err != nil {
+	return err
+}
+conn.OnMessage(func(op byte, payload []byte) { peer.handle(op, payload) })
+conn.OnClose(func(code uint16, reason string) { peers.drop(conn) })
+conn.SendBinary(hello)
+```
+
+Full client handshake with `Sec-WebSocket-Accept` verification, mandatory frame
+masking, `wss://` via `crypto/tls`, and `Ping` for liveness. One goroutine per
+dialled connection — sized for tens to low hundreds of peers, not tens of
+thousands. Reconnection is deliberately yours: `OnClose` is where a redial goes.
+
 ## ✅ Request Validation
 
 One call: decode JSON body + query + path params, validate, and — on

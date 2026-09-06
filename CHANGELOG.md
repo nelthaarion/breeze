@@ -12,6 +12,125 @@ claiming to be the next release. They are now `###` subsections under this one
 heading, in reverse chronological order, which is what a reader collapsing the file
 to `##` needs in order to see one unreleased block and eight releases.
 
+### Graceful shutdown: `Breeze.Stop`
+
+#### Added
+
+- **`Breeze.Stop(ctx context.Context) error`** — a running server can now be
+  stopped. `Run` wrapped `gnet.Run`, which blocks for the life of the process and
+  discarded the one handle that can end it, so there was no way to shut a Breeze
+  server down at all. That blocked moving a consumer's socket tests onto Breeze's
+  WebSocket support: all of them tear down between runs through the `gnet.Engine`
+  handle, and Breeze had no equivalent.
+
+  The shape is `net/http.Server.Shutdown`'s, deliberately — a context for the
+  deadline, graceful first and forced after:
+
+  1. New connections are refused from the first instruction, before anything is
+     torn down.
+  2. Every active WebSocket connection is sent a Close frame with **1001 (going
+     away)** and its handler's `OnClose` is queued on that connection's ordered
+     dispatch queue.
+  3. Work already dispatched to the worker pool — blocking routes, WebSocket
+     handler callbacks — is given until `ctx` is done to finish.
+  4. The engine is torn down, which closes the listener and force-closes whatever
+     is still connected, and `Stop` waits for `Run` to return.
+
+  Returns `nil` on a clean stop, `ctx.Err()` when step 3 ran out of time (the
+  teardown still happens — that is the forced half), `ErrNotRunning` when there
+  was no engine to stop, and `ErrShutdownIncomplete` when gnet's own teardown did
+  not finish. Idempotent: later calls report the first call's result without
+  repeating any of it, and a call that overlaps the first waits for it rather than
+  starting a second teardown.
+
+- **`Breeze.OnBoot`** now keeps the `gnet.Engine` gnet hands it. That handle is
+  the whole mechanism; `gnet.Run` never returned it and Breeze never asked for it.
+  Per-engine rather than gnet's package-level `Stop(addr)`, which stops "the last
+  engine registered for this address" and is deprecated upstream for exactly that
+  reason — two Breeze instances in one process now stop independently.
+
+- **`Breeze.OnOpen`** closes connections that arrive during a shutdown. gnet
+  cannot close a listener without tearing the engine down in the same step, so
+  without this "stops accepting" would only become true at the very end, after the
+  graceful wait it is supposed to precede. The upgrade handler refuses with **503**
+  for the same reason: an upgrade can arrive on a keep-alive connection accepted
+  before the shutdown began, and registering it after `Stop` swept the registry
+  would leave that handler hearing about the close only from the force-close, as
+  1006, after `Stop` had already returned.
+
+- **`ErrNotRunning`, `ErrServerStopped`, `ErrShutdownIncomplete`.**
+
+#### Changed
+
+- **`Run` returns after `Stop`, rather than blocking forever.** The usage the
+  feature exists for —
+
+  ```go
+  go func() { _ = app.Run(port, true) }()
+  // ...
+  _ = app.Stop(ctx)
+  ```
+
+  — needs `Run`'s goroutine to actually exit, not merely `Stop` to return. `Stop`
+  waits on `Run`'s own exit rather than on `Engine.Stop`'s return, because that
+  call polls a flag on a half-second ticker: waiting for it would put 500 ms into
+  every shutdown, and it answers a weaker question than the one callers care about.
+
+- **`Run` refuses to start a stopped instance** (`ErrServerStopped`). A `*Breeze`
+  gets one lifetime: after `Stop` the WebSocket registry, hub and dispatch queues
+  are torn down, and rebinding the port would serve traffic with half its state
+  already collected.
+
+- **A drain the worker pool refuses now runs on a goroutine** instead of being
+  dropped. `wsDispatchQueue` sets `running` before dispatching its drain, so a
+  dropped drain left the connection with no consumer for the rest of its life —
+  every later message, and the close event, queued behind a worker that never
+  started. A pool that has been shut down refuses silently and an `OverflowReject`
+  pool refuses when full, so neither needs an application bug to reach. Ordering is
+  unaffected: what guarantees it is that exactly one drain exists, not where it
+  runs, which is why the no-pool path has always been a goroutine.
+
+- **A request the pool refuses no longer leaks its pooled `Context`.** `dispatch`
+  uses `SubmitErr` and puts the `Context` and the shutdown counter back when the
+  task will not run.
+
+#### Tests
+
+- `shutdown_test.go` runs a real server on a real port for each case, because the
+  property is not "Stop returned" but "the server is gone": the port is free,
+  `Run`'s goroutine has exited, and every handler was told.
+- The three cases the issue asked for: `TestStopWithNoConnectionsClosesTheListener`,
+  `TestStopWaitsForInFlightRequests` (a blocking handler, verified still running
+  when `Stop` is called and finished when it returns, with the client's 200
+  received), and `TestStopClosesActiveWebSocketsAndFiresOnClose` (four connections;
+  `OnClose` fired for each with **1001** before `Stop` returned, and each peer saw
+  1001 on the wire rather than the 1006 a bare socket close produces).
+- `TestStopDeliversQueuedMessagesBeforeOnClose` is the ordering guarantee under a
+  shutdown, repeated, and asserts a message was actually delivered so it cannot
+  pass by delivering none. Verified against the failure it exists for: removing
+  the drain wait fails it and `TestStopWaitsForInFlightRequests` on the first
+  iteration.
+- `TestStopReturnsContextErrorWhenTheDeadlinePasses` covers graceful-then-force,
+  `TestStopIsIdempotent` and `TestConcurrentStopPerformsOneShutdown` the repeat and
+  racing callers, `TestStopDuringStartup` a `Stop` that beats gnet's boot,
+  `TestStopAffectsOnlyItsOwnInstance` two servers where only one is stopped,
+  `TestStopRefusesNewConnectionsImmediately` and
+  `TestStopRefusesUpgradesOnExistingConnections` the two ways a connection could
+  still slip in mid-shutdown, and `TestStopNotifiesWebSocketHandlersWithAClosedPool`
+  the caller who shuts the pool down first — verified against the failure it exists
+  for: with the drain dispatched by `Submit` instead, it times out after 10 s.
+
+#### Notes
+
+- `Stop` does not shut down `Breeze.Pool`. The pool is supplied by the caller and
+  may be shared with subsystems that outlive the HTTP server, so follow `Stop`
+  with `Pool.Shutdown(ctx)` when the pool is the server's alone.
+- Inline requests are not counted as in-flight, and do not need to be: an inline
+  handler runs on the event-loop goroutine inside `OnTraffic`, and the shutdown
+  signal is delivered to that same goroutine as a queued task, so it cannot be
+  processed until the handler has returned. Counting them would have put two
+  atomic read-modify-writes on the one request path in Breeze that has none.
+
 ### Inbound WebSocket messages were delivered out of order
 
 #### Fixed

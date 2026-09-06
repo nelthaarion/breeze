@@ -86,6 +86,16 @@ type wsDispatchQueue struct {
 	handler WSHandler
 	pool    *WorkerPool
 
+	// inflight is the server's shutdown counter, or nil for a queue with no
+	// server behind it. A live drain is work Stop has to wait for: it is how
+	// OnMessage and OnClose reach the application, and requirement 3's
+	// guarantee — every handler's OnClose has run before Stop returns — is
+	// exactly the statement that this counter reached zero.
+	//
+	// A pointer rather than a *Breeze so the queue keeps needing nothing from
+	// the engine but the three fields above.
+	inflight *atomic.Int64
+
 	mu    sync.Mutex
 	queue []wsEvent
 
@@ -133,13 +143,37 @@ func (q *wsDispatchQueue) push(ev wsEvent) bool {
 	q.mu.Unlock()
 
 	if start {
-		if q.pool != nil {
-			q.pool.Submit(q.drain)
-		} else {
-			go q.drain()
+		// Counted before the drain is dispatched, for the same reason
+		// Breeze.dispatch counts before Submit: between the two, the events are
+		// queued with no consumer running yet, and a shutdown that sampled the
+		// counter there would decide the handler had already been told
+		// everything it was owed.
+		if q.inflight != nil {
+			q.inflight.Add(1)
 		}
+		q.startDrain()
 	}
 	return true
+}
+
+// startDrain runs a drain on the worker pool, falling back to a goroutine when
+// the pool will not take it.
+//
+// The fallback is not a nicety. A dropped drain is not like a dropped task: this
+// queue has already set running, so no later push will start another consumer,
+// and every event on the connection — including the close event Breeze.Stop waits
+// for — would sit undelivered for the rest of its life. A pool that has been shut
+// down refuses silently, and an OverflowReject pool refuses when full, so both are
+// reachable without any bug on the application's part.
+//
+// A goroutine consumer is as correct as a pool worker here: what preserves order
+// is that there is exactly one drain, not where it runs — which is also why the
+// no-pool path below has always been a goroutine.
+func (q *wsDispatchQueue) startDrain() {
+	if q.pool != nil && q.pool.SubmitErr(q.drain) == nil {
+		return
+	}
+	go q.drain()
 }
 
 // drain delivers events until the queue is empty.
@@ -148,6 +182,13 @@ func (q *wsDispatchQueue) push(ev wsEvent) bool {
 // this connection, and holding the lock across it would deadlock a handler that
 // sends and then closes.
 func (q *wsDispatchQueue) drain() {
+	// Both exits below are covered, including the one after a close event, and
+	// call already contains a panicking handler — so the counter cannot be left
+	// held by a drain that is no longer running.
+	if q.inflight != nil {
+		defer q.inflight.Add(-1)
+	}
+
 	for {
 		q.mu.Lock()
 		if len(q.queue) == 0 {
@@ -289,6 +330,18 @@ func (s *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
 	return func(ctx *Context) error {
 		req := ctx.Req
 
+		// A shutdown that has already swept the connection registry must not
+		// then acquire a connection it will never sweep: this one would be
+		// registered after Stop collected its list, so its handler would only
+		// ever hear about the close from gnet's force-close, with 1006 and after
+		// Stop had returned. New connections are refused in OnOpen, but an
+		// upgrade can also arrive on a keep-alive connection accepted before the
+		// shutdown began, which is the case this covers.
+		if s.stopping.Load() {
+			ctx.Status(503)
+			return ctx.WriteString("Service Unavailable: server shutting down")
+		}
+
 		upgrade := req.Header["upgrade"]
 		if upgrade != "websocket" {
 			ctx.Status(400)
@@ -314,9 +367,10 @@ func (s *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
 			handler:    handler,
 			maxPayload: wsMaxPayloadDefault,
 			dispatch: &wsDispatchQueue{
-				wc:      wc,
-				handler: handler,
-				pool:    s.Pool,
+				wc:       wc,
+				handler:  handler,
+				pool:     s.Pool,
+				inflight: &s.inflight,
 			},
 		}
 		s.wsConns.Store(ctx.Conn.Fd(), state)

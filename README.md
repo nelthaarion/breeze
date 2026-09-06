@@ -37,6 +37,7 @@ on as an afterthought.
 **Get started**
 - [Installation](#-installation)
 - [Quick Start](#-quick-start)
+- [Graceful Shutdown](#-graceful-shutdown)
 - [Docker](#-docker)
 - [CLI](#-cli)
 - [Packages at a Glance](#-packages-at-a-glance)
@@ -136,6 +137,49 @@ go run main.go
 # curl http://localhost:3000/        → {"status":"ok"}
 # curl http://localhost:3000/users/42 → {"id":"42"}
 ```
+
+## 🛑 Graceful Shutdown
+
+`Run` blocks until the server is stopped; `Stop` stops it. The contract is
+`net/http.Server.Shutdown`'s — a context bounds how long in-flight work is given
+to finish, and whatever is left is closed:
+
+```go
+app := breeze.New(router, pool)
+
+go func() {
+	if err := app.Run(3000, true); err != nil {
+		log.Printf("breeze: %v", err)
+	}
+}()
+
+// SIGINT / SIGTERM
+sig := make(chan os.Signal, 1)
+signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+<-sig
+
+ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+defer cancel()
+if err := app.Stop(ctx); err != nil {
+	log.Printf("breeze: unclean shutdown: %v", err)
+}
+pool.Shutdown(ctx) // Stop does not touch a pool it did not create
+```
+
+What `Stop` does, in order:
+
+| Step | Behaviour |
+|------|-----------|
+| 1 | New connections are refused immediately |
+| 2 | Every WebSocket connection gets a Close frame with **1001 going away**, and its handler's `OnClose` runs through the connection's ordered queue |
+| 3 | Work already dispatched to the pool — blocking routes, WebSocket callbacks — is given until `ctx` is done |
+| 4 | The listener closes, anything still connected is force-closed, and `Run` returns |
+
+`Stop` returns `nil` on a clean stop, `ctx.Err()` when step 3 ran out of time (the
+teardown still happens), and `breeze.ErrNotRunning` when there was nothing to stop.
+It is idempotent, and when it returns, `Run`'s goroutine has exited. Each `*Breeze`
+holds its own engine, so two servers in one process stop independently; a stopped
+one is not reusable (`Run` then returns `breeze.ErrServerStopped`).
 
 ## 🐳 Docker
 

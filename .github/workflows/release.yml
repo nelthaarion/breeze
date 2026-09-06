@@ -9,7 +9,10 @@ permissions:
   contents: write
 
 jobs:
+  
+  
   release:
+    replace_existing_artifacts: true
     runs-on: ubuntu-latest
 
     steps:

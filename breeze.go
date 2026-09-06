@@ -35,6 +35,11 @@ type Breeze struct {
 	// EnableMCP. Declared in mcp_server.go, beside the code that uses it.
 	mcpFields
 
+	// Graceful-shutdown state — the captured gnet.Engine and the bookkeeping
+	// Stop coordinates on. Declared in shutdown.go, beside the code that uses
+	// it.
+	shutdownFields
+
 	// ErrorHandler turns an error returned by a handler or middleware into a
 	// response. Nil means the framework default; see error.go.
 	//
@@ -411,7 +416,17 @@ func (s *Breeze) runInline(c gnet.Conn, ctx *Context) {
 // pool is configured) and answers with AsyncWrite, which is the only safe way
 // to write to a connection from off its event loop.
 func (s *Breeze) dispatch(c gnet.Conn, ctx *Context) {
+	// Counted here, on the event-loop goroutine, rather than inside exec: a
+	// task that has been submitted but not yet picked up by a worker is still
+	// a request the server accepted and owes an answer, and a Stop that ran
+	// between the Submit and the worker's first instruction would otherwise
+	// consider it finished. Decremented by exec's own defer, on every path
+	// including a panic. See shutdownFields.inflight for why the inline path
+	// is not counted.
+	s.inflight.Add(1)
+
 	exec := func() {
+		defer s.inflight.Add(-1)
 		// Release defer is registered FIRST so it runs LAST (after the
 		// recover defer). This ensures the response is fully written before
 		// the Context is returned to the pool.
@@ -438,7 +453,17 @@ func (s *Breeze) dispatch(c gnet.Conn, ctx *Context) {
 	}
 
 	if s.Pool != nil {
-		s.Pool.Submit(exec)
+		// SubmitErr rather than Submit, because a task the pool refuses is a
+		// task that never runs, and exec's defer is the only thing that would
+		// have decremented the counter Stop waits on. Rejection happens when
+		// the pool has been shut down (Submit is a documented no-op then) or
+		// when an OverflowReject pool is full; in both cases the request is
+		// dropped exactly as it was before, but the shutdown bookkeeping and
+		// the pooled Context are put back rather than leaked.
+		if err := s.Pool.SubmitErr(exec); err != nil {
+			s.inflight.Add(-1)
+			releaseContext(ctx)
+		}
 	} else {
 		go exec()
 	}
@@ -462,7 +487,34 @@ func (s *Breeze) OnClose(c gnet.Conn, err error) gnet.Action {
 	return gnet.None
 }
 
+// Run binds the port and serves until the server is stopped.
+//
+// It blocks, as it always has. What changed is that it now returns rather than
+// blocking forever: Stop tears the engine down and gnet.Run returns, so
+//
+//	go func() { _ = app.Run(port, true) }()
+//	// ...
+//	_ = app.Stop(ctx)
+//
+// leaves no goroutine behind. See Stop in shutdown.go.
+//
+// A *Breeze that has been stopped is not reusable — Run returns ErrServerStopped
+// rather than rebinding the port with the WebSocket registry and hub already
+// torn down.
 func (s *Breeze) Run(port int, multiCore bool) error {
+	s.initShutdownState()
+	if s.stopping.Load() {
+		return ErrServerStopped
+	}
+	// Set before the bind so a Stop racing startup waits for OnBoot instead of
+	// concluding the server was never started. Cleared on no path: a *Breeze
+	// gets one Run.
+	s.runCalled.Store(true)
+	// Signals Stop that gnet.Run has returned, whether it returned because Stop
+	// asked it to, because the bind failed, or because gnet gave up. Stop waits
+	// on this rather than on Engine.Stop's own polling loop.
+	defer s.markRunExited()
+
 	// Recorded before the bind, so anything reading it during startup sees the
 	// port this call is for rather than zero. A failed bind leaves it set, which
 	// is harmless: Run returns the error and the process does not go on to serve.

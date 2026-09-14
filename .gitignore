@@ -14,6 +14,10 @@
 # Coverage artifacts
 *.out
 coverage.html
+
+# Local worktrees
+/.worktrees/
+
 /.claude/
 
 # Host-built binaries for cmd/fleet-example's runtime-only images. Produced by

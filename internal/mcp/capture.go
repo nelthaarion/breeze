@@ -154,25 +154,16 @@ func captureStdout(fn func() error) (string, error) {
 // working directory is wherever it happened to start — has to be able to say
 // where the project is.
 //
-// This is under the same lock as captureStdout for the same reason: chdir is
-// process-global. Callers must not nest the two.
+// This deliberately does not take captureMu, even though chdir is process-global
+// for the same reason os.Stdout is. Taking it would make captureHolder name this
+// goroutine, and an operation that captures internally — which is the supported
+// composition, and the one the plan and knowledge tools use — would then refuse
+// itself as a nested capture. Callers that need both hold the capture lock on the
+// outside, where captureStdout has already taken it and runInDir is serialised
+// along with it.
 func runInDir(dir string, fn func() error) error {
 	if dir == "" {
 		return fn()
-	}
-
-	self := goroutineID()
-	nested := false
-	if holder, ok := captureHolder.Load().(string); ok && holder == self && holder != "" {
-		nested = true
-	}
-	if !nested {
-		captureMu.Lock()
-		captureHolder.Store(self)
-		defer func() {
-			captureHolder.Store("")
-			captureMu.Unlock()
-		}()
 	}
 
 	prev, err := os.Getwd()

@@ -66,10 +66,11 @@ func runChain(ctx *breeze.Context, middlewares []breeze.HandlerFunc, handler bre
 
 func TestJWT_HappyPathViaParseHTTPRequest(t *testing.T) {
 	secret := "test-secret-key-32-bytes-long!!"
-	// Build a valid HS256 token.
+	// Build a valid HS256 token with exp claim (required by validation).
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": "alice",
 		"role":    "admin",
+		"exp":     time.Now().Add(1 * time.Hour).Unix(),
 	})
 	tokenStr, err := token.SignedString([]byte(secret))
 	if err != nil {
@@ -180,6 +181,7 @@ func TestJWT_LowercaseHeaderKeyViaParseHTTPRequest(t *testing.T) {
 	secret := "test-secret-key-32-bytes-long!!"
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": "bob",
+		"exp":     time.Now().Add(1 * time.Hour).Unix(),
 	})
 	tokenStr, _ := token.SignedString([]byte(secret))
 

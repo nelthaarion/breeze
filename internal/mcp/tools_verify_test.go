@@ -58,8 +58,10 @@ func TestAdd(t *testing.T) {
 }
 
 func BenchmarkAddIsAllocationFree(b *testing.B) {
-	for b.Loop()  {
+	i := 0
+	for b.Loop() {
 		intSink = Add(i, 1)
+		i++
 	}
 }
 

@@ -156,13 +156,13 @@ func TestEntrypointsPrintTheSameBanner(t *testing.T) {
 		{"app-runtime", []string{"--mode", "app-runtime", "--port", "2000"}},
 		// A supplied token must NOT be echoed, identically in both.
 		{"supplied token", []string{"--mode", "generator", "--port", "2000", "--token", "supplied-secret"}},
-		// A widened bind adds warning lines; both must add the same ones.
-		{"widened bind", []string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0"}},
+		// A widened bind requires both --scope and --token; both must add the same lines.
+		{"widened bind", []string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0", "--scope", "fleet", "--token", "test-token"}},
 		// A scoped token changes the banner's scope line, and suppresses the
 		// unscoped-off-host warning. Both entrypoints must agree on both changes.
 		{"scoped token", []string{"--mode", "generator", "--port", "2000", "--scope", "fleet"}},
 		{"scoped widened bind", []string{"--mode", "generator", "--port", "2000",
-			"--host", "0.0.0.0", "--scope", "fleet"}},
+			"--host", "0.0.0.0", "--scope", "fleet", "--token", "test-token"}},
 	}
 
 	for _, tc := range cases {
@@ -291,27 +291,43 @@ func TestBannerReportsScope(t *testing.T) {
 // TestOffHostWarningTracksScope — the warning names --scope as the fix, and stops once
 // the operator has applied it. A warning that fires after it has been acted on is one
 // that gets filtered out, taking the useful cases with it.
+//
+// As of the current security model, an unscoped generator on a non-loopback bind
+// fails at build time rather than printing a warning. The test verifies this
+// error and that a scoped generator builds successfully without the warning.
 func TestOffHostWarningTracksScope(t *testing.T) {
 	t.Setenv(TokenEnv, "")
 
 	const marker = "consider --scope"
 
+	// Unscoped generator on non-loopback: now an error, not a warning.
 	unscoped, err := ParseFlags("breeze-mcp",
-		[]string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0"}, io.Discard)
+		[]string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0", "--token", "test-token"}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if banner := bannerFor(t, "breeze-mcp", unscoped); !strings.Contains(banner, marker) {
-		t.Errorf("an unscoped generator on 0.0.0.0 was not warned:\n%s", banner)
+	_, _, err = Build("test-version", unscoped)
+	if err == nil || !strings.Contains(err.Error(), "explicit --scope is required") {
+		t.Errorf("expected error about --scope requirement, got: %v", err)
 	}
 
+	// Scoped generator on non-loopback: builds successfully, no warning.
 	scoped, err := ParseFlags("breeze-mcp",
-		[]string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0", "--scope", "fleet"},
+		[]string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0", "--scope", "fleet", "--token", "test-token"},
 		io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if banner := bannerFor(t, "breeze-mcp", scoped); strings.Contains(banner, marker) {
+	server, token, err := Build("test-version", scoped)
+	if err != nil {
+		t.Fatalf("scoped generator failed to build: %v", err)
+	}
+	defer server.Close()
+
+	var errOut bytes.Buffer
+	announce(&errOut, "breeze-mcp", scoped, server, token)
+	banner := errOut.String()
+	if strings.Contains(banner, marker) {
 		t.Errorf("a scoped generator was still told to use --scope:\n%s", banner)
 	}
 }

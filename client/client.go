@@ -778,13 +778,6 @@ func buildHTTPRequest(req *ClientRequest, u *url.URL, userAgent string) []byte {
 	return b.Bytes()
 }
 
-func maxInt64FromBody(maxBody int64) int64 {
-	if maxBody <= 0 {
-		return int64(^uint64(0) >> 1)
-	}
-	return maxBody
-}
-
 // parseHTTPResponse attempts to parse one complete HTTP/1.1 response from buf.
 //
 // It returns the parsed response, how many bytes of buf it consumed, whether a
@@ -869,9 +862,13 @@ func parseHTTPResponse(buf []byte, maxBody int64) (resp *Response, consumed int,
 		switch lower {
 		case "content-length":
 			cl, e := strconv.ParseInt(val, 10, 64)
-			if e != nil || cl < 0 || cl > maxInt64FromBody(maxBody) {
+			if e != nil || cl < 0 {
 				return nil, 0, true, errors.New("client: invalid Content-Length")
 			}
+			// A declared length above MaxResponseBytes is not a malformed header, so it
+			// is deliberately not rejected here. It is checked against the cap below,
+			// where it fails as ErrResponseTooLarge — the sentinel a caller needs in
+			// order to tell "too big" apart from "the server is broken".
 			if contentLength >= 0 && contentLength != cl {
 				return nil, 0, true, errors.New("client: conflicting Content-Length headers")
 			}

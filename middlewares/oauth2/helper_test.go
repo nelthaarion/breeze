@@ -30,24 +30,63 @@ func newCtx(query string, cookies map[string]string) *breeze.Context {
 	return ctx
 }
 
-// respCookies parses all Set-Cookie headers written to a response into a
+// setCookieLines returns the raw Set-Cookie header lines of the serialized
+// response, in the order they appear on the wire.
+func setCookieLines(ctx *breeze.Context) []string {
+	if ctx.Res == nil {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(string(ctx.Res.Bytes()), "\r\n") {
+		if strings.HasPrefix(strings.ToLower(line), "set-cookie:") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// cookieName returns the name of the cookie a Set-Cookie line sets, or "" if the
+// line has no "name=value" pair where one belongs.
+//
+// It reads the name from the wire position rather than from anywhere in the line,
+// so a line whose value smuggled a "Set-Cookie: " prefix into itself is reported
+// under that whole string — which is exactly what a browser would do, and which
+// is why such a cookie is lost rather than merely misnamed.
+func cookieName(line string) string {
+	colon := strings.IndexByte(line, ':')
+	if colon < 0 {
+		return ""
+	}
+	pair, _, _ := strings.Cut(strings.TrimSpace(line[colon+1:]), ";")
+	name, _, ok := strings.Cut(pair, "=")
+	if !ok || name == "" {
+		return ""
+	}
+	return name
+}
+
+// respCookies parses the Set-Cookie lines of the serialized response into a
 // name->value map so the next simulated request can present them back.
+//
+// It reads the wire (ctx.Res.Bytes) rather than ctx.GetHeader("Set-Cookie") on
+// purpose. The map holds the framework's multi-cookie encoding — every cookie on
+// one value, separated by CRLF — and a map-level reader cannot tell a correctly
+// written second line from a malformed one. That is not hypothetical: while the
+// oauth2 middleware pre-joined its own "Set-Cookie: " prefix, the wire carried
+// "Set-Cookie: Set-Cookie: <name>=...", browsers dropped that line, and a
+// map-level reader still reported the cookie as present. Reading the bytes is
+// what the browser sees, so a malformed line fails the test instead of hiding.
 func respCookies(ctx *breeze.Context) map[string]string {
 	out := map[string]string{}
-	raw := ctx.GetHeader("Set-Cookie")
-	if raw == "" {
-		return out
-	}
-	// setCookie joins multiple cookies with "\r\nSet-Cookie: ".
-	for _, line := range strings.Split(raw, "\r\nSet-Cookie: ") {
-		// The value is the first "k=v" pair before the first ";".
-		semi := strings.IndexByte(line, ';')
-		pair := line
-		if semi >= 0 {
-			pair = line[:semi]
+	for _, line := range setCookieLines(ctx) {
+		name := cookieName(line)
+		if name == "" {
+			continue
 		}
-		if eq := strings.IndexByte(pair, '='); eq > 0 {
-			out[pair[:eq]] = pair[eq+1:]
+		colon := strings.IndexByte(line, ':')
+		pair, _, _ := strings.Cut(strings.TrimSpace(line[colon+1:]), ";")
+		if _, value, ok := strings.Cut(pair, "="); ok {
+			out[name] = value
 		}
 	}
 	return out

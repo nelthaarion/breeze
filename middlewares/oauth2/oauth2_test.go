@@ -484,12 +484,12 @@ func TestIDTokenNonceExtractsClaim(t *testing.T) {
 func TestIDTokenNonceMissingClaim(t *testing.T) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{})
 	signed, _ := token.SignedString([]byte("any-secret"))
-	got, err := idTokenNonce(signed)
-	if err != nil {
-		t.Fatalf("idTokenNonce: %v", err)
+	_, err := idTokenNonce(signed)
+	if err == nil {
+		t.Fatal("idTokenNonce should return error for missing nonce")
 	}
-	if got != "" {
-		t.Fatalf("nonce = %q, want empty", got)
+	if err != ErrNonceMismatch {
+		t.Fatalf("idTokenNonce: %v, want ErrNonceMismatch", err)
 	}
 }
 
@@ -521,5 +521,97 @@ func BenchmarkReadSessionCookie(b *testing.B) {
 		if _, err := readSession(read, &cfg); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestWriteSessionInCallbackFlow(t *testing.T) {
+	mp := newMockProvider(t)
+	defer mp.Close()
+	cfg := testConfig(t, mp, SessionModeCookie)
+
+	// Simulate login to get state cookie
+	loginCtx := newCtx("", nil)
+	Login(cfg)(loginCtx)
+	stateCookies := respCookies(loginCtx)
+	authURL := location(loginCtx)
+	state := extractQuery(authURL, "state")
+	if state == "" {
+		t.Fatal("no state in auth URL")
+	}
+
+	// Simulate callback
+	cbCtx := newCtx("code=abc&state="+state, stateCookies)
+	Callback(cfg)(cbCtx)
+	if status(cbCtx) != 302 {
+		t.Fatalf("callback status = %d", status(cbCtx))
+	}
+	
+	// The wire, not the header map: respCookies reads the serialized bytes, so a
+	// malformed Set-Cookie line is reported as the missing cookie it is.
+	sessionCookies := respCookies(cbCtx)
+	if _, ok := sessionCookies[cfg.CookieName]; !ok {
+		t.Errorf("session cookie %s not found in response: %v", cfg.CookieName, sessionCookies)
+	}
+}
+
+// TestCallbackFlowWritesTwoWellFormedCookieLines asserts the exact bytes of the
+// callback response, because the cookie tests around it cannot.
+//
+// A map-level reader (ctx.GetHeader) reports a cookie as present however the value
+// is punctuated, so it accepted a response whose second line read
+//
+//	Set-Cookie: Set-Cookie: <session>=...; HttpOnly; SameSite=Lax
+//
+// Browsers discard that line: the parsed cookie-name is "Set-Cookie: <session>",
+// which is not a valid cookie-name. The callback clears the single-use flow cookie
+// first and writes the session cookie second, so the discarded line was the
+// session — login redirected successfully, established no session, and every test
+// in this file still passed. Hence an assertion on the wire.
+func TestCallbackFlowWritesTwoWellFormedCookieLines(t *testing.T) {
+	mp := newMockProvider(t)
+	defer mp.Close()
+	cfg := testConfig(t, mp, SessionModeCookie)
+
+	loginCtx := newCtx("", nil)
+	Login(cfg)(loginCtx)
+	state := extractQuery(location(loginCtx), "state")
+	if state == "" {
+		t.Fatal("no state in the authorization URL")
+	}
+
+	cbCtx := newCtx("code=abc&state="+state, respCookies(loginCtx))
+	Callback(cfg)(cbCtx)
+	if status(cbCtx) != 302 {
+		t.Fatalf("callback status = %d", status(cbCtx))
+	}
+
+	lines := setCookieLines(cbCtx)
+	if len(lines) != 2 {
+		t.Fatalf("got %d Set-Cookie lines, want 2 (clear the flow cookie, write the session):\n%s",
+			len(lines), cbCtx.Res.Bytes())
+	}
+
+	// Each line must be exactly one header: the name is emitted once, and the
+	// cookie it carries is the one the caller named, not the header name.
+	got := map[string]bool{}
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Set-Cookie: Set-Cookie:") {
+			t.Errorf("doubled header name; browsers drop this line: %q", line)
+		}
+		name := cookieName(line)
+		switch name {
+		case cfg.CookieName, stateCookieName(&cfg):
+			got[name] = true
+		default:
+			t.Errorf("unexpected cookie name %q in %q; want %q or %q",
+				name, line, cfg.CookieName, stateCookieName(&cfg))
+		}
+	}
+	if !got[cfg.CookieName] {
+		t.Errorf("no session cookie line; the user would finish the OAuth dance with no session:\n%s",
+			cbCtx.Res.Bytes())
+	}
+	if !got[stateCookieName(&cfg)] {
+		t.Errorf("the single-use flow cookie was not cleared:\n%s", cbCtx.Res.Bytes())
 	}
 }

@@ -76,6 +76,22 @@ func ParseScope(raw string) (Scope, error) {
 	return NewScope(caps...)
 }
 
+// AllCapabilitiesScope returns the --scope value that grants every capability.
+//
+// A provisioned container's control plane is bound to 0.0.0.0, and binding to a
+// non-loopback host with an unscoped token is refused at startup — so the
+// orchestrator has to state the full set explicitly rather than leave the variable
+// unset. Leaving it unset still means "every capability" for a hand-started server.
+// Comma-separated, which is what ParseScope reads.
+func AllCapabilitiesScope() string {
+	caps := KnownCapabilities()
+	parts := make([]string, 0, len(caps))
+	for _, c := range caps {
+		parts = append(parts, string(c))
+	}
+	return strings.Join(parts, ",")
+}
+
 // IsScoped reports whether this token was narrowed at all.
 func (s Scope) IsScoped() bool { return s.scoped }
 

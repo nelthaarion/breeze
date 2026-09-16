@@ -509,6 +509,14 @@ func (o *orchestrator) prepare(
 	}
 	plan.env[tokenEnvVar] = token
 
+	// The scope is the orchestrator's decision, and this is where it is made. The
+	// entrypoint binds the control plane to 0.0.0.0, and a non-loopback bind with an
+	// unscoped token is refused at startup, so leaving the variable unset would
+	// produce a container that looks healthy and answers nothing on its control port.
+	// Every capability is granted because that is what an unscoped token meant before
+	// scoping existed. A caller cannot set this — validateDockerEnv refuses it.
+	plan.env[scopeEnvVar] = AllCapabilitiesScope()
+
 	// The aggregator is started by the entrypoint only when this variable is present,
 	// which is how one image serves both a fleet's host service and its plain ones.
 	//

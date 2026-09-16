@@ -138,16 +138,17 @@ func TestExplorerTargetIgnoresTheHostHeaderWhenTheListenerIsKnown(t *testing.T) 
 	mustBeLocal(t, got, explorerTestPort)
 }
 
-// TestExplorerTargetFallsBackToTheHostPort covers a Collector with no application,
-// which is every unit test in this package and a Collector used only for recording.
+// TestExplorerTargetRefusesAPathWithNoKnownListener covers a Collector with no
+// application, which is every unit test in this package and a Collector used only
+// for recording.
 //
-// Only the port is taken from the header; the host is still loopback.
-func TestExplorerTargetFallsBackToTheHostPort(t *testing.T) {
-	got, err := explorerTarget("/health", "evil.example:8080", 0)
-	if err != nil {
-		t.Fatalf("explorerTarget refused a path with no known listener: %v", err)
+// The port is not recovered from the Host header: that header is caller-supplied, so
+// letting it choose the destination would make the explorer a loopback port scanner.
+// A zero port is refused rather than guessed at.
+func TestExplorerTargetRefusesAPathWithNoKnownListener(t *testing.T) {
+	if _, err := explorerTarget("/health", "evil.example:8080", 0); err == nil {
+		t.Fatal("explorerTarget accepted a zero port; the Host header must not supply one")
 	}
-	mustBeLocal(t, got, 8080)
 }
 
 // TestExplorerTargetRejectsAnEmptyURL keeps the handler's own url-required check
@@ -187,11 +188,16 @@ func TestPortFromHostHeader(t *testing.T) {
 // DisableAuth is set for the same reason the DBWriter router test sets it: this
 // asserts the SSRF guard, not the auth layer, and needing credentials here would
 // obscure which of the two produced the refusal.
+//
+// listenPortOverride is set because there is no application behind this Collector.
+// Without it the handler refuses for want of a port before it ever looks at the URL,
+// which also happens to be a 400 — so the test would pass while proving nothing.
 func TestExplorerExecRefusesAForeignHostThroughTheRouter(t *testing.T) {
 	router := breeze.NewRouter()
 	cfg := DefaultConfig()
 	cfg.DisableAuth = true
-	Install(nil, router, cfg)
+	coll := Install(nil, router, cfg)
+	coll.listenPortOverride = explorerTestPort
 
 	body, err := json.Marshal(APIExplorerExecRequest{
 		Method: "GET",

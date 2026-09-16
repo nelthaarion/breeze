@@ -157,8 +157,13 @@ func explorerURL(port int, pathAndQuery string) string {
 // Collector has no application (tests, or a Collector used only for recording).
 //
 // Separate from a direct c.app.ListenPort() call so the nil case lives in one
-// place: a nil app is normal in this package, not an error.
+// place: a nil app is normal in this package, not an error. A test that needs the
+// handler to get past the port check without starting a server sets
+// listenPortOverride instead.
 func (c *Collector) listenPort() int {
+	if c.listenPortOverride != 0 {
+		return c.listenPortOverride
+	}
 	if c.app == nil {
 		return 0
 	}

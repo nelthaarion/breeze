@@ -466,13 +466,14 @@ func buildMCPTool(name, description string, rt *route, doc scalar.RouteDoc) (mcp
 			in = mcpInBody
 		}
 		for field, fieldSchema := range schema.Properties {
-			if in == mcpInHeader && mcpHeaderIsSecuritySensitive(field) {
-				// Security identity and HTTP framing belong to the MCP/server boundary,
-				// never to model-controlled tool arguments. Exposing Authorization,
-				// Cookie or Host as an input would let a tool call manufacture a new
-				// security context inside the application.
-				continue
-			}
+			// A header the route declared is advertised as an argument, including
+			// Authorization and X-Api-Key: the route author opted into it by declaring
+			// an InputHeader group, and a tool that cannot carry it cannot call that
+			// route at all. What a model may not do is invent one — an argument no
+			// group declared is refused by name in callMCPTool, which is where the
+			// containment lives. Response-side redaction of the same names is separate
+			// and still applies.
+			//
 			// A path parameter is always required: without it there is no URL
 			// to request. Everything else follows what the struct declared.
 			isRequired := in == mcpInPath || schemaRequires(schema, field) ||

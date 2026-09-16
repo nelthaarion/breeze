@@ -158,6 +158,24 @@ func (r *HTTPResponse) AppendTo(buf []byte) []byte {
 		if lk == "content-length" || lk == "transfer-encoding" || lk == "connection" {
 			continue
 		}
+		// Set-Cookie is special: it may contain multiple cookies separated by \r\n.
+		// Write each as a separate header line.
+		if lk == "set-cookie" {
+			for _, cookie := range strings.Split(v, "\r\n") {
+				cookie = strings.TrimSpace(cookie)
+				if cookie == "" {
+					continue
+				}
+				if !validResponseHeaderValue(cookie) {
+					continue
+				}
+				buf = append(buf, k...)
+				buf = append(buf, ": "...)
+				buf = append(buf, cookie...)
+				buf = append(buf, "\r\n"...)
+			}
+			continue
+		}
 		if !validResponseHeaderName(k) || !validResponseHeaderValue(v) {
 			continue
 		}

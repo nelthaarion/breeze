@@ -345,7 +345,7 @@ var pathTakingTools = []struct {
 	{tool: "breeze_new", arg: "dir", extra: map[string]any{"name": "app"}},
 	{tool: "breeze_add", arg: "dir", extra: map[string]any{"feature": "jwt"}},
 	{tool: "breeze_generate", arg: "dir", extra: map[string]any{
-		"kind": "model", "name": "User", "args": []string{"email:string"}}},
+		"kind": "model", "name": "User", "fields": []string{"email:string"}}},
 }
 
 // TestEveryPathTakingToolIsConfined is the coverage test for the workspace boundary.

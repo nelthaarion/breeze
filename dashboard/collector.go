@@ -35,6 +35,13 @@ type Collector struct {
 	// else. See explorerTarget.
 	app *breeze.Breeze
 
+	// listenPortOverride stands in for app's listener port when there is no
+	// application to ask. It is set only by tests that drive the API Explorer
+	// handler through the real router without starting a server; without it such a
+	// Collector reports 0 and the explorer refuses before reaching the branch under
+	// test. Production never sets it — a live app always has a port.
+	listenPortOverride int
+
 	// hub is set by Install() once the Breeze engine is available.
 	hub *wsHub
 

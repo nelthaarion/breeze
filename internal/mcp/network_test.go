@@ -443,12 +443,18 @@ func TestNetworkHeaderValidation(t *testing.T) {
 			contains: "not supported",
 		},
 		{
-			// The stateless revision: refused rather than half-served, because this
-			// server implements initialize and a session, which that revision removed.
-			name:     "protocol-version-2026-07-28",
-			headers:  map[string]string{protocolHeader: "2026-07-28"},
+			// The stateless revision removed initialize, and this server's vocabulary
+			// is handshake-based, so the handshake is refused rather than half-served.
+			// Mcp-Method has to be set for the refusal to be about the method: without
+			// it the request fails the routing-header check first, which is a different
+			// rejection.
+			name: "protocol-version-2026-07-28",
+			headers: map[string]string{
+				protocolHeader: "2026-07-28",
+				methodHeader:   "initialize",
+			},
 			want:     http.StatusBadRequest,
-			contains: "handshake-based",
+			contains: "is not supported by MCP 2026-07-28",
 		},
 	}
 
@@ -764,15 +770,27 @@ func TestDefaultBindIsLoopbackOnly(t *testing.T) {
 //
 // It binds 0.0.0.0 because that is the case the default exists to prevent, and
 // asserting it works is what makes the default a choice rather than a limitation.
+//
+// Widening the bind also takes a token and a scope that were stated explicitly: a
+// non-loopback control plane that minted its own token, or served every capability
+// because nothing said otherwise, is the exposure those two guards exist to prevent.
 func TestExplicitHostOverridesTheDefault(t *testing.T) {
-	ns, _, err := NewNetworkServer(NewServer("test"), NetworkConfig{
-		Mode: ModeGenerator,
-		Host: "0.0.0.0",
-	})
+	scope, err := NewScope(CapGeneration)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ns.Listen(NetworkConfig{Host: "0.0.0.0"}); err != nil {
+	cfg := NetworkConfig{
+		Mode:  ModeGenerator,
+		Host:  "0.0.0.0",
+		Token: "explicit-host-test-token",
+		Scope: scope,
+	}
+
+	ns, _, err := NewNetworkServer(NewServer("test"), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ns.Listen(cfg); err != nil {
 		t.Skipf("cannot bind 0.0.0.0 in this environment: %v", err)
 	}
 	defer ns.Close()

@@ -309,11 +309,6 @@ func (s *Server) handleToolsCall(ctx *rpc.Context) {
 	// for a long-lived editor integration means the user's tools stop working
 	// with no explanation. Converting it to a failed tool result keeps the
 	// session alive and puts the reason in front of whoever can act on it.
-	if err := validateToolArguments(t.schema, p.Arguments); err != nil {
-		ctx.Errorf(rpc.CodeInvalidParams, err.Error())
-		return
-	}
-
 	started := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
@@ -355,34 +350,12 @@ func (s *Server) handleToolsCall(ctx *rpc.Context) {
 // Absent arguments are treated as an empty object rather than an error: a tool
 // whose fields are all optional is legitimately callable with none, and MCP
 // clients differ on whether they send "arguments":{} or omit it.
-func validateToolArguments(schemaRaw json.RawMessage, raw json.RawMessage) error {
-	if len(raw) == 0 || string(raw) == "null" {
-		raw = []byte(`{}`)
-	}
-	var args map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &args); err != nil || args == nil {
-		return fmt.Errorf("arguments must be a JSON object")
-	}
-	var sch struct {
-		Properties map[string]json.RawMessage `json:"properties"`
-		Required   []string                   `json:"required"`
-	}
-	if err := json.Unmarshal(schemaRaw, &sch); err != nil {
-		return fmt.Errorf("tool schema is invalid")
-	}
-	for name := range args {
-		if _, ok := sch.Properties[name]; !ok {
-			return fmt.Errorf("unknown argument %q", name)
-		}
-	}
-	for _, name := range sch.Required {
-		if _, ok := args[name]; !ok {
-			return fmt.Errorf("missing required argument %q", name)
-		}
-	}
-	return nil
-}
-
+//
+// Arguments are deliberately not validated against the schema here. A call with a
+// missing or unknown argument is answered by the tool's own handler, which reports
+// it as a failed tool result; a -32602 raised before the handler runs would say the
+// call was malformed, which is a different and misleading thing, and would turn a
+// missing "kind is required" into a broken tool.
 func decodeArgs(raw json.RawMessage, dst any) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil

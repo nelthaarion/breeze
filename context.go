@@ -224,6 +224,13 @@ func (ctx *Context) SetHeader(key, value string) {
 	// Header names/values are emitted verbatim later. Reject invalid values here
 	// as well as at serialization time so attacker-controlled CR/LF can never enter
 	// the response map. The serializer remains defensive for direct map mutation.
+	//
+	// This applies to Set-Cookie as well. A value arriving here is one cookie, so a
+	// CR/LF inside it is not a second cookie — it is a mistake or an injection
+	// attempt, and the write is refused either way. Multiple cookies are expressed by
+	// calling this method once per cookie; the CRLF inserted below is this method's
+	// own separator and is never taken from the caller.
+	isSetCookie := strings.EqualFold(key, "Set-Cookie")
 	if !validResponseHeaderName(strings.TrimSpace(key)) || !validResponseHeaderValue(value) {
 		return
 	}
@@ -252,7 +259,19 @@ func (ctx *Context) SetHeader(key, value string) {
 		deleteContentType(r.Headers)
 		r.ctypePinned = true
 	}
-	r.Headers[key] = value
+	// Set-Cookie is special: append rather than replace, so a handler writing two
+	// cookies in one response gets two Set-Cookie lines instead of only the last.
+	// The separator is added here, after both halves have passed validation above,
+	// which is why a caller cannot smuggle a line in through the value.
+	if isSetCookie {
+		if existing, ok := r.Headers[key]; ok && existing != "" {
+			r.Headers[key] = existing + "\r\n" + value
+		} else {
+			r.Headers[key] = value
+		}
+	} else {
+		r.Headers[key] = value
+	}
 }
 
 // GetHeader returns the value of a response header, or "" if not set.

@@ -96,16 +96,26 @@ func (o cookieOptions) build() string {
 	return b.String()
 }
 
-// setCookie appends a Set-Cookie header to the response. Breeze's response
-// header map is single-valued, so multiple cookies within one response are
-// joined so none is lost.
+// setCookie writes one Set-Cookie header to the response.
+//
+// It is called once per cookie and does no joining of its own. Breeze's response
+// header map is single-valued, but its SetHeader appends when the key is already
+// present and the serializer writes each stored cookie as its own header line, so
+// one call per cookie is what produces two correct lines.
+//
+// This used to pre-join with a literal "\r\nSet-Cookie: " prefix, which predates
+// that support. Once the framework grew its own separator the prefix became a
+// second copy of the header name, and the response went out as
+//
+//	Set-Cookie: <flow-state>=; Path=/; Max-Age=0; ...
+//	Set-Cookie: Set-Cookie: <session>=...; HttpOnly; SameSite=Lax
+//
+// whose second line browsers discard — the parsed name is "Set-Cookie: <session>",
+// not a valid cookie-name — so the session cookie was never set and logging in
+// silently produced no session. Breeze also refuses a value containing CR/LF, so
+// the pre-joined value would have been rejected outright rather than transmitted.
 func setCookie(ctx *breeze.Context, o cookieOptions) {
-	existing := ctx.GetHeader("Set-Cookie")
-	v := o.build()
-	if existing != "" {
-		v = existing + "\r\nSet-Cookie: " + v
-	}
-	ctx.SetHeader("Set-Cookie", v)
+	ctx.SetHeader("Set-Cookie", o.build())
 }
 
 // readCookie extracts a cookie value from the request's Cookie header. Breeze

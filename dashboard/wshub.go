@@ -215,22 +215,8 @@ func (h *wsHub) clientCount() int {
 // ─── Bridge to Breeze WSHandler ───────────────────────────────────────────
 
 // wsHandler adapts the dashboard hub to Breeze's WSHandler interface.
-//
-// KNOWN LIMITATION — the dashboard WebSocket is not authenticated.
-//
-// breeze.WSConn exposes only Send/SendBinary/SendText/Close/RemoteAddr; it
-// carries no reference to the handshake request, so the session cookie
-// cannot be read from OnConnect. app.WebSocket also registers its upgrade
-// handler on the router directly, leaving no seam to wrap it with the
-// dashboard's auth middleware.
-//
-// Consequence: anyone able to reach base+"/ws" can stream dashboard
-// metrics, route stats and cache counters without logging in. The HTTP API
-// and pages remain gated by AuthMiddleware; only this stream is exposed.
-//
-// Closing this gap requires a change in the core package — either
-// WSConn.Header(name string) or an upgrade hook that can reject the
-// handshake. Until then, bind the dashboard to a trusted interface.
+// Authentication is performed by Breeze.WebSocketWithGuard before the upgrade,
+// while the original HTTP request headers are still available.
 type wsHandler struct {
 	hub *wsHub
 }

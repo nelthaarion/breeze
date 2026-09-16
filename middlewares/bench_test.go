@@ -26,7 +26,7 @@ func benchCtx(method breeze.Method) *breeze.Context {
 func runMW(b *testing.B, mw breeze.HandlerFunc, method breeze.Method) {
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ctx := benchCtx(method)
 		ctx.SetMiddlewareChain([]breeze.HandlerFunc{mw}, func(c *breeze.Context) error {
 			return c.WriteString("ok")
@@ -84,7 +84,7 @@ func BenchmarkZZCORSPlusSecurity(b *testing.B) {
 	sec := DefaultSecurityMiddleware()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ctx := benchCtx(breeze.GET)
 		ctx.SetMiddlewareChain([]breeze.HandlerFunc{cors, sec}, func(c *breeze.Context) error {
 			return c.WriteString("ok")

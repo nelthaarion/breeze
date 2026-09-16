@@ -39,14 +39,20 @@ package breeze
 // actually want.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/nelthaarion/breeze/v2/rpc"
 	"github.com/nelthaarion/breeze/v2/scalar"
@@ -54,7 +60,11 @@ import (
 
 // mcpProtocolVersion is the MCP revision this endpoint implements. It is the
 // same revision internal/mcp speaks, so one client can talk to both.
-const mcpProtocolVersion = "2024-11-05"
+const (
+	mcpProtocolVersion       = "2024-11-05"
+	mcpModernProtocolVersion = "2026-07-28"
+	mcpBodyLimit             = 8 << 20
+)
 
 // mcpArgIn says where a tool argument belongs once the call becomes a request.
 type mcpArgIn string
@@ -135,6 +145,21 @@ func (s *Breeze) MCPServer() (*rpc.Server, error) {
 		})
 	})
 
+	srv.Register("server/discover", func(ctx *rpc.Context) {
+		title, version, _ := scalar.APIInfo()
+		if title == "" {
+			title = "breeze"
+		}
+		if version == "" {
+			version = "0.0.0"
+		}
+		ctx.Result(map[string]any{
+			"protocolVersion": mcpModernProtocolVersion,
+			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
+			"serverInfo":      map[string]any{"name": title, "version": version},
+		})
+	})
+
 	srv.Register("notifications/initialized", func(ctx *rpc.Context) {
 		// A notification carries no id, so the rpc layer sends nothing back.
 		// It is registered so the call does not answer "method not found",
@@ -210,6 +235,15 @@ func (s *Breeze) MCPServer() (*rpc.Server, error) {
 // server is the process's reason for existing, and taking it down because an
 // auxiliary port was busy would be the wrong trade.
 func (s *Breeze) EnableMCP(addr string) error {
+	return s.EnableMCPWithToken(addr, strings.TrimSpace(os.Getenv("BREEZE_MCP_TOKEN")))
+}
+
+// EnableMCPWithToken starts Auto-MCP over Streamable HTTP. The token is required
+// for every request, including discovery, so tools/list cannot be used as a
+// public inventory of the application's business routes. When token is empty a
+// fresh 256-bit token is generated and logged once; deployments should normally
+// supply BREEZE_MCP_TOKEN or call this method with a secret from their secret store.
+func (s *Breeze) EnableMCPWithToken(addr, token string) error {
 	srv, err := s.MCPServer()
 	if err != nil {
 		return err
@@ -218,16 +252,42 @@ func (s *Breeze) EnableMCP(addr string) error {
 	if err != nil {
 		return err
 	}
-	// Recorded before serving, so an in-process endpoint started afterwards can
-	// refuse to collide with it. Two MCP servers on one port would answer each
-	// other's requests with the wrong tool table, and the symptom — "the tool I
-	// called does not exist" — would point at neither of them.
+	if strings.Contains(listen, "://") && !strings.HasPrefix(listen, "tcp://") {
+		return fmt.Errorf("breeze: Auto-MCP supports HTTP over TCP only; address %q is not a TCP host:port", addr)
+	}
+	if token == "" {
+		host, _, splitErr := net.SplitHostPort(strings.TrimPrefix(listen, "tcp://"))
+		if splitErr == nil && !isLoopbackMCPHost(host) {
+			return fmt.Errorf("breeze: an explicit BREEZE_MCP_TOKEN is required when Auto-MCP binds to non-loopback host %q", host)
+		}
+		var buf [32]byte
+		if _, err := rand.Read(buf[:]); err != nil {
+			return fmt.Errorf("breeze: cannot generate Auto-MCP token: %w", err)
+		}
+		token = hex.EncodeToString(buf[:])
+	}
+	ln, err := net.Listen("tcp", strings.TrimPrefix(listen, "tcp://"))
+	if err != nil {
+		return fmt.Errorf("breeze: cannot listen for Auto-MCP on %s: %w", record, err)
+	}
+	handler := newAutoMCPHTTPHandler(srv, token)
+	httpServer := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
 	s.mcpAddr.Store(&record)
+	s.mcpHTTP.Store(httpServer)
 	go func() {
-		if err := srv.RunAddr(listen, false); err != nil {
+		if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Printf("breeze: MCP endpoint on %s stopped: %v", record, err)
 		}
 	}()
+	if os.Getenv("BREEZE_MCP_TOKEN") == "" {
+		log.Printf("breeze: Auto-MCP endpoint on http://%s/mcp; bearer token: %s", record, token)
+	}
 	return nil
 }
 
@@ -278,6 +338,7 @@ func mcpListenAddr(addr string) (record, listen string, err error) {
 // lock on a value written once at startup.
 type mcpFields struct {
 	mcpAddr atomic.Pointer[string]
+	mcpHTTP atomic.Pointer[http.Server]
 }
 
 // AutoMCPAddr reports the address EnableMCP is serving the tagged-route endpoint
@@ -356,6 +417,18 @@ func (s *Breeze) buildMCPTools() ([]mcpTool, error) {
 // name under "body" — a distinction about HTTP, not about the task. Flattening
 // removes it, at the cost of requiring names to be unique across groups, which
 // is checked here rather than discovered during a call.
+func mcpHeaderIsSecuritySensitive(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "authorization", "proxy-authorization", "cookie", "set-cookie",
+		"x-api-key", "x-fleet-token", "x-mcp-token", "x-forwarded-for",
+		"x-forwarded-host", "x-forwarded-proto", "x-real-ip", "host",
+		"content-length", "transfer-encoding", "connection", "upgrade":
+		return true
+	default:
+		return false
+	}
+}
+
 func buildMCPTool(name, description string, rt *route, doc scalar.RouteDoc) (mcpTool, error) {
 	props := make(map[string]any, 8)
 	required := make([]string, 0, 4)
@@ -393,6 +466,13 @@ func buildMCPTool(name, description string, rt *route, doc scalar.RouteDoc) (mcp
 			in = mcpInBody
 		}
 		for field, fieldSchema := range schema.Properties {
+			if in == mcpInHeader && mcpHeaderIsSecuritySensitive(field) {
+				// Security identity and HTTP framing belong to the MCP/server boundary,
+				// never to model-controlled tool arguments. Exposing Authorization,
+				// Cookie or Host as an input would let a tool call manufacture a new
+				// security context inside the application.
+				continue
+			}
 			// A path parameter is always required: without it there is no URL
 			// to request. Everything else follows what the struct declared.
 			isRequired := in == mcpInPath || schemaRequires(schema, field) ||
@@ -640,7 +720,11 @@ func mcpResultFrom(tool *mcpTool, path string, ctx *Context, chainErr error) mcp
 		Path:   path,
 	}
 	if chainErr != nil {
-		out.HandlerError = chainErr.Error()
+		// Internal handler errors can contain SQL, filesystem paths, provider
+		// responses, tokens or stack-adjacent diagnostics. They are logged by the
+		// normal error pipeline; exposing the text over a remotely callable tool
+		// would turn that diagnostic channel into an information leak.
+		out.HandlerError = "the route handler returned an internal error"
 	}
 
 	if ctx.Res == nil {
@@ -664,17 +748,29 @@ func mcpResultFrom(tool *mcpTool, path string, ctx *Context, chainErr error) mcp
 	}
 	if len(ctx.Res.Headers) > 0 {
 		// Copied because the map may be one of the shared header maps the
-		// response fast paths point at. Handing that out would let a caller
-		// mutate every future response.
+		// response fast paths point at. Never expose credential-bearing response
+		// headers to the MCP caller.
 		out.Headers = make(map[string]string, len(ctx.Res.Headers))
 		for k, v := range ctx.Res.Headers {
+			if mcpHeaderIsSecuritySensitive(k) {
+				continue
+			}
 			out.Headers[k] = v
+		}
+		if len(out.Headers) == 0 {
+			out.Headers = nil
 		}
 	}
 	if len(ctx.Res.Body) > 0 {
-		out.Body = string(ctx.Res.Body)
+		body := ctx.Res.Body
+		const maxMCPResponseBody = 2 << 20
+		if len(body) > maxMCPResponseBody {
+			body = body[:maxMCPResponseBody]
+			out.Note = "response body was truncated at 2 MiB for MCP transport safety"
+		}
+		out.Body = string(body)
 		var parsed any
-		if json.Unmarshal(ctx.Res.Body, &parsed) == nil {
+		if json.Unmarshal(body, &parsed) == nil {
 			out.JSONBody = parsed
 		}
 	}
@@ -740,7 +836,7 @@ func fillPattern(rt *route, params map[string]string) (string, error) {
 	}
 	if rt.hasWildcard {
 		if value := params[rt.wildcardName]; value != "" {
-			parts = append(parts, value)
+			parts = append(parts, url.PathEscape(value))
 		}
 	}
 	return "/" + strings.Join(parts, "/"), nil
@@ -757,11 +853,18 @@ func scalarText(raw json.RawMessage) string {
 	if trimmed == "" {
 		return ""
 	}
-	if trimmed[0] == '"' {
-		var s string
-		if json.Unmarshal(raw, &s) == nil {
-			return s
-		}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return ""
 	}
-	return trimmed
+	switch x := v.(type) {
+	case string:
+		return x
+	case nil:
+		return "null"
+	case bool, float64:
+		return trimmed
+	default:
+		return ""
+	}
 }

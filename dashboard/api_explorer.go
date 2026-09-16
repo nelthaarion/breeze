@@ -265,14 +265,25 @@ func (c *Collector) handleAPIExplorerExec(ctx *breeze.Context) error {
 		return jsonError(ctx, 502, err.Error())
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	const maxExplorerResponseBody = 8 << 20
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxExplorerResponseBody+1))
+	if readErr != nil {
+		return jsonError(ctx, 502, "could not read upstream response")
+	}
+	if len(body) > maxExplorerResponseBody {
+		return jsonError(ctx, 502, "upstream response body exceeds the 8 MiB dashboard limit")
+	}
 	duration := time.Since(start)
 
 	// Build the response.
 	headers := make(map[string]string, len(resp.Header))
 	for k, vs := range resp.Header {
+		lower := strings.ToLower(k)
+		if lower == "set-cookie" || lower == "authorization" || lower == "proxy-authorization" || lower == "cookie" || lower == "x-api-key" {
+			continue
+		}
 		if len(vs) > 0 {
-			headers[strings.ToLower(k)] = vs[0]
+			headers[lower] = vs[0]
 		}
 	}
 

@@ -113,7 +113,19 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
 
 	// ── WebSocket endpoint for real-time updates ──────────────────────────
 	if app != nil {
-		app.WebSocket(base+"/ws", &wsHandler{hub: c.hub})
+		app.WebSocketWithGuard(base+"/ws", func(ctx *breeze.Context) bool {
+			cookie := ctx.Req.Header["cookie"]
+			token := extractCookieValue(cookie, sessionCookieName)
+			if token == "" {
+				return false
+			}
+			username, ok := c.sessions.valid(token)
+			if !ok {
+				return false
+			}
+			ctx.Set("breeze.dashboard.user", username)
+			return true
+		}, &wsHandler{hub: c.hub})
 	}
 }
 
@@ -170,7 +182,10 @@ func (c *Collector) registerAuthRoutes(router *breeze.Router, base, dir string) 
 			subtle.ConstantTimeCompare(hashPass(req.Password), wantPass) != 1 {
 			return ctx.JSON(map[string]any{"ok": false, "error": "invalid username or password"})
 		}
-		token := c.sessions.create(req.Username)
+		token, err := c.sessions.create(req.Username)
+		if err != nil {
+			return jsonError(ctx, http.StatusInternalServerError, "could not create login session")
+		}
 		// Build the response manually so Set-Cookie is included.
 		// (ctx.JSON then ctx.SetHeader doesn't work because JSON
 		// creates a response with shared headers that SetHeader
@@ -181,7 +196,7 @@ func (c *Collector) registerAuthRoutes(router *breeze.Router, base, dir string) 
 			Status: 200,
 			Headers: map[string]string{
 				"Content-Type": "application/json",
-				"Set-Cookie":   buildSessionCookie(token, base, int(sessionDuration.Seconds())),
+				"Set-Cookie":   buildSessionCookie(token, base, int(sessionDuration.Seconds()), requestIsSecure(ctx)),
 			},
 			Body: respBody,
 		}
@@ -198,7 +213,7 @@ func (c *Collector) registerAuthRoutes(router *breeze.Router, base, dir string) 
 			Status: 302,
 			Headers: map[string]string{
 				"Location":   base + "/login",
-				"Set-Cookie": buildSessionCookie("", base, 0),
+				"Set-Cookie": buildSessionCookie("", base, 0, requestIsSecure(ctx)),
 			},
 			Body: []byte("redirecting..."),
 		}
@@ -215,7 +230,7 @@ func (c *Collector) registerAuthRoutes(router *breeze.Router, base, dir string) 
 // wrap's callers are JSON endpoints that answer with a 401.
 func (c *Collector) registerPageRoutes(router *breeze.Router, base string, auth breeze.HandlerFunc) {
 	pages := []string{
-		"overview", "routes", "api", "requests",
+		"overview", "routes", "api", "requests", "queries",
 		"cache", "logs",
 		"health", "performance", "timeline", "architecture",
 		"events", "video",
@@ -264,6 +279,7 @@ func (c *Collector) registerAPIRoutes(router *breeze.Router, base string, auth b
 	router.HandleBlocking(breeze.GET, api+"/api-explorer", c.wrap(auth, c.handleAPIExplorerList))
 	router.HandleBlocking(breeze.POST, api+"/api-explorer", c.wrap(auth, c.handleAPIExplorerExec))
 	router.HandleBlocking(breeze.GET, api+"/requests", c.wrap(auth, c.handleRequests))
+	router.HandleBlocking(breeze.GET, api+"/queries", c.wrap(auth, c.handleQueries))
 	router.HandleBlocking(breeze.GET, api+"/cache", c.wrap(auth, c.handleCache))
 	router.HandleBlocking(breeze.POST, api+"/cache/clear", c.wrap(auth, c.handleCacheClear))
 	router.HandleBlocking(breeze.GET, api+"/logs", c.wrapService(auth, c.handleLogs))
@@ -314,6 +330,7 @@ func pageLabelFor(page string) string {
 		"routes":       "Routes",
 		"api":          "API Explorer",
 		"requests":     "Live Requests",
+		"queries":      "Database Queries",
 		"cache":        "Cache",
 		"logs":         "Logs",
 		"health":       "Health",
@@ -515,6 +532,35 @@ func (c *Collector) handleRequests(ctx *breeze.Context) error {
 			continue
 		}
 		out = append(out, r)
+	}
+	return ctx.JSON(out)
+}
+
+func (c *Collector) handleQueries(ctx *breeze.Context) error {
+	n := atoiDefault(ctx.Query("limit"), 200)
+	if n < 1 {
+		n = 1
+	}
+	if n > c.cfg.MaxQueries {
+		n = c.cfg.MaxQueries
+	}
+	slowOnly := ctx.Query("slow") == "1" || strings.EqualFold(ctx.Query("slow"), "true")
+	search := strings.TrimSpace(ctx.Query("q"))
+	all := c.Queries(n)
+	searchLower := strings.ToLower(search)
+	out := make([]queryEvent, 0, len(all))
+	for _, q := range all {
+		if slowOnly && !q.Slow {
+			continue
+		}
+		if searchLower != "" && !strings.Contains(strings.ToLower(q.SQL), searchLower) {
+			continue
+		}
+		out = append(out, queryEvent{
+			ID: q.ID, Time: q.Time.UTC().Format(time.RFC3339Nano), SQL: q.SQL,
+			DurationUS: q.Duration, Rows: q.Rows, File: q.File, Line: q.Line,
+			Slow: q.Slow, Error: q.Error,
+		})
 	}
 	return ctx.JSON(out)
 }

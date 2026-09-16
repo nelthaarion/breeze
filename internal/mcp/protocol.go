@@ -28,6 +28,11 @@ import "encoding/json"
 // support whatever was asked for would be worse than a visible mismatch.
 const protocolVersion = "2024-11-05"
 
+// modernProtocolVersion is the current stateless HTTP protocol revision. Legacy
+// stdio/HTTP clients continue to use protocolVersion; the network transport
+// selects this revision when MCP-Protocol-Version is 2026-07-28.
+const modernProtocolVersion = "2026-07-28"
+
 // serverName identifies this server in the handshake. Clients display it, and
 // some key their per-server configuration on it, so it is effectively API.
 const serverName = "breeze"
@@ -38,6 +43,14 @@ const serverName = "breeze"
 // how MCP versions itself: a client reads the presence of a key, not its value,
 // so declaring tools as an empty object is how a server says "I have tools"
 // without promising anything about future sub-capabilities.
+type serverDiscoverResult struct {
+	ProtocolVersion    string             `json:"protocolVersion"`
+	Capabilities       serverCapabilities `json:"capabilities"`
+	ServerInfo         serverInfo         `json:"serverInfo"`
+	BreezeServerKind   ServerMode         `json:"breezeServerKind,omitempty"`
+	BreezeCapabilities *capabilityReport  `json:"breezeCapabilities,omitempty"`
+}
+
 type initializeResult struct {
 	ProtocolVersion string             `json:"protocolVersion"`
 	Capabilities    serverCapabilities `json:"capabilities"`
@@ -153,7 +166,9 @@ type toolDescriptor struct {
 
 // toolsListResult is the response to tools/list.
 type toolsListResult struct {
-	Tools []toolDescriptor `json:"tools"`
+	Tools      []toolDescriptor `json:"tools"`
+	TTLMS      int64            `json:"ttlMs"`
+	CacheScope string           `json:"cacheScope"`
 }
 
 // toolContent is one piece of a tool's output. MCP allows several kinds; every

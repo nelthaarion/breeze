@@ -2,6 +2,7 @@ package breeze
 
 import (
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -56,6 +57,9 @@ const clHeader = "Content-Length: "
 func statusLine(code int) []byte {
 	if code == 0 {
 		code = 200
+	}
+	if code < 100 || code > 599 {
+		code = 500
 	}
 	if code > 0 && code < len(statusLines) {
 		if line := statusLines[code]; line != nil {
@@ -119,31 +123,77 @@ func (r *HTTPResponse) AppendTo(buf []byte) []byte {
 
 	// Fast path: precomputed headers, one grow to the exact final size.
 	if r.rawHeaders != nil {
-		need := len(line) + len(r.rawHeaders) + len(clHeader) + 24 + len(r.Body)
+		body := r.Body
+		bodyAllowed := !responseMustNotHaveBody(r.Status)
+		if !bodyAllowed {
+			body = nil
+		}
+		need := len(line) + len(r.rawHeaders) + len(clHeader) + 24 + len(body)
 		buf = grow(buf, need)
 		buf = append(buf, line...)
 		buf = append(buf, r.rawHeaders...)
-		buf = append(buf, clHeader...)
-		buf = strconv.AppendInt(buf, int64(len(r.Body)), 10)
-		buf = append(buf, "\r\n\r\n"...)
-		return append(buf, r.Body...)
+		if bodyAllowed {
+			buf = append(buf, clHeader...)
+			buf = strconv.AppendInt(buf, int64(len(body)), 10)
+			buf = append(buf, "\r\n"...)
+		}
+		buf = append(buf, "\r\n"...)
+		return append(buf, body...)
 	}
 
-	need := len(line) + len(r.Headers)*48 + len(clHeader) + 24 + len(r.Body)
+	body := r.Body
+	if responseMustNotHaveBody(r.Status) {
+		body = nil
+	}
+
+	need := len(line) + len(r.Headers)*48 + len(clHeader) + 24 + len(body)
 	buf = grow(buf, need)
 	buf = append(buf, line...)
 
 	for k, v := range r.Headers {
+		lk := strings.ToLower(strings.TrimSpace(k))
+		// Framing is owned by the serializer. Never let application headers create
+		// a second Content-Length/Transfer-Encoding, and never emit hop-by-hop
+		// framing that could disagree with the connection writer.
+		if lk == "content-length" || lk == "transfer-encoding" || lk == "connection" {
+			continue
+		}
+		if !validResponseHeaderName(k) || !validResponseHeaderValue(v) {
+			continue
+		}
 		buf = append(buf, k...)
 		buf = append(buf, ": "...)
 		buf = append(buf, v...)
 		buf = append(buf, "\r\n"...)
 	}
 
-	buf = append(buf, clHeader...)
-	buf = strconv.AppendInt(buf, int64(len(r.Body)), 10)
-	buf = append(buf, "\r\n\r\n"...)
-	return append(buf, r.Body...)
+	if !responseMustNotHaveBody(r.Status) {
+		buf = append(buf, clHeader...)
+		buf = strconv.AppendInt(buf, int64(len(body)), 10)
+		buf = append(buf, "\r\n"...)
+	}
+	buf = append(buf, "\r\n"...)
+	return append(buf, body...)
+}
+
+func responseMustNotHaveBody(status int) bool {
+	return (status >= 100 && status < 200) || status == 204 || status == 304
+}
+
+func validResponseHeaderName(name string) bool {
+	b := []byte(name)
+	return validHTTPToken(b)
+}
+
+func validResponseHeaderValue(value string) bool {
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if c == '\t' || (c >= 0x20 && c != 0x7f) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // grow ensures buf can take n more bytes without reallocating, reallocating

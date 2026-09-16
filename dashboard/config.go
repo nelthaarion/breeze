@@ -166,9 +166,10 @@ type Config struct {
 	SaveInterval string `yaml:"save_interval" json:"save_interval"`
 }
 
-// DefaultConfig returns a Config with sensible defaults for local development.
-// Enabled is true, all collectors are on, and credentials default to
-// "admin"/"admin" so the dashboard is immediately usable.
+// DefaultConfig returns a Config with safe defaults. Authentication remains
+// enabled by default, but no predictable credential is installed. Applications
+// must explicitly configure Username/Password or deliberately set DisableAuth
+// for a trusted local/reverse-proxy deployment.
 //
 // GOMEMLIMIT defaults to 512 MB — a reasonable cap for a developer dashboard
 // that prevents Go's runtime from holding onto gigabytes of idle memory.
@@ -181,8 +182,8 @@ func DefaultConfig() Config {
 		Metrics:            true,
 		Requests:           true,
 		BasePath:           "/dashboard",
-		Username:           "admin",
-		Password:           "admin",
+		Username:           "",
+		Password:           "",
 		MaxRequests:        1000,
 		MaxQueries:         500,
 		MaxLogs:            1000,

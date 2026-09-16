@@ -20,8 +20,11 @@ package breeze
 // the process; Handle exercises the same dispatch and returns the bytes.
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -690,8 +693,8 @@ func TestAReturnedErrorReachesTheAgentAsTheSameFailureHTTPWouldSee(t *testing.T)
 	// It is reported out of band instead. Without this an operator debugging their own
 	// agent has a 503 and no way to learn why, which is the failure the field exists
 	// to prevent.
-	if !strings.Contains(result.StructuredContent.HandlerError, "10.0.0.7") {
-		t.Errorf("handler_error does not carry the cause: %q", result.StructuredContent.HandlerError)
+	if result.StructuredContent.HandlerError != "the route handler returned an internal error" {
+		t.Errorf("handler_error = %q; internal error details must be redacted", result.StructuredContent.HandlerError)
 	}
 
 	// The parity check. Same route, same chain, same error handler.
@@ -872,5 +875,67 @@ func TestApplicationsWithoutTagsExposeNoTools(t *testing.T) {
 	tools := listTools(t, srv)
 	if len(tools) != 0 {
 		t.Errorf("an app with no tags exposed %d tools: %v", len(tools), keysOfTools(tools))
+	}
+}
+
+func TestAutoMCPHTTPModernIsStatelessAndProtected(t *testing.T) {
+	r := rpc.NewRegistry()
+	rpcSrv := rpc.NewServer(r)
+	rpcSrv.Register("server/discover", func(ctx *rpc.Context) {
+		ctx.Result(map[string]any{"protocolVersion": mcpModernProtocolVersion, "capabilities": map[string]any{"tools": map[string]any{}}})
+	})
+	rpcSrv.Register("tools/list", func(ctx *rpc.Context) {
+		ctx.Result(map[string]any{"tools": []any{map[string]any{"name": "ping", "inputSchema": map[string]any{"type": "object"}}}})
+	})
+	h := newAutoMCPHTTPHandler(rpcSrv, mcpFixtureToken)
+
+	bad := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://example.test/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("MCP-Protocol-Version", mcpModernProtocolVersion)
+	req.Header.Set("Mcp-Method", "tools/list")
+	req.Header.Set("Authorization", "Bearer wrong")
+	h.ServeHTTP(bad, req)
+	if bad.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token status=%d body=%s", bad.Code, bad.Body.String())
+	}
+
+	ok := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "http://example.test/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)))
+	req.Host = "example.test"
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("MCP-Protocol-Version", mcpModernProtocolVersion)
+	req.Header.Set("Mcp-Method", "tools/list")
+	req.Header.Set("Authorization", "Bearer "+mcpFixtureToken)
+	h.ServeHTTP(ok, req)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("modern status=%d body=%s", ok.Code, ok.Body.String())
+	}
+	var env map[string]any
+	if err := json.Unmarshal(ok.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	result, _ := env["result"].(map[string]any)
+	if result["cacheScope"] != "private" || result["ttlMs"] != float64(0) {
+		t.Fatalf("cache hints=%v", result)
+	}
+}
+
+func TestAutoMCPHTTPModernRejectsInitialize(t *testing.T) {
+	r := rpc.NewRegistry()
+	rpcSrv := rpc.NewServer(r)
+	rpcSrv.Register("initialize", func(ctx *rpc.Context) { ctx.Result(map[string]any{"protocolVersion": mcpProtocolVersion}) })
+	h := newAutoMCPHTTPHandler(rpcSrv, mcpFixtureToken)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://example.test/mcp", bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)))
+	req.Host = "example.test"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("MCP-Protocol-Version", mcpModernProtocolVersion)
+	req.Header.Set("Mcp-Method", "initialize")
+	req.Header.Set("Authorization", "Bearer "+mcpFixtureToken)
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }

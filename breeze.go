@@ -25,8 +25,9 @@ type Breeze struct {
 	// historical all-interface listener.
 	listenHost atomic.Pointer[string]
 
-	// maxRequestBody is the HTTP request-body limit. Zero preserves the
-	// historical unlimited behavior.
+	// maxRequestBody is the HTTP request-body limit. A safe default prevents a
+	// public endpoint from buffering arbitrarily large bodies. Zero remains an
+	// explicit opt-out through SetMaxRequestBody.
 	maxRequestBody atomic.Int64
 
 	// inlineExec runs non-blocking routes directly on the gnet event-loop
@@ -88,6 +89,8 @@ var (
 // Use breeze.NewEventLoopWorkerPool(n) to create a suitable pool. The
 // deprecated breeze.NewWorkerPool(n) also works (it uses OverflowSpawn
 // for backward compatibility).
+const defaultMaxRequestBody = 8 << 20
+
 func New(router *Router, pool *WorkerPool) *Breeze {
 	s := &Breeze{
 		BuiltinEventEngine: &gnet.BuiltinEventEngine{},
@@ -95,6 +98,7 @@ func New(router *Router, pool *WorkerPool) *Breeze {
 		Pool:               pool,
 		inlineExec:         true,
 	}
+	s.maxRequestBody.Store(defaultMaxRequestBody)
 	// Publish the router, pool, Auto-MCP and WebSocket probes. Four registry
 	// appends, once, at construction; see diag.go.
 	s.registerCoreDiagnostics()
@@ -551,7 +555,7 @@ func (s *Breeze) RunOn(host string, port int, multiCore bool) error {
 }
 
 // SetMaxRequestBody sets the maximum HTTP request-body size in bytes.
-// A value of 0 disables the limit. The default is 0.
+// A value of 0 explicitly disables the limit. The default is 8 MiB.
 func (s *Breeze) SetMaxRequestBody(n int64) {
 	if n < 0 {
 		n = 0
@@ -560,7 +564,7 @@ func (s *Breeze) SetMaxRequestBody(n int64) {
 }
 
 // MaxRequestBody reports the configured HTTP request-body limit in bytes.
-// Zero means unlimited.
+// Zero means explicitly unlimited.
 func (s *Breeze) MaxRequestBody() int64 {
 	return s.maxRequestBody.Load()
 }

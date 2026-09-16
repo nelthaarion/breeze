@@ -97,11 +97,16 @@ const maxRequestBytes = 8 << 20
 // which a client recovers from by re-initializing: that is the documented
 // meaning of the 404 this produces.
 const maxSessions = 1024
+const maxSessionAge = 24 * time.Hour
 
 const (
-	sessionHeader  = "Mcp-Session-Id"
-	protocolHeader = "MCP-Protocol-Version"
-	bearerPrefix   = "Bearer "
+	sessionHeader      = "Mcp-Session-Id"
+	protocolHeader     = "MCP-Protocol-Version"
+	methodHeader       = "Mcp-Method"
+	nameHeader         = "Mcp-Name"
+	bearerPrefix       = "Bearer "
+	modernProtocol     = "2026-07-28"
+	codeHeaderMismatch = -32020
 )
 
 // supportedProtocolVersions are the MCP-Protocol-Version values this transport
@@ -118,10 +123,11 @@ const (
 // and no session, which this server does not provide, and the specification's
 // own answer for that case is to say so rather than to half-serve it.
 var supportedProtocolVersions = map[string]bool{
-	protocolVersion: true, // 2024-11-05, this server's negotiated revision
+	protocolVersion: true, // legacy 2024-11-05 for existing stdio/network clients
 	"2025-03-26":    true,
 	"2025-06-18":    true,
 	"2025-11-25":    true,
+	modernProtocol:  true,
 }
 
 // NetworkConfig is how a network-mode instance is configured.
@@ -240,6 +246,13 @@ func NewNetworkServer(srv *Server, cfg NetworkConfig) (*NetworkServer, string, e
 	if srv.mode == ModeUnset {
 		srv.mode = cfg.Mode
 	}
+	host := strings.TrimSpace(cfg.Host)
+	if host == "" {
+		host = DefaultNetworkHost
+	}
+	if !isLoopbackBindHost(host) && !cfg.Scope.IsScoped() {
+		return nil, "", errors.New("mcp: an explicit --scope is required when binding MCP to a non-loopback host")
+	}
 	// The transport authenticated the token, so the transport is what knows the scope
 	// that came with it. Pushing it onto the Server here means tools/list, tools/call
 	// and the initialize payload all read one value.
@@ -259,8 +272,15 @@ func NewNetworkServer(srv *Server, cfg NetworkConfig) (*NetworkServer, string, e
 }
 
 func newNetworkServer(handler rpcHandler, cfg NetworkConfig) (*NetworkServer, string, error) {
+	host := strings.TrimSpace(cfg.Host)
+	if host == "" {
+		host = DefaultNetworkHost
+	}
 	token := strings.TrimSpace(cfg.Token)
 	if token == "" {
+		if !isLoopbackBindHost(host) {
+			return nil, "", errors.New("mcp: an explicit bearer token is required when binding MCP to a non-loopback host")
+		}
 		generated, err := NewToken()
 		if err != nil {
 			return nil, "", err
@@ -285,6 +305,17 @@ func newNetworkServer(handler rpcHandler, cfg NetworkConfig) (*NetworkServer, st
 		}
 	}
 	return ns, token, nil
+}
+
+func isLoopbackBindHost(host string) bool {
+	h := strings.TrimSpace(strings.Trim(host, "[]"))
+	if h == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // defaultOrigins is the loopback allowlist.

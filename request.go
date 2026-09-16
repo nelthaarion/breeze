@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"unsafe"
 )
 
@@ -23,6 +24,15 @@ var ErrBodyTooLarge = errors.New("request body exceeds the configured maximum")
 
 // crlfcrlf is the header terminator we scan for once per request.
 var crlfcrlf = []byte("\r\n\r\n")
+
+// maxRequestHeaderBytes bounds the request-line + header block before the body
+// is considered. Without a hard cap an attacker can keep a connection open and
+// send bytes that never terminate with CRLFCRLF, forcing the event loop to retain
+// an ever-growing buffer. 64 KiB is enough for normal HTTP traffic while keeping
+// the memory cost bounded per connection.
+const maxRequestHeaderBytes = 64 << 10
+
+var ErrHeadersTooLarge = errors.New("request headers exceed the configured maximum")
 
 // ParseHTTPRequest parses raw bytes into an HTTPRequest.
 //
@@ -175,7 +185,13 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	// ── Find header boundary ───────────────────────────────────────────────
 	headerEnd := bytes.Index(data, crlfcrlf)
 	if headerEnd < 0 {
+		if len(data) > maxRequestHeaderBytes {
+			return 0, ErrHeadersTooLarge
+		}
 		return 0, nil // incomplete — wait for more data
+	}
+	if headerEnd+4 > maxRequestHeaderBytes {
+		return 0, ErrHeadersTooLarge
 	}
 
 	// ── Establish the bytes all strings will view ──────────────────────────
@@ -188,23 +204,39 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	}
 
 	// ── Parse request line ─────────────────────────────────────────────────
-	lineEnd := bytes.IndexByte(header, '\r')
+	lineEnd := bytes.Index(header, []byte("\r\n"))
 	if lineEnd < 0 {
-		lineEnd = len(header)
+		return 0, fmt.Errorf("malformed request line")
 	}
 	requestLine := header[:lineEnd]
 
 	s1 := bytes.IndexByte(requestLine, ' ')
-	if s1 < 0 {
+	if s1 <= 0 {
 		return 0, fmt.Errorf("malformed request line")
 	}
-	s2 := bytes.IndexByte(requestLine[s1+1:], ' ')
-	if s2 < 0 {
-		s2 = len(requestLine) - s1 - 1
+	s2rel := bytes.IndexByte(requestLine[s1+1:], ' ')
+	if s2rel <= 0 {
+		return 0, fmt.Errorf("malformed request line")
+	}
+	s2 := s1 + 1 + s2rel
+	if s2+1 >= len(requestLine) || bytes.IndexByte(requestLine[s2+1:], ' ') >= 0 {
+		return 0, fmt.Errorf("malformed request line")
 	}
 
 	methodBytes := requestLine[:s1]
-	rawPath := requestLine[s1+1 : s1+1+s2]
+	if !validHTTPToken(methodBytes) {
+		return 0, fmt.Errorf("invalid request method")
+	}
+	rawPath := requestLine[s1+1 : s2]
+	version := b2s(requestLine[s2+1:])
+	if version != "HTTP/1.1" && version != "HTTP/1.0" {
+		return 0, fmt.Errorf("unsupported HTTP version")
+	}
+	for _, c := range rawPath {
+		if c <= 0x20 || c == 0x7f {
+			return 0, fmt.Errorf("invalid request target")
+		}
+	}
 	path, query := splitPathQuery(rawPath)
 
 	if req.Header == nil {
@@ -216,44 +248,77 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	if len(query) > 0 {
 		// url.ParseQuery copies all keys/values — b2s(query) is transient.
 		q, err := url.ParseQuery(b2s(query))
-		if err == nil {
-			req.Query = q
+		if err != nil {
+			return 0, fmt.Errorf("invalid query string: %w", err)
 		}
+		req.Query = q
 	}
 
 	// ── Single-pass header scan ────────────────────────────────────────────
 	// Builds req.Header and extracts Content-Length in one traversal.
 	contentLength := -1
+	hostSeen := false
+	transferEncodingSeen := false
 	pos := lineEnd + 2 // skip past \r\n of the request line
 
 	for pos < len(header) {
-		end := bytes.IndexByte(header[pos:], '\r')
-		if end < 0 {
-			end = len(header) - pos
+		rel := bytes.Index(header[pos:], []byte("\r\n"))
+		end := len(header)
+		if rel >= 0 {
+			end = pos + rel
 		}
-		line := header[pos : pos+end]
-		pos += end + 2
+		line := header[pos:end]
+		pos = end
+		if rel >= 0 {
+			pos += 2
+		}
 
 		if len(line) == 0 {
-			continue
+			return 0, fmt.Errorf("unexpected empty header line")
+		}
+		if line[0] == ' ' || line[0] == '\t' {
+			return 0, fmt.Errorf("obs-fold header is not permitted")
 		}
 		colon := bytes.IndexByte(line, ':')
-		if colon <= 0 {
-			continue
+		if colon <= 0 || !validHTTPToken(line[:colon]) {
+			return 0, fmt.Errorf("malformed header line")
 		}
 
 		key := lowerHeaderKey(line[:colon])
-		val := b2s(bytes.TrimSpace(line[colon+1:]))
-		req.Header[key] = val
+		valBytes := bytes.TrimSpace(line[colon+1:])
+		if !validHeaderValue(valBytes) {
+			return 0, fmt.Errorf("invalid header value")
+		}
+		val := b2s(valBytes)
 
-		// Capture Content-Length without a second scan.
-		if contentLength == -1 && key == "content-length" {
-			cl, err := strconv.Atoi(val)
-			if err != nil || cl < 0 {
+		switch key {
+		case "content-length":
+			if contentLength != -1 {
+				// Reject duplicates outright. Even identical duplicates are an unnecessary
+				// framing ambiguity across intermediaries with different policies.
+				return 0, fmt.Errorf("duplicate content-length")
+			}
+			cl64, err := strconv.ParseInt(val, 10, 64)
+			if err != nil || cl64 < 0 || cl64 > int64(^uint(0)>>1) {
 				return 0, fmt.Errorf("invalid content-length")
 			}
-			contentLength = cl
+			contentLength = int(cl64)
+		case "transfer-encoding":
+			transferEncodingSeen = true
+		case "host":
+			if hostSeen {
+				return 0, fmt.Errorf("duplicate host")
+			}
+			hostSeen = true
 		}
+		req.Header[key] = val
+	}
+
+	if transferEncodingSeen {
+		return 0, fmt.Errorf("transfer-encoding is not supported")
+	}
+	if version == "HTTP/1.1" && !hostSeen {
+		return 0, fmt.Errorf("missing host header")
 	}
 
 	// ── Body (zero-copy) ───────────────────────────────────────────────────
@@ -277,6 +342,31 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	}
 
 	return consumed, nil
+}
+
+func validHTTPToken(b []byte) bool {
+	if len(b) == 0 {
+		return false
+	}
+	for _, c := range b {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c)):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func validHeaderValue(b []byte) bool {
+	for _, c := range b {
+		if c == '\t' || (c >= 0x20 && c != 0x7f) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // splitPathQuery splits rawPath at the first '?' without allocating.

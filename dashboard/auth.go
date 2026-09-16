@@ -2,9 +2,12 @@ package dashboard
 
 import (
 	"crypto/pbkdf2"
+	"crypto/rand"
 	"crypto/sha512"
 	"crypto/subtle"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nelthaarion/breeze/v2"
 )
@@ -18,14 +21,22 @@ import (
 //  3. The login page POSTs to /dashboard/login which validates credentials
 //     and sets a session cookie.
 //
-// When DisableAuth is true, OR when both Username and Password are empty,
-// the middleware is a no-op — useful for local development.
+// When DisableAuth is true, authentication is explicitly disabled. Missing
+// credentials never open the dashboard; they fail closed with HTTP 503.
 //
-// Security: password comparison uses constant-time comparison (SHA-256 +
-// subtle.ConstantTimeCompare) to avoid timing side channels.
+// Security: password comparison uses PBKDF2-HMAC-SHA-512 plus
+// subtle.ConstantTimeCompare to avoid storing/comparing the configured password directly.
 func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
-	if cfg.DisableAuth || cfg.Username == "" || cfg.Password == "" {
+	if cfg.DisableAuth {
 		return func(ctx *breeze.Context) error { return ctx.Next() }
+	}
+	if strings.TrimSpace(cfg.Username) == "" || cfg.Password == "" {
+		// Never interpret missing credentials as "open dashboard". That turns a
+		// single omitted environment variable into an administrative bypass.
+		return func(ctx *breeze.Context) error {
+			ctx.Status(503)
+			return ctx.WriteString("Dashboard authentication is not configured")
+		}
 	}
 	wantUser := []byte(cfg.Username)
 	wantPass := hashPass(cfg.Password)
@@ -49,14 +60,47 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 		}
 		// No valid session — check for Basic Auth as a fallback (API clients).
 		ah := ctx.Req.Header["authorization"]
-		if strings.HasPrefix(ah, "Basic ") {
-			user, pass, ok := decodeBasic(ah[6:])
+		parts := strings.Fields(ah)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Basic") {
+			peer := dashboardPeer(ctx)
+			if !sessions.allowLogin(peer, time.Now()) {
+				ctx.Status(429)
+				ctx.SetHeader("Retry-After", strconv.Itoa(int(loginBlockDuration.Seconds())))
+				return ctx.WriteString("Too many authentication failures")
+			}
+			user, pass, ok := decodeBasic(parts[1])
 			if ok &&
 				subtle.ConstantTimeCompare([]byte(user), wantUser) == 1 &&
 				subtle.ConstantTimeCompare(hashPass(pass), wantPass) == 1 {
+				sessions.clearLoginFailures(peer)
 				ctx.Set("breeze.dashboard.user", user)
+
+				// If a browser reached the dashboard as http(s)://user:pass@host/…,
+				// immediately exchange that Basic-auth credential for a normal
+				// HttpOnly session and redirect to the credential-free path. This
+				// keeps secrets out of the visible address bar and subsequent
+				// navigation/history entries while retaining Basic Auth for API clients.
+				accept := ctx.Req.Header["accept"]
+				isBrowser := strings.Contains(accept, "text/html") && !strings.Contains(accept, "application/json")
+				if isBrowser && p != base+"/login" {
+					token, err := sessions.create(user)
+					if err != nil {
+						return jsonError(ctx, 500, "could not create login session")
+					}
+					ctx.Res = &breeze.HTTPResponse{
+						Status: 302,
+						Headers: map[string]string{
+							"Location":   p,
+							"Set-Cookie": buildSessionCookie(token, base, int(sessionDuration.Seconds()), requestIsSecure(ctx)),
+						},
+						Body: []byte("redirecting..."),
+					}
+					ctx.Abort()
+					return nil
+				}
 				return ctx.Next()
 			}
+			sessions.recordLoginFailure(peer, time.Now())
 		}
 		// For API requests (JSON), return 401 JSON. For browser requests,
 		// redirect to login page.
@@ -100,6 +144,23 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 	}
 }
 
+func requestIsSecure(ctx *breeze.Context) bool {
+	// Prefer the actual connection state when available. X-Forwarded-Proto is only
+	// a hint from a trusted reverse proxy; take the first comma-delimited value and
+	// never treat arbitrary values as secure.
+	if strings.EqualFold(ctx.Req.Header["x-forwarded-proto"], "https") {
+		return true
+	}
+	return false
+}
+
+func dashboardPeer(ctx *breeze.Context) string {
+	if ctx.Conn == nil {
+		return "unknown"
+	}
+	return ctx.Conn.RemoteAddr().String()
+}
+
 // extractCookieValue parses a Cookie header and returns the value of the
 // named cookie, or "" if not present.
 func extractCookieValue(cookieHeader, name string) string {
@@ -121,16 +182,25 @@ func extractCookieValue(cookieHeader, name string) string {
 	return ""
 }
 
-// dashboardAuthSalt is a fixed salt for hashPass. It only needs to prevent
-// rainbow-table lookups for the single dashboard credential; it must stay
-// constant across calls so hashes of the same password always match.
-var dashboardAuthSalt = []byte("breeze-dashboard-auth-salt-v1")
+// dashboardAuthSalt is process-random so identical dashboard passwords do not
+// produce a stable digest across processes. It is generated once because the
+// configured password is compared repeatedly during the lifetime of the server.
+var dashboardAuthSalt = func() []byte {
+	s := make([]byte, 32)
+	if _, err := rand.Read(s); err != nil {
+		panic("dashboard: cannot initialize auth salt: " + err.Error())
+	}
+	return s
+}()
+
+const dashboardAuthIterations = 210000
 
 // hashPass returns a PBKDF2 derivation of the password. We compare hashes
 // rather than plaintext so the constant-time comparison always runs on a
-// fixed-size buffer.
+// fixed-size buffer. Authentication is deliberately the slow path; protecting
+// a dashboard credential matters more than shaving microseconds from login.
 func hashPass(p string) []byte {
-	key, _ := pbkdf2.Key(sha512.New, p, dashboardAuthSalt, 4096, 32)
+	key, _ := pbkdf2.Key(sha512.New, p, dashboardAuthSalt, dashboardAuthIterations, 32)
 	return key
 }
 

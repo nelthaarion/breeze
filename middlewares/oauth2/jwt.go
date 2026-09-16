@@ -70,6 +70,9 @@ func idTokenNonce(idToken string) (string, error) {
 		return "", err
 	}
 	nonce, _ := claims["nonce"].(string)
+	if nonce == "" {
+		return "", ErrNonceMismatch
+	}
 	return nonce, nil
 }
 

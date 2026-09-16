@@ -188,7 +188,7 @@ func BenchmarkSplitStatements(b *testing.B) {
 	sql := strings.Repeat("INSERT INTO users (id) VALUES (1);", 100)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		splitStatements(sql)
 	}
 }

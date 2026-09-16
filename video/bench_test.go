@@ -23,7 +23,7 @@ func BenchmarkNormalize(b *testing.B) {
 	m, _ := benchMount(b, 0)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := m.normalize("show/season-1/episode-01.mp4"); err != nil {
 			b.Fatal(err)
 		}
@@ -37,7 +37,7 @@ func BenchmarkNormalizeHostile(b *testing.B) {
 	m, _ := benchMount(b, 0)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := m.normalize("%2e%2e%2f%2e%2e%2fetc/passwd"); err == nil {
 			b.Fatal("expected rejection")
 		}
@@ -47,7 +47,7 @@ func BenchmarkNormalizeHostile(b *testing.B) {
 func BenchmarkParseRange(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := parseRange("bytes=1048576-2097151", 1<<30); err != nil {
 			b.Fatal(err)
 		}
@@ -59,7 +59,7 @@ func BenchmarkParseRange(b *testing.B) {
 func BenchmarkHeadBytes(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		h := newHead(206).
 			set("Content-Type", "video/mp4").
 			set("Accept-Ranges", "bytes").
@@ -75,7 +75,7 @@ func BenchmarkHeadBytes(b *testing.B) {
 func BenchmarkETag(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = etagFor(1073741824, 1700000000)
 	}
 }
@@ -89,7 +89,7 @@ func BenchmarkStreamChunk(b *testing.B) {
 	b.SetBytes(size)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		out := &nullSink{}
 		if _, err := m.writeBody(out, res, byteRange{0, size - 1}); err != nil {
 			b.Fatal(err)
@@ -106,7 +106,7 @@ func BenchmarkStreamSeek(b *testing.B) {
 	b.SetBytes(r.Length())
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		out := &nullSink{}
 		if _, err := m.writeBody(out, res, r); err != nil {
 			b.Fatal(err)

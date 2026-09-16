@@ -414,6 +414,22 @@ func runInSandbox(dir, watch string, fn func() error) (sandboxRun, error) {
 // small on purpose: everything upstream has already decided what the change is,
 // so the one thing that can go wrong here is I/O, and the one thing that must
 // not happen is a half-applied commit.
+func confinedJoin(root, rel string) (string, error) {
+	if strings.TrimSpace(rel) == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	rel = filepath.FromSlash(rel)
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("absolute paths are not allowed")
+	}
+	clean := filepath.Clean(rel)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes its root")
+	}
+	joined := filepath.Join(root, clean)
+	return joined, nil
+}
+
 func applyChanges(from, to string, changes []fileChange) (err error) {
 	type undo struct {
 		path    string
@@ -439,8 +455,27 @@ func applyChanges(from, to string, changes []fileChange) (err error) {
 		}
 	}()
 
+	base, err := filepath.Abs(to)
+	if err != nil {
+		return err
+	}
+	fromBase, err := filepath.Abs(from)
+	if err != nil {
+		return err
+	}
+
 	for _, change := range changes {
-		target := filepath.Join(to, filepath.FromSlash(change.Path))
+		target, err := confinedJoin(base, change.Path)
+		if err != nil {
+			return fmt.Errorf("invalid change path %q: %w", change.Path, err)
+		}
+
+		// Never follow an existing symlink at the destination. Otherwise a malicious
+		// or corrupted change set could turn a seemingly confined write into an
+		// arbitrary file overwrite outside the project.
+		if info, statErr := os.Lstat(target); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to modify symlink target %q", change.Path)
+		}
 
 		record := undo{path: target}
 		if content, readErr := os.ReadFile(target); readErr == nil {
@@ -462,7 +497,10 @@ func applyChanges(from, to string, changes []fileChange) (err error) {
 				return removeErr
 			}
 		default:
-			source := filepath.Join(from, filepath.FromSlash(change.Path))
+			source, joinErr := confinedJoin(fromBase, change.Path)
+			if joinErr != nil {
+				return fmt.Errorf("invalid source change path %q: %w", change.Path, joinErr)
+			}
 			if copyErr := copyFile(source, target); copyErr != nil {
 				return copyErr
 			}

@@ -54,7 +54,7 @@ func benchRequestCtx(path string) *breeze.Context {
 func runMiddleware(b *testing.B, mw breeze.HandlerFunc, path string) {
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ctx := benchRequestCtx(path)
 		ctx.SetMiddlewareChain([]breeze.HandlerFunc{mw}, func(c *breeze.Context) error {
 			c.Status(200)
@@ -107,7 +107,7 @@ func BenchmarkZZTrackDailyCount(b *testing.B) {
 	c := benchCollector(b)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		c.trackDailyCount()
 	}
 }
@@ -119,7 +119,7 @@ func BenchmarkZZTrackUniqueIP(b *testing.B) {
 	c.trackUniqueIP("203.0.113.7")
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		c.trackUniqueIP("203.0.113.7")
 	}
 }
@@ -133,7 +133,7 @@ func BenchmarkZZPushEventIdle(b *testing.B) {
 	rec := RequestRecord{ID: "r", Time: time.Now(), Method: "GET", Path: "/x", Status: 200}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		pushEvent(h, "request", rec)
 	}
 }
@@ -146,7 +146,7 @@ func BenchmarkZZSnapshotMessage(b *testing.B) {
 	defer h.close()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if s := h.snapshotMessage(); s == "" {
 			b.Fatal("empty snapshot")
 		}

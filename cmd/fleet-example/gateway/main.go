@@ -33,13 +33,15 @@ func main() {
 	app := breeze.New(router, breeze.NewEventLoopWorkerPool(runtime.NumCPU()))
 
 	dcfg := dashboard.DefaultConfig()
-	dcfg.Username, dcfg.Password = "admin", "admin"
+	dcfg.Username = env("BREEZE_DASHBOARD_USERNAME", "")
+	dcfg.Password = env("BREEZE_DASHBOARD_PASSWORD", "")
 	dcfg.FleetAggregatorURL = env("FLEET_READ_URL", "http://localhost:9000/fleet")
-	dcfg.FleetAggregatorUsername, dcfg.FleetAggregatorPassword = "admin", "admin"
+	dcfg.FleetAggregatorUsername = env("FLEET_READ_USERNAME", "")
+	dcfg.FleetAggregatorPassword = env("FLEET_READ_PASSWORD", "")
 	// Lets the aggregator fetch this service's own logs for a given trace
 	// (§9C.2). Every service in the fleet shares one token, the same trust
 	// model as the ingest token.
-	dcfg.ServiceToken = env("FLEET_SERVICE_TOKEN", "fleet-demo-service-token")
+	dcfg.ServiceToken = env("FLEET_SERVICE_TOKEN", "")
 	coll := dashboard.Install(app, router, dcfg)
 
 	tr := newTracer("gateway", coll.PushLog, router)
@@ -120,7 +122,7 @@ func main() {
 		return ctx.JSON(map[string]any{"order_id": id, "result": result})
 	})
 
-	fmt.Printf("gateway :%d — dashboard http://localhost:%d/dashboard (admin/admin)\n", port, port)
+	fmt.Printf("gateway :%d — dashboard http://localhost:%d/dashboard\n", port, port)
 	startControlPlane(app, "gateway")
 	app.Run(port, true)
 }
@@ -144,7 +146,8 @@ func startControlPlane(app *breeze.Breeze, service string) {
 		return
 	}
 
-	scope, err := mcp.ParseScope(os.Getenv("BREEZE_MCP_SCOPE"))
+	rawScope := env("BREEZE_MCP_SCOPE", "runtime,fleet")
+	scope, err := mcp.ParseScope(rawScope)
 	if err != nil {
 		// Refused rather than downgraded to unscoped: a typo in a scope must not
 		// silently widen the token it was meant to narrow.
@@ -210,7 +213,7 @@ func newTracer(service string, log func(string, string, string), router *breeze.
 		RouteResolver: fleet.RouterResolver(router),
 		Logger:        log,
 		Transport: httptransport.NewWithGzip(httptransport.Config{
-			IngestToken: env("FLEET_INGEST_TOKEN", "fleet-demo-token"),
+			IngestToken: env("FLEET_INGEST_TOKEN", ""),
 			ServiceName: service,
 			Timeout:     2 * time.Second,
 		}),

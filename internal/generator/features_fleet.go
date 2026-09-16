@@ -228,7 +228,7 @@ func fleetTransportExpr(cfg FleetConfig, gzip bool) (expr, imp string, err error
 			ctor = "httptransport.NewWithGzip"
 		}
 		return fmt.Sprintf(`%s(httptransport.Config{
-			IngestToken: fleetEnv("FLEET_INGEST_TOKEN", "change-me"),
+			IngestToken: fleetEnv("FLEET_INGEST_TOKEN", ""),
 			ServiceName: fleetEnv("FLEET_SERVICE_NAME", %q),
 			Timeout:     %s,
 		})`, ctor, cfg.ServiceName, fleetTransportTimeout), fleetHTTPImport, nil
@@ -241,7 +241,7 @@ func fleetTransportExpr(cfg FleetConfig, gzip bool) (expr, imp string, err error
 		// field of that name here would simply not compile.
 		return fmt.Sprintf(`wstransport.New(wstransport.Config{
 			AggregatorWSURL: fleetEnv("FLEET_WS_URL", %q),
-			IngestToken:     fleetEnv("FLEET_INGEST_TOKEN", "change-me"),
+			IngestToken:     fleetEnv("FLEET_INGEST_TOKEN", ""),
 			ServiceName:     fleetEnv("FLEET_SERVICE_NAME", %q),
 			Timeout:         %s,
 		})`, cfg.AggregatorWSURL, cfg.ServiceName, fleetTransportTimeout), fleetWSImport, nil
@@ -254,7 +254,7 @@ func fleetTransportExpr(cfg FleetConfig, gzip bool) (expr, imp string, err error
 		// No Timeout field, so no "time" import for this arm; see the guard in
 		// buildFleetOutput.
 		return fmt.Sprintf(`eventtransport.New(eventtransport.Config{
-			IngestToken: fleetEnv("FLEET_INGEST_TOKEN", "change-me"),
+			IngestToken: fleetEnv("FLEET_INGEST_TOKEN", ""),
 			ServiceName: fleetEnv("FLEET_SERVICE_NAME", %q),
 		})`, cfg.ServiceName), fleetEventsImport, nil
 

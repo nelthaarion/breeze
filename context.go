@@ -221,6 +221,12 @@ func (ctx *Context) Status(code int) {
 // creates a bare HTTPResponse and lets SetHeader allocate the map lazily
 // if needed.
 func (ctx *Context) SetHeader(key, value string) {
+	// Header names/values are emitted verbatim later. Reject invalid values here
+	// as well as at serialization time so attacker-controlled CR/LF can never enter
+	// the response map. The serializer remains defensive for direct map mutation.
+	if !validResponseHeaderName(strings.TrimSpace(key)) || !validResponseHeaderValue(value) {
+		return
+	}
 	r := ctx.ensureResponse()
 	// Any mutation invalidates the pre-rendered header block: from here on
 	// the response must be serialized from the map, which is now the only

@@ -22,13 +22,19 @@ func writeSession(ctx *breeze.Context, cfg *Config, user *User, tok *Token) erro
 		if err != nil {
 			return err
 		}
-		value = jwtStr
+		value, err = sealSession(cfg.CookieSecret, jwtStr)
+		if err != nil {
+			return err
+		}
 	default: // SessionModeCookie
 		payload, err := encodeCookieSession(user, tok, cfg.SessionTTL)
 		if err != nil {
 			return err
 		}
-		value = signedValue(cfg.CookieSecret, payload)
+		value, err = sealSession(cfg.CookieSecret, payload)
+		if err != nil {
+			return err
+		}
 	}
 
 	setCookie(ctx, cookieOptions{
@@ -55,14 +61,22 @@ func readSession(ctx *breeze.Context, cfg *Config) (*session, error) {
 
 	switch cfg.SessionMode {
 	case SessionModeJWT:
-		claims, err := parseJWT(cfg, raw)
+		jwtRaw, err := openSession(cfg.CookieSecret, raw)
+		if err != nil {
+			return nil, ErrNoSession
+		}
+		claims, err := parseJWT(cfg, jwtRaw)
 		if err != nil {
 			return nil, ErrNoSession
 		}
 		return &session{User: claims.User, Token: claims.Token}, nil
 	default: // SessionModeCookie
-		payload, ok := unsignValue(cfg.CookieSecret, raw)
-		if !ok {
+		payload, err := openSession(cfg.CookieSecret, raw)
+		if err != nil {
+			// Do not accept the pre-encryption HMAC-only format. Those cookies carry
+			// OAuth tokens in plaintext and keeping a compatibility path would leave
+			// the weaker credential representation valid indefinitely. Users simply
+			// sign in again after upgrading.
 			return nil, ErrNoSession
 		}
 		user, tok, err := decodeCookieSession(payload)

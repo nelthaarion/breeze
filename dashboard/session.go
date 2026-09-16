@@ -3,6 +3,7 @@ package dashboard
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -10,6 +11,8 @@ import (
 
 // sessionDuration is how long a login session stays valid.
 const sessionDuration = 24 * time.Hour
+
+const maxDashboardSessions = 4096
 
 // sessionStore is an in-memory session token store. Each login creates a
 // session token (returned as a cookie); logout deletes it. Sessions expire
@@ -20,6 +23,15 @@ const sessionDuration = 24 * time.Hour
 type sessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string]sessionEntry
+	// failed tracks repeated authentication failures by the peer address.
+	// It is intentionally small and in-memory: the dashboard is an admin surface,
+	// not a distributed identity provider.
+	failed map[string]loginFailure
+}
+
+type loginFailure struct {
+	count int
+	until time.Time
 }
 
 type sessionEntry struct {
@@ -28,48 +40,45 @@ type sessionEntry struct {
 }
 
 func newSessionStore() *sessionStore {
-	s := &sessionStore{
+	return &sessionStore{
 		sessions: make(map[string]sessionEntry),
-	}
-	// Start a background goroutine to periodically clean expired sessions.
-	go s.cleanupLoop()
-	return s
-}
-
-// cleanupLoop runs in the background and removes expired sessions every 10 minutes.
-func (s *sessionStore) cleanupLoop() {
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		s.cleanup()
+		failed:   make(map[string]loginFailure),
 	}
 }
 
-// cleanup removes all expired sessions. Called periodically by cleanupLoop.
-func (s *sessionStore) cleanup() {
-	now := time.Now()
-	s.mu.Lock()
+// cleanupExpired removes stale entries opportunistically. Session creation is
+// rare compared with authenticated dashboard requests, so this avoids a
+// permanent background goroutine while still bounding stale-session memory.
+func (s *sessionStore) cleanupExpired(now time.Time) {
 	for token, entry := range s.sessions {
 		if now.After(entry.expires) {
 			delete(s.sessions, token)
 		}
 	}
-	s.mu.Unlock()
 }
 
 // create generates a new session token for username and stores it.
 // Returns the opaque token string (32 hex chars = 16 bytes of entropy).
-func (s *sessionStore) create(username string) string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
+func (s *sessionStore) create(username string) (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
 	token := hex.EncodeToString(b[:])
+	now := time.Now()
 	s.mu.Lock()
+	s.cleanupExpired(now)
+	if len(s.sessions) >= maxDashboardSessions {
+		// Expired entries were removed above. Never evict a live administrative
+		// session to make room for another login; fail closed instead.
+		return "", fmt.Errorf("dashboard session capacity reached")
+	}
 	s.sessions[token] = sessionEntry{
 		username: username,
-		expires:  time.Now().Add(sessionDuration),
+		expires:  now.Add(sessionDuration),
 	}
 	s.mu.Unlock()
-	return token
+	return token, nil
 }
 
 // valid checks whether token exists and has not expired. Returns the
@@ -104,16 +113,59 @@ func (s *sessionStore) destroy(token string) {
 const sessionCookieName = "breeze_dash_session"
 
 // buildSessionCookie formats a Set-Cookie header value for the given token.
-// HttpOnly prevents JS access; SameSite=Lax prevents CSRF on top-level navs;
+// HttpOnly prevents JS access; SameSite=Strict prevents CSRF on top-level navs;
 // Path=/dashboard scopes the cookie to the dashboard subtree.
-func buildSessionCookie(token, basePath string, maxAge int) string {
+func buildSessionCookie(token, basePath string, maxAge int, secure bool) string {
 	path := basePath
 	if path == "" {
 		path = "/dashboard"
 	}
+	flags := "; HttpOnly; SameSite=Strict"
+	if secure {
+		flags += "; Secure"
+	}
 	if maxAge <= 0 {
 		// Expire immediately (logout).
-		return sessionCookieName + "=" + token + "; Path=" + path + "; Max-Age=0; HttpOnly; SameSite=Lax"
+		return sessionCookieName + "=" + token + "; Path=" + path + "; Max-Age=0" + flags
 	}
-	return sessionCookieName + "=" + token + "; Path=" + path + "; Max-Age=" + strconv.Itoa(maxAge) + "; HttpOnly; SameSite=Lax"
+	return sessionCookieName + "=" + token + "; Path=" + path + "; Max-Age=" + strconv.Itoa(maxAge) + flags
+}
+
+const (
+	maxLoginFailures   = 8
+	loginBlockDuration = 15 * time.Minute
+)
+
+func (s *sessionStore) allowLogin(peer string, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.failed[peer]
+	if !ok {
+		return true
+	}
+	if !entry.until.IsZero() && now.Before(entry.until) {
+		return false
+	}
+	if !entry.until.IsZero() {
+		delete(s.failed, peer)
+	}
+	return true
+}
+
+func (s *sessionStore) recordLoginFailure(peer string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := s.failed[peer]
+	entry.count++
+	if entry.count >= maxLoginFailures {
+		entry.until = now.Add(loginBlockDuration)
+		entry.count = maxLoginFailures
+	}
+	s.failed[peer] = entry
+}
+
+func (s *sessionStore) clearLoginFailures(peer string) {
+	s.mu.Lock()
+	delete(s.failed, peer)
+	s.mu.Unlock()
 }

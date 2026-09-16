@@ -64,7 +64,7 @@ func benchmarkExport(b *testing.B, n int) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := tr.ExportSpans(ctx, "", batch); err != nil {
 			b.Fatalf("export: %v", err)
 		}
@@ -87,7 +87,7 @@ func BenchmarkWriteFrame(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(size))
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				if err := c.writeFrame(opText, payload); err != nil {
 					b.Fatalf("writeFrame: %v", err)
 				}

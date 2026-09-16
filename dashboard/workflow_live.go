@@ -231,12 +231,12 @@ func (w *workflowLive) attach(bus *events.Bus) func() {
 	}
 
 	subs := []func(){
-		events.OnTypeBus[events.WorkflowStarted](bus, func(_ *events.Context, e events.WorkflowStarted) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowStarted) error {
 			w.start(e)
 			return nil
 		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowStepStarted](bus, func(_ *events.Context, e events.WorkflowStepStarted) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowStepStarted) error {
 			w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
 				s.State, s.Attempt = liveStepRunning, e.Attempt
 				s.Err = ""
@@ -244,7 +244,7 @@ func (w *workflowLive) attach(bus *events.Bus) func() {
 			return nil
 		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowStepCompleted](bus, func(_ *events.Context, e events.WorkflowStepCompleted) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowStepCompleted) error {
 			w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
 				s.State, s.Attempt = liveStepDone, e.Attempt
 				s.DurationMS = float64(e.Duration) / float64(time.Millisecond)
@@ -253,7 +253,7 @@ func (w *workflowLive) attach(bus *events.Bus) func() {
 			return nil
 		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowStepFailed](bus, func(_ *events.Context, e events.WorkflowStepFailed) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowStepFailed) error {
 			w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
 				// A failure that will be retried is not the step's
 				// verdict yet, so it reads as retrying rather than
@@ -269,28 +269,28 @@ func (w *workflowLive) attach(bus *events.Bus) func() {
 			return nil
 		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowRetrying](bus, func(_ *events.Context, e events.WorkflowRetrying) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowRetrying) error {
 			w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
 				s.State, s.Attempt = liveStepRetrying, e.Attempt
 			})
 			return nil
 		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowCompensationStarted](bus, func(_ *events.Context, e events.WorkflowCompensationStarted) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowCompensationStarted) error {
 			w.touch(e.ExecutionID, "", func(ex *liveExecution, _ *liveStep) {
 				ex.Compensating = true
 			})
 			return nil
 		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowCompensationFailed](bus, func(_ *events.Context, e events.WorkflowCompensationFailed) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowCompensationFailed) error {
 			w.touch(e.ExecutionID, e.Step, func(_ *liveExecution, s *liveStep) {
 				s.State, s.Err = liveStepFailed, e.Err
 			})
 			return nil
 		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowCompensationCompleted](bus, func(_ *events.Context, e events.WorkflowCompensationCompleted) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowCompensationCompleted) error {
 			w.touch(e.ExecutionID, "", func(ex *liveExecution, _ *liveStep) {
 				// Rollback succeeded, so the steps that had completed
 				// are no longer in effect. Showing them green would
@@ -304,22 +304,22 @@ func (w *workflowLive) attach(bus *events.Bus) func() {
 			return nil
 		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowCompleted](bus, func(_ *events.Context, e events.WorkflowCompleted) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowCompleted) error {
 			w.finish(e.ExecutionID)
 			return nil
 		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowFailed](bus, func(_ *events.Context, e events.WorkflowFailed) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowFailed) error {
 			w.finish(e.ExecutionID)
 			return nil
 		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowTimedOut](bus, func(_ *events.Context, e events.WorkflowTimedOut) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowTimedOut) error {
 			w.finish(e.ExecutionID)
 			return nil
 		}).Unsubscribe,
 
-		events.OnTypeBus[events.WorkflowCancelled](bus, func(_ *events.Context, e events.WorkflowCancelled) error {
+		events.OnTypeBus(bus, func(_ *events.Context, e events.WorkflowCancelled) error {
 			w.finish(e.ExecutionID)
 			return nil
 		}).Unsubscribe,

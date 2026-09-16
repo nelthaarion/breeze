@@ -560,6 +560,18 @@ func (c *Client) Do(req *ClientRequest) (*Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("client: parse URL %q: %w", req.URL, err)
 	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("client: unsupported URL scheme %q", u.Scheme)
+	}
+	if u.Host == "" || u.Hostname() == "" {
+		return nil, fmt.Errorf("client: URL %q has no host", req.URL)
+	}
+	if u.Fragment != "" {
+		return nil, fmt.Errorf("client: URL fragments are not sent over HTTP")
+	}
+	if err := validateOutboundHeaders(req.header, len(req.Body)); err != nil {
+		return nil, err
+	}
 
 	host := u.Hostname()
 	port := u.Port()
@@ -664,6 +676,60 @@ func (c *Client) Config() Config {
 
 var crlfcrlf = []byte("\r\n\r\n")
 
+const maxResponseHeaderBytes = 64 << 10
+
+func validClientHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			continue
+		}
+		switch c {
+		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func validateOutboundHeaders(h http.Header, bodyLen int) error {
+	var contentLengths []string
+	transferEncoding := false
+	for key, values := range h {
+		if !validClientHeaderName(key) {
+			return fmt.Errorf("client: invalid header name %q", key)
+		}
+		for _, value := range values {
+			if strings.ContainsAny(value, "\r\n") {
+				return fmt.Errorf("client: invalid header value for %q", key)
+			}
+		}
+		switch strings.ToLower(key) {
+		case "content-length":
+			contentLengths = append(contentLengths, values...)
+		case "transfer-encoding":
+			transferEncoding = true
+		}
+	}
+	if transferEncoding {
+		return fmt.Errorf("client: Transfer-Encoding is not supported by the HTTP/1.1 client serializer")
+	}
+	if len(contentLengths) > 1 {
+		return fmt.Errorf("client: duplicate Content-Length header")
+	}
+	if len(contentLengths) == 1 {
+		cl, err := strconv.ParseInt(strings.TrimSpace(contentLengths[0]), 10, 64)
+		if err != nil || cl < 0 || cl != int64(bodyLen) {
+			return fmt.Errorf("client: Content-Length does not match request body")
+		}
+	}
+	return nil
+}
+
 // buildHTTPRequest serialises req as an HTTP/1.1 request line + headers +
 // body. Always sends Connection: keep-alive and a Content-Length when there
 // is a body; never sends Transfer-Encoding: chunked (see package doc).
@@ -712,6 +778,13 @@ func buildHTTPRequest(req *ClientRequest, u *url.URL, userAgent string) []byte {
 	return b.Bytes()
 }
 
+func maxInt64FromBody(maxBody int64) int64 {
+	if maxBody <= 0 {
+		return int64(^uint64(0) >> 1)
+	}
+	return maxBody
+}
+
 // parseHTTPResponse attempts to parse one complete HTTP/1.1 response from buf.
 //
 // It returns the parsed response, how many bytes of buf it consumed, whether a
@@ -727,7 +800,13 @@ func parseHTTPResponse(buf []byte, maxBody int64) (resp *Response, consumed int,
 	// Wait until the whole header block has arrived.
 	headerEnd := bytes.Index(buf, crlfcrlf)
 	if headerEnd < 0 {
+		if len(buf) > maxResponseHeaderBytes {
+			return nil, 0, true, fmt.Errorf("client: response headers exceed %d bytes", maxResponseHeaderBytes)
+		}
 		return nil, 0, false, nil
+	}
+	if headerEnd+4 > maxResponseHeaderBytes {
+		return nil, 0, true, fmt.Errorf("client: response headers exceed %d bytes", maxResponseHeaderBytes)
 	}
 
 	// Include the final CRLF so every header line in headerBlock is
@@ -777,25 +856,35 @@ func parseHTTPResponse(buf []byte, maxBody int64) (resp *Response, consumed int,
 		}
 		colon := bytes.IndexByte(line, ':')
 		if colon <= 0 {
-			continue
+			return nil, 0, true, errors.New("client: malformed response header")
 		}
 		key := string(line[:colon])
 		val := strings.TrimSpace(string(line[colon+1:]))
+		if !validClientHeaderName(key) || strings.ContainsAny(val, "\r\n") {
+			return nil, 0, true, errors.New("client: invalid response header")
+		}
 		hdr.Add(key, val)
 
 		lower := strings.ToLower(key)
 		switch lower {
 		case "content-length":
-			if contentLength < 0 {
-				cl, e := strconv.ParseInt(val, 10, 64)
-				if e == nil && cl >= 0 {
-					contentLength = cl
-				}
+			cl, e := strconv.ParseInt(val, 10, 64)
+			if e != nil || cl < 0 || cl > maxInt64FromBody(maxBody) {
+				return nil, 0, true, errors.New("client: invalid Content-Length")
 			}
+			if contentLength >= 0 && contentLength != cl {
+				return nil, 0, true, errors.New("client: conflicting Content-Length headers")
+			}
+			contentLength = cl
 		case "transfer-encoding":
-			if strings.Contains(strings.ToLower(val), "chunked") {
-				chunked = true
+			enc := strings.ToLower(strings.TrimSpace(val))
+			if enc != "chunked" {
+				return nil, 0, true, errors.New("client: unsupported Transfer-Encoding")
 			}
+			if chunked {
+				return nil, 0, true, errors.New("client: duplicate Transfer-Encoding")
+			}
+			chunked = true
 		}
 	}
 

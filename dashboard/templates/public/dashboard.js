@@ -255,6 +255,16 @@ function onEvent(ch, data){
     if(S.timelines.length>50) S.timelines.pop();
     if(S.page==='timeline') renderTimelineList();
   } else if(ch==='event'){
+    if(data && data.query){
+      var q=data.query;
+      S.queries.push({
+        id:q.id,time:q.time,sql:q.sql,duration_us:q.duration_us,
+        duration_ms:(q.duration_us||0)/1000,rows:q.rows,file:q.file,line:q.line,
+        slow:!!q.slow,error:q.error||''
+      });
+      if(S.queries.length>300) S.queries.shift();
+      if(S.page==='queries') renderQueries();
+    }
     S.events.unshift(data);
     if(S.events.length>500) S.events.pop();
     if(S.page==='events') renderEvents();
@@ -268,6 +278,7 @@ var PAGES = {
   routes: {title:'Routes', init: initRoutes},
   api: {title:'API Explorer', init: initAPI},
   requests: {title:'Live Requests', init: initRequests},
+  queries: {title:'Database Queries', init: initQueries},
   cache: {title:'Cache', init: initCache},
   logs: {title:'Logs', init: initLogs},
   health: {title:'Health', init: initHealth},
@@ -1126,15 +1137,17 @@ function renderRequests(){
 }
 
 // ─── ORM Queries ───────────────────────────────────────────────────────
+var _queriesPoll=0;
 function initQueries(){
+  api('queries?limit=200').then(function(d){S.queries=d||[]; renderQueries();}).catch(function(){});
   renderQueries();
   var so = $('#slow-only');
   if(so) so.addEventListener('change', function(){S._slowOnly=so.checked; renderQueries();});
   var si = $('#q-search');
   if(si) si.addEventListener('input', function(){S.qSearch=si.value; renderQueries(); si.focus();});
-  setInterval(function(){
-    if(S.page==='queries') api('queries?limit=200').then(function(d){S.queries=d; renderQueries();}).catch(function(){});
-  }, 10000);
+  if(!_queriesPoll) _queriesPoll=setInterval(function(){
+    if(S.page==='queries') api('queries?limit=200').then(function(d){S.queries=d||[]; renderQueries();}).catch(function(){});
+  }, 5000);
 }
 function renderQueries(){
   var list = S.queries.slice().reverse();
@@ -1146,7 +1159,7 @@ function renderQueries(){
   var html = '';
   list.slice(0,300).forEach(function(q){
     html += '<tr><td style="font-family:var(--mono);font-size:11px;color:var(--text-dim)">'+fmtTime(q.time)+'</td>'+
-      '<td style="font-family:var(--mono);font-size:11px;max-width:540px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHTML(q.sql)+'</td>'+
+      '<td class="query-sql">'+escapeHTML(q.sql)+'</td>'+
       '<td>'+(q.slow?'<span class="badge red">slow</span> ':'')+fmtDur(q.duration_us)+'</td>'+
       '<td style="font-family:var(--mono)">'+fmtNum(q.rows)+'</td>'+
       '<td style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">'+escapeHTML(q.file)+':'+q.line+'</td>'+

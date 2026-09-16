@@ -151,6 +151,7 @@ func (s *Server) Scope() Scope { return s.scope }
 // would add a hop without adding any concurrency.
 func (s *Server) registerMethods() {
 	s.reg.RegisterBlocking("initialize", s.handleInitialize)
+	s.reg.RegisterBlocking("server/discover", s.handleServerDiscover)
 	s.reg.RegisterBlocking("tools/list", s.handleToolsList)
 	s.reg.RegisterBlocking("tools/call", s.handleToolsCall)
 
@@ -165,6 +166,19 @@ func (s *Server) registerMethods() {
 }
 
 // handleInitialize answers the handshake.
+func (s *Server) handleServerDiscover(ctx *rpc.Context) {
+	// 2026-07-28 uses server/discover instead of initialize for optional
+	// capability discovery. Keep this handler side-effect free so it is safe to
+	// call on every stateless request.
+	ctx.Result(serverDiscoverResult{
+		ProtocolVersion:    modernProtocol,
+		Capabilities:       serverCapabilities{Tools: toolsCapability{ListChanged: false}},
+		ServerInfo:         serverInfo{Name: serverName, Version: s.version},
+		BreezeServerKind:   s.mode,
+		BreezeCapabilities: s.capabilityReport(),
+	})
+}
+
 func (s *Server) handleInitialize(ctx *rpc.Context) {
 	s.emit(Event{Kind: EventHandshake})
 	ctx.Result(initializeResult{
@@ -227,7 +241,7 @@ func (s *Server) handleToolsList(ctx *rpc.Context) {
 			InputSchema: t.schema,
 		})
 	}
-	ctx.Result(toolsListResult{Tools: list})
+	ctx.Result(toolsListResult{Tools: list, TTLMS: 0, CacheScope: "private"})
 }
 
 // handleToolsCall runs one tool.
@@ -295,6 +309,11 @@ func (s *Server) handleToolsCall(ctx *rpc.Context) {
 	// for a long-lived editor integration means the user's tools stop working
 	// with no explanation. Converting it to a failed tool result keeps the
 	// session alive and puts the reason in front of whoever can act on it.
+	if err := validateToolArguments(t.schema, p.Arguments); err != nil {
+		ctx.Errorf(rpc.CodeInvalidParams, err.Error())
+		return
+	}
+
 	started := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
@@ -310,7 +329,7 @@ func (s *Server) handleToolsCall(ctx *rpc.Context) {
 				ArgNames: argumentNames(p.Arguments),
 				Duration: time.Since(started),
 			})
-			ctx.Result(errorResult(fmt.Sprintf("%s panicked: %v", t.name, r)))
+			ctx.Result(errorResult("tool execution failed internally; inspect server diagnostics for details"))
 		}
 	}()
 
@@ -336,6 +355,34 @@ func (s *Server) handleToolsCall(ctx *rpc.Context) {
 // Absent arguments are treated as an empty object rather than an error: a tool
 // whose fields are all optional is legitimately callable with none, and MCP
 // clients differ on whether they send "arguments":{} or omit it.
+func validateToolArguments(schemaRaw json.RawMessage, raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		raw = []byte(`{}`)
+	}
+	var args map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &args); err != nil || args == nil {
+		return fmt.Errorf("arguments must be a JSON object")
+	}
+	var sch struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal(schemaRaw, &sch); err != nil {
+		return fmt.Errorf("tool schema is invalid")
+	}
+	for name := range args {
+		if _, ok := sch.Properties[name]; !ok {
+			return fmt.Errorf("unknown argument %q", name)
+		}
+	}
+	for _, name := range sch.Required {
+		if _, ok := args[name]; !ok {
+			return fmt.Errorf("missing required argument %q", name)
+		}
+	}
+	return nil
+}
+
 func decodeArgs(raw json.RawMessage, dst any) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
@@ -367,8 +414,9 @@ type schema map[string]any
 // names.
 func objectSchema(props map[string]any, required ...string) json.RawMessage {
 	s := schema{
-		"type":       "object",
-		"properties": props,
+		"type":                 "object",
+		"properties":           props,
+		"additionalProperties": false,
 	}
 	if len(required) > 0 {
 		s["required"] = required

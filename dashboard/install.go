@@ -7,6 +7,7 @@ import (
 
 	"github.com/nelthaarion/breeze/v2"
 	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 // Install wires the Developer Dashboard into a Breeze application.
@@ -137,8 +138,29 @@ func (c *Collector) PushQuery(sql string, args []any, durationUS int64, rows int
 		q.Error = err.Error()
 	}
 	c.RecordQuery(q)
-	if c.hub != nil {
-		pushEvent(c.hub, "query", q)
+
+	// Query telemetry travels through Breeze's typed event system.
+	// The dashboard listens to the same event and forwards it to its live
+	// query panel, while the observability bridge records it like any other
+	// framework event. When no bus is attached this path is allocation-free.
+	if !c.cfg.Enabled || !c.cfg.Queries {
+		return
+	}
+	c.eventsMu.RLock()
+	bus := c.eventBus
+	c.eventsMu.RUnlock()
+	if bus != nil {
+		_ = events.EmitBus(bus, events.DatabaseQuery{
+			ID:         q.ID,
+			Time:       q.Time.UnixNano(),
+			SQL:        q.SQL,
+			DurationUS: q.Duration,
+			Rows:       q.Rows,
+			File:       q.File,
+			Line:       q.Line,
+			Slow:       q.Slow,
+			Error:      q.Error,
+		})
 	}
 }
 

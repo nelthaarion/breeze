@@ -123,7 +123,7 @@ func newTracer(service string, log func(string, string, string), router *breeze.
 		RouteResolver: fleet.RouterResolver(router),
 		Logger:        log,
 		Transport: httptransport.NewWithGzip(httptransport.Config{
-			IngestToken: env("FLEET_INGEST_TOKEN", "fleet-demo-token"),
+			IngestToken: env("FLEET_INGEST_TOKEN", ""),
 			ServiceName: service,
 			Timeout:     2 * time.Second,
 		}),

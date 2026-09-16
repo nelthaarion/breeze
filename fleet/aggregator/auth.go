@@ -20,8 +20,9 @@ func readAuth(cfg Config) breeze.HandlerFunc {
 	wantPass := sha256.Sum256([]byte(cfg.Password))
 	return func(ctx *breeze.Context) error {
 		raw := ctx.Req.Header["authorization"]
-		if strings.HasPrefix(raw, "Basic ") {
-			decoded, err := base64.StdEncoding.DecodeString(raw[6:])
+		parts := strings.Fields(raw)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Basic") {
+			decoded, err := base64.StdEncoding.DecodeString(parts[1])
 			if err == nil {
 				if split := strings.IndexByte(string(decoded), ':'); split >= 0 {
 					gotUser := sha256.Sum256(decoded[:split])

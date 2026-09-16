@@ -81,7 +81,7 @@ var loopbackHosts = map[string]bool{
 // The returned URL always points at loopback. That is the invariant the whole file
 // exists to hold, so it is enforced in one place with one construction rather than
 // by validating several shapes of input.
-func explorerTarget(raw, hostHeader string, port int) (string, error) {
+func explorerTarget(raw, _ string, port int) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", errors.New("url required")
@@ -96,17 +96,10 @@ func explorerTarget(raw, hostHeader string, port int) (string, error) {
 	}
 
 	if port <= 0 {
-		// No recorded listener: the Collector was built without an app, or Run has
-		// not been called. Fall back to the port in the Host header, which is the
-		// port the browser reached this dashboard on and therefore this service's.
-		//
-		// Only the port is taken. The host is discarded and loopback substituted,
-		// so a forged Host header can redirect this to a different port on this
-		// machine and nothing else. That is a narrow enough residue to accept in
-		// exchange for the explorer working in a test harness.
-		port = portFromHostHeader(hostHeader)
-	}
-	if port <= 0 {
+		// Never derive an internal destination port from the untrusted HTTP Host
+		// header. Doing so turns the explorer into a loopback port scanner/SSRF
+		// primitive. A real application has a listener port once it is running;
+		// test harnesses can pass it explicitly. hostHeader is intentionally ignored.
 		return "", errors.New("the API Explorer cannot determine this service's port; " +
 			"it is available once the application is running")
 	}

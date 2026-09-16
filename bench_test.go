@@ -105,8 +105,8 @@ func BenchmarkFindChainStatic(b *testing.B) {
 	r := benchRouter()
 	req := &HTTPRequest{Method: GET, Path: "/health"}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		chain, _ := r.findChain(req)
 		if chain == nil {
 			b.Fatal("route not found")
@@ -118,8 +118,8 @@ func BenchmarkFindChainParam(b *testing.B) {
 	r := benchRouter()
 	req := &HTTPRequest{Method: GET, Path: "/users/42"}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		chain, params := r.findChain(req)
 		if chain == nil {
 			b.Fatal("route not found")
@@ -230,7 +230,7 @@ func rawCopy(raw []byte) []byte {
 // request and header map every call. External callers keep this behaviour.
 func BenchmarkZZParsePublic(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		req, _, err := ParseHTTPRequest(rawGET)
 		if err != nil || req == nil {
 			b.Fatal("parse failed")
@@ -244,7 +244,7 @@ func BenchmarkZZParsePublic(b *testing.B) {
 // owned header-block copy.
 func BenchmarkZZParsePooled(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		req, _, err := parsePooledRequest(rawGET, true)
 		if err != nil || req == nil {
 			b.Fatal("parse failed")
@@ -261,7 +261,7 @@ func BenchmarkZZParsePooledZeroCopy(b *testing.B) {
 	raw := rawCopy(rawGET)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		req, _, err := parsePooledRequest(raw, false)
 		if err != nil || req == nil {
 			b.Fatal("parse failed")
@@ -281,8 +281,8 @@ func BenchmarkZZParsePooledZeroCopy(b *testing.B) {
 func BenchmarkZZPromote(b *testing.B) {
 	raw := rawCopy(rawGET)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		req, _, err := parsePooledRequest(raw, false)
 		if err != nil || req == nil {
 			b.Fatal("parse failed")
@@ -302,7 +302,7 @@ func BenchmarkZZPromote(b *testing.B) {
 // not scale with the header count.
 func BenchmarkZZParseBrowserHeaders(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		req, _, err := parsePooledRequest(rawGETBrowser, true)
 		if err != nil || req == nil {
 			b.Fatal("parse failed")
@@ -323,7 +323,7 @@ func BenchmarkZZLookupStaticMap(b *testing.B) {
 	req := mustParse(b, rawGETStatic)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		rt, params, _ := r.lookup(req)
 		if rt == nil {
 			b.Fatal("no route")
@@ -342,7 +342,7 @@ func BenchmarkZZLookupOrderedScan(b *testing.B) {
 	req := mustParse(b, rawGETScanned)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		rt, params, _ := r.lookup(req)
 		if rt == nil {
 			b.Fatal("no route")
@@ -360,7 +360,7 @@ func BenchmarkZZLookupParam(b *testing.B) {
 	req := mustParse(b, rawGET)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		rt, params, _ := r.lookup(req)
 		if rt == nil {
 			b.Fatal("no route")
@@ -388,7 +388,7 @@ func benchResponse() *HTTPResponse {
 func BenchmarkZZSerializeAlloc(b *testing.B) {
 	res := benchResponse()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if len(res.Bytes()) == 0 {
 			b.Fatal("empty")
 		}
@@ -400,7 +400,7 @@ func BenchmarkZZSerializeAlloc(b *testing.B) {
 func BenchmarkZZSerializePooled(b *testing.B) {
 	res := benchResponse()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		bp := acquireWireBuf()
 		*bp = res.AppendTo(*bp)
 		if len(*bp) == 0 {
@@ -433,7 +433,7 @@ func benchPipelineInline(b *testing.B, ownHeaders bool) {
 	raw := rawCopy(rawGET)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		req, _, err := parsePooledRequest(raw, ownHeaders)
 		if err != nil || req == nil {
 			b.Fatal("parse failed")
@@ -465,7 +465,7 @@ func benchPipelineInline(b *testing.B, ownHeaders bool) {
 func BenchmarkZZPipelineDispatch(b *testing.B) {
 	r := perfRouter()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		buf := append([]byte(nil), rawGET...) // the per-event copy that is now gone
 		req, _, _ := ParseHTTPRequest(buf)
 		chain, params := r.findChain(req)
@@ -500,7 +500,7 @@ func BenchmarkZZPipelineDispatch(b *testing.B) {
 // encoding/json walks it by reflection, sorting the keys before writing them.
 func BenchmarkZZJSONMapHandler(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		out, err := json.Marshal(map[string]string{"id": "42", "name": "Alice"})
 		if err != nil || len(out) == 0 {
 			b.Fatal("marshal failed")
@@ -517,7 +517,7 @@ func BenchmarkZZJSONStructHandler(b *testing.B) {
 		Name string `json:"name"`
 	}
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		out, err := json.Marshal(user{ID: "42", Name: "Alice"})
 		if err != nil || len(out) == 0 {
 			b.Fatal("marshal failed")
@@ -530,7 +530,7 @@ func BenchmarkZZJSONStructHandler(b *testing.B) {
 // measured against, and what a hot route can drop to when it matters.
 func BenchmarkZZJSONAppendHandler(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		bp := acquireWireBuf()
 		buf := append(*bp, `{"id":"`...)
 		buf = append(buf, "42"...)
@@ -668,8 +668,8 @@ func BenchmarkZZRenderViewFull(b *testing.B) {
 	te := benchEngine(b)
 	renderOnce(b, te, false) // warm the template cache
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		renderOnce(b, te, false)
 	}
 }
@@ -681,7 +681,7 @@ func BenchmarkZZRenderViewPartial(b *testing.B) {
 	renderOnce(b, te, true)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		renderOnce(b, te, true)
 	}
 }
@@ -693,7 +693,7 @@ func BenchmarkZZCollectSources(b *testing.B) {
 	te := benchEngine(b)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if got := te.collectTemplateSources("home"); len(got) == 0 {
 			b.Fatal("no sources collected")
 		}
@@ -709,7 +709,7 @@ func BenchmarkZZTemplateScript(b *testing.B) {
 	sources := te.collectTemplateSources("home")
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if s := breezeTemplateScript(sources); s == "" {
 			b.Fatal("empty script tag")
 		}
@@ -723,7 +723,7 @@ func BenchmarkZZTemplateScriptCached(b *testing.B) {
 	te.templateScriptFor("home") // populate
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if s := te.templateScriptFor("home"); s == "" {
 			b.Fatal("empty script tag")
 		}
@@ -736,7 +736,7 @@ func BenchmarkZZTemplateScriptCached(b *testing.B) {
 func BenchmarkZZRuntimeString(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if s := breezeRuntime(); len(s) == 0 {
 			b.Fatal("empty runtime")
 		}

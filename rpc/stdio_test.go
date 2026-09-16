@@ -406,7 +406,7 @@ func benchmarkStdio(b *testing.B, msg string, wantResponse bool) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		line, err := readLine(br, defaultStdioMaxLine)
 		if err != nil {
 			b.Fatalf("readLine: %v", err)
@@ -474,7 +474,7 @@ func BenchmarkStdioReadLine(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := readLine(br, defaultStdioMaxLine); err != nil {
 			b.Fatalf("readLine: %v", err)
 		}

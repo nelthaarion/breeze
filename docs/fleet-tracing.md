@@ -276,7 +276,7 @@ traffic would likewise bury real requests in the trace list. Each service wraps
 `fleet.Middleware` in a small `skipUntraced` predicate to exclude those paths;
 copy that pattern for your own health and introspection endpoints.
 
-Open `http://localhost:3000/dashboard` with `admin/admin`, then select Fleet
+Open `http://localhost:3000/dashboard` with `set BREEZE_DASHBOARD_USERNAME/BREEZE_DASHBOARD_PASSWORD`, then select Fleet
 View. The gateway tags the request with `order_id=123`; the tag is propagated
 through auth and orders. The orders response includes an intentionally additive
 `debug_note` field for the contract-validation demonstration. To exercise

@@ -1,6 +1,7 @@
 package breeze
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,12 @@ import (
 )
 
 // UploadedFile holds a parsed uploaded file's metadata and content.
+const (
+	maxMultipartFieldBytes = 1 << 20   // 1 MiB per non-file field
+	maxMultipartParts      = 256       // protects parser/bookkeeping memory
+	maxMultipartTotalBytes = 128 << 20 // 128 MiB aggregate parsed data
+)
+
 type UploadedFile struct {
 	Field       string               // form field name
 	Filename    string               // uploaded filename
@@ -48,10 +55,12 @@ func (req *HTTPRequest) ParseMultipart(maxFileSize int64) (map[string][]*Uploade
 		return nil, nil, errors.New("multipart boundary not found")
 	}
 
-	r := multipart.NewReader(strings.NewReader(string(req.Body)), boundary)
+	r := multipart.NewReader(bytes.NewReader(req.Body), boundary)
 
 	files := map[string][]*UploadedFile{}
 	fields := map[string][]string{}
+	parts := 0
+	var totalParsed int64
 
 	for {
 		part, err := r.NextPart()
@@ -61,6 +70,11 @@ func (req *HTTPRequest) ParseMultipart(maxFileSize int64) (map[string][]*Uploade
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading multipart: %w", err)
 		}
+		parts++
+		if parts > maxMultipartParts {
+			_ = part.Close()
+			return nil, nil, fmt.Errorf("multipart contains more than %d parts", maxMultipartParts)
+		}
 
 		// get form name
 		formName := part.FormName()
@@ -69,11 +83,19 @@ func (req *HTTPRequest) ParseMultipart(maxFileSize int64) (map[string][]*Uploade
 
 		// If filename is empty => regular form field
 		if filename == "" {
-			// read field value (bounded to avoid extreme memory)
-			val, readErr := io.ReadAll(part)
+			val, readErr := io.ReadAll(io.LimitReader(part, maxMultipartFieldBytes+1))
 			if readErr != nil {
 				_ = part.Close()
 				return nil, nil, fmt.Errorf("read form field %s: %w", formName, readErr)
+			}
+			if len(val) > maxMultipartFieldBytes {
+				_ = part.Close()
+				return nil, nil, fmt.Errorf("form field %s exceeds %d bytes", formName, maxMultipartFieldBytes)
+			}
+			totalParsed += int64(len(val))
+			if totalParsed > maxMultipartTotalBytes {
+				_ = part.Close()
+				return nil, nil, fmt.Errorf("multipart payload exceeds %d parsed bytes", maxMultipartTotalBytes)
 			}
 			fields[formName] = append(fields[formName], string(val))
 			_ = part.Close()
@@ -94,6 +116,10 @@ func (req *HTTPRequest) ParseMultipart(maxFileSize int64) (map[string][]*Uploade
 
 		if maxFileSize > 0 && int64(len(data)) > maxFileSize {
 			return nil, nil, fmt.Errorf("file %s exceeds maxFileSize (%d bytes)", filename, maxFileSize)
+		}
+		totalParsed += int64(len(data))
+		if totalParsed > maxMultipartTotalBytes {
+			return nil, nil, fmt.Errorf("multipart payload exceeds %d parsed bytes", maxMultipartTotalBytes)
 		}
 
 		// Determine content type: prefer part header, fallback to sniffing

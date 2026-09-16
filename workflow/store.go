@@ -88,16 +88,20 @@ type Store interface {
 // process-scoped: [Engine.Resume] will recover executions interrupted
 // by an engine restart, but nothing survives the process exiting.
 type MemoryStore struct {
-	mu    sync.RWMutex
-	flows map[string]WorkflowRecord
-	steps map[string]map[string]StepRecord
+	mu          sync.RWMutex
+	flows       map[string]WorkflowRecord
+	steps       map[string]map[string]StepRecord
+	idempotency map[string]string
+	pending     map[string]struct{}
 }
 
 // NewMemoryStore returns an empty in-memory store.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		flows: make(map[string]WorkflowRecord),
-		steps: make(map[string]map[string]StepRecord),
+		flows:       make(map[string]WorkflowRecord),
+		steps:       make(map[string]map[string]StepRecord),
+		idempotency: make(map[string]string),
+		pending:     make(map[string]struct{}),
 	}
 }
 
@@ -124,6 +128,12 @@ func (m *MemoryStore) CreateWorkflow(_ context.Context, rec WorkflowRecord) erro
 		return fmt.Errorf("%w: %s", ErrWorkflowAlreadyExist, rec.ExecutionID)
 	}
 	m.flows[rec.ExecutionID] = cloneWorkflow(rec)
+	if rec.IdempotencyKey != "" {
+		m.idempotency[workflowIdempotencyKey(rec.Workflow, rec.IdempotencyKey)] = rec.ExecutionID
+	}
+	if !rec.State.Terminal() {
+		m.pending[rec.ExecutionID] = struct{}{}
+	}
 	return nil
 }
 
@@ -143,15 +153,33 @@ func (m *MemoryStore) UpdateWorkflow(_ context.Context, rec WorkflowRecord) erro
 	if _, ok := m.flows[rec.ExecutionID]; !ok {
 		return fmt.Errorf("%w: %s", ErrWorkflowNotFound, rec.ExecutionID)
 	}
+	old := m.flows[rec.ExecutionID]
+	if old.IdempotencyKey != "" {
+		delete(m.idempotency, workflowIdempotencyKey(old.Workflow, old.IdempotencyKey))
+	}
 	m.flows[rec.ExecutionID] = cloneWorkflow(rec)
+	if rec.IdempotencyKey != "" {
+		m.idempotency[workflowIdempotencyKey(rec.Workflow, rec.IdempotencyKey)] = rec.ExecutionID
+	}
+	if rec.State.Terminal() {
+		delete(m.pending, rec.ExecutionID)
+	} else {
+		m.pending[rec.ExecutionID] = struct{}{}
+	}
 	return nil
 }
 
 func (m *MemoryStore) DeleteWorkflow(_ context.Context, executionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if rec, ok := m.flows[executionID]; ok {
+		if rec.IdempotencyKey != "" {
+			delete(m.idempotency, workflowIdempotencyKey(rec.Workflow, rec.IdempotencyKey))
+		}
+	}
 	delete(m.flows, executionID)
 	delete(m.steps, executionID)
+	delete(m.pending, executionID)
 	return nil
 }
 
@@ -191,9 +219,9 @@ func (m *MemoryStore) ListSteps(_ context.Context, executionID string) ([]StepRe
 func (m *MemoryStore) PendingWorkflows(_ context.Context) ([]WorkflowRecord, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	var out []WorkflowRecord
-	for _, rec := range m.flows {
-		if !rec.State.Terminal() {
+	out := make([]WorkflowRecord, 0, len(m.pending))
+	for id := range m.pending {
+		if rec, ok := m.flows[id]; ok && !rec.State.Terminal() {
 			out = append(out, cloneWorkflow(rec))
 		}
 	}
@@ -206,12 +234,19 @@ func (m *MemoryStore) FindByIdempotencyKey(_ context.Context, workflow, key stri
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	for _, rec := range m.flows {
-		if rec.Workflow == workflow && rec.IdempotencyKey == key {
-			return cloneWorkflow(rec), true, nil
-		}
+	id, ok := m.idempotency[workflowIdempotencyKey(workflow, key)]
+	if !ok {
+		return WorkflowRecord{}, false, nil
 	}
-	return WorkflowRecord{}, false, nil
+	rec, ok := m.flows[id]
+	if !ok {
+		return WorkflowRecord{}, false, nil
+	}
+	return cloneWorkflow(rec), true, nil
+}
+
+func workflowIdempotencyKey(workflow, key string) string {
+	return workflow + "\x00" + key
 }
 
 // Len returns the number of stored executions.
@@ -227,4 +262,6 @@ func (m *MemoryStore) Reset() {
 	defer m.mu.Unlock()
 	m.flows = make(map[string]WorkflowRecord)
 	m.steps = make(map[string]map[string]StepRecord)
+	m.idempotency = make(map[string]string)
+	m.pending = make(map[string]struct{})
 }

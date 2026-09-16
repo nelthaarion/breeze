@@ -75,10 +75,16 @@ func (fs *fileStorage) Save(state *PersistedState) error {
 	}
 	// Write to temp file then rename (atomic on most OSes)
 	tmp := fs.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, fs.path)
+	if err := os.Rename(tmp, fs.path); err != nil {
+		return err
+	}
+	// Existing state files created by older releases may have been world-readable.
+	// Tighten them after an atomic replacement as well.
+	_ = os.Chmod(fs.path, 0600)
+	return nil
 }
 
 func (fs *fileStorage) Load() (*PersistedState, error) {

@@ -16,7 +16,7 @@
    whole palette including the graphs is defined in this one file.
    ════════════════════════════════════════════════════════════════════════ */
 
-*{box-sizing:border-box;margin:0;padding:0 ; backdrop-filter: blur(15px)}
+*{box-sizing:border-box;margin:0;padding:0}
 
 /* ─── Tokens — light (default) ────────────────────────────────────────── */
 thead , th{
@@ -37,7 +37,7 @@ span , td{
 
   /* Glass. --glass is what sits on the field; --glass-solid is for dense
      data surfaces where translucency would fight legibility. */
-  --glass:transpart;
+  --glass:rgba(255,255,255,.78);
   --glass-solid: transparent;
   --glass-brd:rgba(255,255,255,.9);
   --glass-brd-soft:rgba(120,110,220,.14);
@@ -328,9 +328,9 @@ pre{background:var(--surface2);padding:14px;border-radius:var(--r-md);overflow:a
 
 /* ─── Shell ───────────────────────────────────────────────────────────── */
 
-.app{display:grid;grid-template-columns:256px 1fr;height:100vh;gap:16px;padding:16px}
+.app{display:grid;grid-template-columns:256px minmax(0,1fr);height:100dvh;gap:16px;padding:16px;min-height:0}
 .sidebar{border-radius:var(--r-lg);display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--sh-3),var(--sh-inset)}
-.sidebar-header{padding:20px 20px 16px;border-bottom:1px solid var(--glass-brd-soft);display:flex;align-items:center;gap:12px}
+.sidebar-header{padding:18px 20px 15px;border-bottom:1px solid var(--glass-brd-soft);display:flex;align-items:center;gap:12px}.dashboard-logo{width:46px;height:46px;object-fit:contain;border-radius:12px;flex:0 0 46px}
 .sidebar-header .logo{
   width:38px;height:38px;border-radius:13px;
   background:linear-gradient(140deg,var(--primary-lift),var(--primary-dim));
@@ -367,7 +367,7 @@ pre{background:var(--surface2);padding:14px;border-radius:var(--r-md);overflow:a
 .ws-dot.on{background:var(--green);box-shadow:0 0 0 3px var(--t-green)}
 .ws-dot.off{background:var(--red);box-shadow:0 0 0 3px var(--t-red)}
 
-.main{display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.main{display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}
 .topbar{
   height:62px;flex-shrink:0;border-radius:var(--r);
   display:flex;align-items:center;justify-content:space-between;
@@ -375,7 +375,7 @@ pre{background:var(--surface2);padding:14px;border-radius:var(--r-md);overflow:a
 }
 .topbar h2{font-size:var(--fs-xl);font-weight:var(--fw-black);letter-spacing:var(--ls-tight)}
 .topbar .right{display:flex;gap:12px;align-items:center;font-size:var(--fs-xs);color:var(--text-dim);font-family:var(--mono)}
-.content{flex:1;overflow:auto;padding:2px 4px 22px 2px}
+.content{flex:1;overflow:auto;min-height:0;padding:2px 4px 22px 2px;scrollbar-gutter:stable}
 
 /* Theme switcher. Both glyphs are rendered and the inactive one is
    collapsed, so the control never reflows when it flips. */
@@ -650,6 +650,10 @@ pre{background:var(--surface2);padding:14px;border-radius:var(--r-md);overflow:a
 .chk{width:auto;accent-color:var(--primary)}
 @media(max-width:900px){.db-grid{grid-template-columns:1fr}}
 
+/* ─── Query monitor ───────────────────────────────────────────────────── */
+.page-stack{display:flex;flex-direction:column;gap:16px;min-height:100%}.queries-page{padding-bottom:4px}.query-shell{min-height:calc(100dvh - 122px)}
+.count-pill{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:22px;padding:0 7px;margin-left:6px;border-radius:999px;background:var(--primary-soft);color:var(--primary);font-size:10px;letter-spacing:0;font-weight:800}.table-subtitle{margin-top:3px;color:var(--text-muted);font-size:11px}.filter-check{display:inline-flex;align-items:center;gap:7px;color:var(--text-dim);font-size:11px;white-space:nowrap}.query-scroll{max-height:calc(100dvh - 210px)}.query-sql{max-width:560px;font-family:var(--mono);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.table-wrap:focus-within{border-color:var(--glass-brd-soft)}
+
 /* ─── Scrollbars ──────────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar{width:11px;height:11px}
@@ -660,9 +664,14 @@ pre{background:var(--surface2);padding:14px;border-radius:var(--r-md);overflow:a
 /* ─── Responsive ──────────────────────────────────────────────────────── */
 
 @media(max-width:900px){
-  .app{grid-template-columns:1fr;gap:0;padding:10px}
+  .app{grid-template-columns:1fr;gap:0;padding:10px;height:100dvh}
   .sidebar{display:none}
   .api-grid{grid-template-columns:1fr;height:auto}
+  .topbar{margin-bottom:2px}
+  .content{padding:2px 0 18px}
+  .query-shell{min-height:calc(100dvh - 98px)}
+  .query-scroll{max-height:none;overflow:auto}
+  .query-sql{max-width:420px}
 }
 
 /* ─── Events page ──────────────────────────────────────────────────────
@@ -766,6 +775,12 @@ pre{background:var(--surface2);padding:14px;border-radius:var(--r-md);overflow:a
   .snippets,.log-viewer,.db-tables,.db-data,.wf-node,.arch-node-icon,button{
     background:var(--surface);
     border-color:var(--border);
+  }
+}
+
+@media (prefers-reduced-transparency:reduce){
+  .sidebar,.topbar,.card,.chart-card,.table-wrap,.health-card,.arch-stat,.arch-canvas-wrap,.arch-card,.ev-card,.api-list,.api-form,.api-response,.snippets,.log-viewer,.db-tables,.db-data,.wf-node,.arch-node-icon,button{
+    backdrop-filter:none;-webkit-backdrop-filter:none;background:var(--surface);
   }
 }
 

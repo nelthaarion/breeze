@@ -2,6 +2,7 @@ package oauth2
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/nelthaarion/breeze/v2"
@@ -39,7 +40,13 @@ func fail(ctx *breeze.Context, cfg *Config, status int, err error) {
 		return
 	}
 	ctx.Status(status)
-	ctx.WriteString(err.Error())
+	// Never reflect provider/network/internal error strings into the browser.
+	// They can contain URLs, response bodies, token metadata, or implementation
+	// details. The internal error remains available to the caller's logging layer.
+	if err != nil {
+		_ = err
+	}
+	ctx.WriteString(http.StatusText(status))
 	ctx.Abort()
 }
 

@@ -42,7 +42,7 @@ func BenchmarkDispatch_NoObserver(b *testing.B) {
 	e := benchEvent{ID: 1, Name: "bench"}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = events.EmitBus(bus, e)
 	}
 }
@@ -59,7 +59,7 @@ func BenchmarkDispatch_Observer(b *testing.B) {
 	e := benchEvent{ID: 1, Name: "bench"}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = events.EmitBus(bus, e)
 	}
 }
@@ -75,7 +75,7 @@ func BenchmarkDispatch_ObserverNoMetrics(b *testing.B) {
 	e := benchEvent{ID: 1, Name: "bench"}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = events.EmitBus(bus, e)
 	}
 }
@@ -91,7 +91,7 @@ func BenchmarkDispatch_ObserverWithPayload(b *testing.B) {
 	e := benchEvent{ID: 1, Name: "bench"}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = events.EmitBus(bus, e)
 	}
 }
@@ -109,7 +109,7 @@ func BenchmarkDispatch_AfterDetach(b *testing.B) {
 	e := benchEvent{ID: 1, Name: "bench"}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = events.EmitBus(bus, e)
 	}
 }
@@ -130,7 +130,7 @@ func benchmarkListeners(b *testing.B, n int, observe bool) {
 	e := benchEvent{ID: 1, Name: "bench"}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = events.EmitBus(bus, e)
 	}
 }
@@ -160,7 +160,7 @@ func BenchmarkPublish(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		col.Publish(sig)
 	}
 }
@@ -183,7 +183,7 @@ func BenchmarkPublishWithSpans(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		col.Publish(sig)
 	}
 }
@@ -207,7 +207,7 @@ func BenchmarkPublishWithSubscriber(b *testing.B) {
 	sig := Signal{Source: SourceEvents, Kind: KindDispatch, Name: "bench.signal"}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		col.Publish(sig)
 	}
 	b.StopTimer()
@@ -226,7 +226,7 @@ func BenchmarkSnapshot(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = col.Snapshot()
 	}
 }
@@ -246,7 +246,7 @@ func BenchmarkFind(b *testing.B) {
 	q := Query{Name: "bench.a", Limit: 50, Newest: true}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = col.Find(q)
 	}
 }
@@ -265,7 +265,7 @@ func BenchmarkGraph(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = col.Graph()
 	}
 }
@@ -276,7 +276,7 @@ func BenchmarkDescribePayload(b *testing.B) {
 	e := Credentials{Username: "alice", Password: "hunter2", APIKey: "sk-x"}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = describePayload(e)
 	}
 }
@@ -286,7 +286,7 @@ func BenchmarkDescribePayload(b *testing.B) {
 func BenchmarkIsSensitive(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = IsSensitive("user_id")
 		_ = IsSensitive("password")
 	}

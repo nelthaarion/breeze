@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -68,15 +69,23 @@ func CompressionMiddleware() breeze.HandlerFunc {
 
 		original := len(ctx.Res.Body)
 
-		switch {
-		case strings.Contains(accept, "br"):
-			compressed, encoding = compressBrotli(ctx.Res.Body)
-		case strings.Contains(accept, "gzip"):
-			compressed, encoding = compressGzip(ctx.Res.Body)
-		case strings.Contains(accept, "deflate"):
-			compressed, encoding = compressDeflate(ctx.Res.Body)
-		default:
-			// No supported encoding — serve the raw response.
+		// Honor q-values. strings.Contains("gzip;q=0", "gzip") was a protocol bug:
+		// it compressed responses the client explicitly said it did not accept.
+		for _, candidate := range []string{"br", "gzip", "deflate"} {
+			if encodingQValue(accept, candidate) <= 0 {
+				continue
+			}
+			switch candidate {
+			case "br":
+				compressed, encoding = compressBrotli(ctx.Res.Body)
+			case "gzip":
+				compressed, encoding = compressGzip(ctx.Res.Body)
+			case "deflate":
+				compressed, encoding = compressDeflate(ctx.Res.Body)
+			}
+			break
+		}
+		if encoding == "" {
 			compressionCounter.Miss()
 			return nil
 		}
@@ -89,8 +98,15 @@ func CompressionMiddleware() breeze.HandlerFunc {
 
 		ctx.Res.Body = compressed
 		ctx.SetHeader("Content-Encoding", encoding)
-		// Vary header tells caches that the response differs by Accept-Encoding.
-		ctx.SetHeader("Vary", "Accept-Encoding")
+		// Preserve existing Vary members; replacing Vary can invalidate cache keys
+		// chosen by unrelated middleware (for example Vary: Origin).
+		vary := ctx.GetHeader("Vary")
+		if vary == "" {
+			vary = "Accept-Encoding"
+		} else if !headerListContains(vary, "Accept-Encoding") {
+			vary += ", Accept-Encoding"
+		}
+		ctx.SetHeader("Vary", vary)
 
 		// One gate read for the hit, the bytes and the saving together; see
 		// diag.Counter.HitBytes. The per-algorithm counter is incremented inside
@@ -110,6 +126,48 @@ func CompressionMiddleware() breeze.HandlerFunc {
 
 		return nil
 	}
+}
+
+func encodingQValue(header, encoding string) float64 {
+	best := -1.0
+	wildcard := -1.0
+	for _, raw := range strings.Split(header, ",") {
+		parts := strings.Split(raw, ";")
+		name := strings.ToLower(strings.TrimSpace(parts[0]))
+		q := 1.0
+		for _, param := range parts[1:] {
+			kv := strings.SplitN(strings.TrimSpace(param), "=", 2)
+			if len(kv) == 2 && strings.EqualFold(strings.TrimSpace(kv[0]), "q") {
+				if v, err := strconv.ParseFloat(strings.TrimSpace(kv[1]), 64); err == nil && v >= 0 && v <= 1 {
+					q = v
+				} else {
+					q = 0
+				}
+			}
+		}
+		switch name {
+		case encoding:
+			best = q
+		case "*":
+			wildcard = q
+		}
+	}
+	if best >= 0 {
+		return best
+	}
+	if wildcard >= 0 {
+		return wildcard
+	}
+	return 0
+}
+
+func headerListContains(value, wanted string) bool {
+	for _, part := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), wanted) {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── Pooled encoders ─────────────────────────────────────────────────────────

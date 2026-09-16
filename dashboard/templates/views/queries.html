@@ -1,18 +1,23 @@
 {{define "content"}}
-<div class="table-wrap">
-  <div class="table-head">
-    <h3>ORM Queries (<span id="q-count">0</span>)</h3>
-    <div class="filters">
-      <label style="font-size:11px"><input type="checkbox" id="slow-only"> Slow only</label>
-      <input id="q-search" placeholder="Search SQL...">
+<div class="page-stack queries-page">
+  <section class="table-wrap query-shell">
+    <div class="table-head">
+      <div>
+        <h3>Database Queries <span class="count-pill" id="q-count">0</span></h3>
+        <div class="table-subtitle">Live SQL activity captured by the Breeze event system</div>
+      </div>
+      <div class="filters" role="search">
+        <label class="filter-check"><input type="checkbox" id="slow-only"> <span>Slow only</span></label>
+        <input id="q-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search SQL…" aria-label="Search SQL">
+      </div>
     </div>
-  </div>
-  <div class="table-scroll" style="max-height:560px;overflow:auto">
-    <table>
-      <thead><tr><th>Time</th><th>SQL</th><th>Duration</th><th>Rows</th><th>Location</th><th>Status</th></tr></thead>
-      <tbody id="q-tbody"></tbody>
-    </table>
-  </div>
+    <div class="table-scroll query-scroll">
+      <table>
+        <thead><tr><th>Time</th><th>SQL</th><th>Duration</th><th>Rows</th><th>Location</th><th>Status</th></tr></thead>
+        <tbody id="q-tbody"></tbody>
+      </table>
+    </div>
+  </section>
 </div>
 <script data-spa-run="always">
 BreezeDash.initPage('queries');

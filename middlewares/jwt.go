@@ -43,9 +43,9 @@ func DefaultTokenLookup(ctx *breeze.Context) (string, string, error) {
 }
 
 // DefaultUnauthorizedHandler returns 401 Unauthorized.
-func DefaultUnauthorizedHandler(ctx *breeze.Context, err error) {
+func DefaultUnauthorizedHandler(ctx *breeze.Context, _ error) {
 	ctx.Status(401)
-	ctx.WriteString("Unauthorized: " + err.Error())
+	ctx.WriteString("Unauthorized")
 }
 
 // JWTAuthMiddleware returns a JWT authentication middleware.
@@ -139,10 +139,10 @@ func JWTAuthMiddleware(opts JWTOptions) breeze.HandlerFunc {
 			return nil
 		}
 
-		claims, valid := validateJWT(accessToken, opts.AccessSecret, opts.SigningMethod)
+		claims, valid := validateJWTType(accessToken, opts.AccessSecret, opts.SigningMethod, "access")
 		if !valid && opts.EnableRefreshToken && refreshToken != "" {
-			// Attempt refresh token.
-			refreshClaims, ok := validateJWT(refreshToken, opts.RefreshSecret, opts.SigningMethod)
+			// Attempt refresh token. A refresh token is never accepted as an access token.
+			refreshClaims, ok := validateJWTType(refreshToken, opts.RefreshSecret, opts.SigningMethod, "refresh")
 			if ok {
 				// Issue new access token.
 				newAccessToken, err := GenerateJWT(opts.AccessSecret, jwt.MapClaims{
@@ -200,6 +200,10 @@ func JWTAuthMiddleware(opts JWTOptions) breeze.HandlerFunc {
 
 // validateJWT parses and validates a token string.
 func validateJWT(tokenString, secret string, method jwt.SigningMethod) (jwt.MapClaims, bool) {
+	return validateJWTType(tokenString, secret, method, "access")
+}
+
+func validateJWTType(tokenString, secret string, method jwt.SigningMethod, expectedType string) (jwt.MapClaims, bool) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		if token.Method.Alg() != method.Alg() {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -213,6 +217,17 @@ func validateJWT(tokenString, secret string, method jwt.SigningMethod) (jwt.MapC
 	if !ok {
 		return nil, false
 	}
+	// Expiration is mandatory for a bearer token. MapClaims treats a missing exp
+	// as valid, which would create a token with no upper bound on replay.
+	if _, ok := claims["exp"]; !ok {
+		return nil, false
+	}
+	if typ, ok := claims["type"].(string); ok && typ != expectedType {
+		return nil, false
+	}
+	if expectedType == "refresh" && claims["type"] != "refresh" {
+		return nil, false
+	}
 	return claims, true
 }
 
@@ -221,11 +236,12 @@ func GenerateJWT(secret string, claims jwt.MapClaims, duration time.Duration, me
 	if method == nil {
 		method = jwt.SigningMethodHS256
 	}
-	if claims == nil {
-		claims = jwt.MapClaims{}
+	cloned := make(jwt.MapClaims, len(claims)+1)
+	for k, v := range claims {
+		cloned[k] = v
 	}
-	claims["exp"] = time.Now().Add(duration).Unix()
-	token := jwt.NewWithClaims(method, claims)
+	cloned["exp"] = time.Now().Add(duration).Unix()
+	token := jwt.NewWithClaims(method, cloned)
 	return token.SignedString([]byte(secret))
 }
 
@@ -234,11 +250,12 @@ func GenerateRefreshToken(secret string, claims jwt.MapClaims, duration time.Dur
 	if method == nil {
 		method = jwt.SigningMethodHS256
 	}
-	if claims == nil {
-		claims = jwt.MapClaims{}
+	cloned := make(jwt.MapClaims, len(claims)+2)
+	for k, v := range claims {
+		cloned[k] = v
 	}
-	claims["exp"] = time.Now().Add(duration).Unix()
-	claims["type"] = "refresh"
-	token := jwt.NewWithClaims(method, claims)
+	cloned["exp"] = time.Now().Add(duration).Unix()
+	cloned["type"] = "refresh"
+	token := jwt.NewWithClaims(method, cloned)
 	return token.SignedString([]byte(secret))
 }

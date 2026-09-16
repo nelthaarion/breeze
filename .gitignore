@@ -6,6 +6,7 @@
 /.idea/modules.xml
 /.idea/vcs.xml
 /.idea/.gitignore
+
 *.diff
 *.test
 *.bak
@@ -15,6 +16,7 @@
 *.out
 coverage.html
 /.claude/
+/.kilo/
 
 # Host-built binaries for cmd/fleet-example's runtime-only images. Produced by
 # cmd/fleet-example/build.ps1 and consumed by Dockerfile.prebuilt; they are

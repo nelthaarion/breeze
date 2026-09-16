@@ -79,7 +79,7 @@ func BenchmarkHandleSingle(b *testing.B) {
 	b.SetBytes(int64(len(req)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if out := s.Handle(req); len(out) == 0 {
 			b.Fatal("no response")
 		}
@@ -96,7 +96,7 @@ func BenchmarkHandleSingleNoParams(b *testing.B) {
 	b.SetBytes(int64(len(req)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if out := s.Handle(req); len(out) == 0 {
 			b.Fatal("no response")
 		}
@@ -113,7 +113,7 @@ func BenchmarkHandleRawResult(b *testing.B) {
 	b.SetBytes(int64(len(req)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if out := s.Handle(req); len(out) == 0 {
 			b.Fatal("no response")
 		}
@@ -130,7 +130,7 @@ func BenchmarkHandleNotification(b *testing.B) {
 	b.SetBytes(int64(len(req)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		s.Handle(req)
 	}
 }
@@ -146,7 +146,7 @@ func BenchmarkHandleMethodNotFound(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		s.Handle(req)
 	}
 }
@@ -177,7 +177,7 @@ func BenchmarkHandleParseError(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		s.Handle(req)
 	}
 }
@@ -216,7 +216,7 @@ func BenchmarkHandleBatch(b *testing.B) {
 			b.SetBytes(int64(len(req)))
 			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				if out := s.Handle(req); len(out) == 0 {
 					b.Fatal("no response")
 				}
@@ -245,7 +245,7 @@ func BenchmarkHandleBatchNotifications(b *testing.B) {
 	b.SetBytes(int64(len(req)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		s.Handle(req)
 	}
 }
@@ -267,7 +267,7 @@ func BenchmarkOnTrafficSingle(b *testing.B) {
 	b.SetBytes(int64(len(req)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		c.inbound = append(c.inbound, req...)
 		s.OnTraffic(c)
 	}
@@ -294,7 +294,7 @@ func BenchmarkOnTrafficPipelined(b *testing.B) {
 	b.SetBytes(int64(len(req)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		c.inbound = append(c.inbound, req...)
 		s.OnTraffic(c)
 	}
@@ -312,7 +312,7 @@ func BenchmarkOnTrafficBatch(b *testing.B) {
 			b.SetBytes(int64(len(req)))
 			b.ResetTimer()
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				c.inbound = append(c.inbound, req...)
 				s.OnTraffic(c)
 			}
@@ -335,7 +335,7 @@ func BenchmarkOnTrafficSplit(b *testing.B) {
 	b.SetBytes(int64(len(req)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		c.inbound = append(c.inbound, req[:half]...)
 		s.OnTraffic(c)
 		c.inbound = append(c.inbound, req[half:]...)
@@ -355,7 +355,7 @@ func BenchmarkNextValue(b *testing.B) {
 	b.SetBytes(int64(len(msg)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var st scanState
 		if _, _, res := nextValue(msg, &st); res != scanComplete {
 			b.Fatal("scan failed")
@@ -373,7 +373,7 @@ func BenchmarkRegistryLookup(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, ok := reg.lookup("method_50"); !ok {
 			b.Fatal("lookup failed")
 		}
@@ -393,7 +393,7 @@ func BenchmarkAppendResponse(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		buf = appendResponse(buf[:0], ctx)
 	}
 }
@@ -407,7 +407,7 @@ func BenchmarkAppendErrorResponse(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		buf = appendErrorResponse(buf[:0], e, json.RawMessage(`1`))
 	}
 }

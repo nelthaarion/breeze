@@ -69,6 +69,7 @@ type Server struct {
 	listenPort     atomic.Int64
 	listenHost     atomic.Pointer[string]
 	maxRequestBody atomic.Int64
+	blockingSlots  chan struct{}
 }
 
 // Pool is the subset of breeze.WorkerPool this package needs.
@@ -95,6 +96,7 @@ func NewServer(reg *Registry) *Server {
 		BuiltinEventEngine: &gnet.BuiltinEventEngine{},
 		reg:                reg,
 		maxMessageBytes:    defaultMaxMessageBytes,
+		blockingSlots:      make(chan struct{}, 128),
 	}
 	s.RefreshBlocking()
 	s.registerDiagnostics()
@@ -364,8 +366,16 @@ func (s *Server) handoff(c gnet.Conn, msg []byte) {
 
 	if s.pool != nil {
 		s.pool.Submit(exec)
-	} else {
-		go exec()
+		return
+	}
+	select {
+	case s.blockingSlots <- struct{}{}:
+		go func() {
+			defer func() { <-s.blockingSlots }()
+			exec()
+		}()
+	default:
+		_ = c.AsyncWrite(appendErrorResponse(nil, NewError(CodeInternalError, "server busy"), nullID), nil)
 	}
 }
 

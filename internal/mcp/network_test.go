@@ -899,3 +899,98 @@ func TestWrongPathIsAJSONRPCError(t *testing.T) {
 		t.Errorf("the 404 does not name the real endpoint: %s", got)
 	}
 }
+
+func modernPost(t *testing.T, srv *httptest.Server, token, method, name string, body map[string]any) *http.Response {
+	t.Helper()
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, srv.URL+DefaultEndpointPath, strings.NewReader(string(payload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set(protocolHeader, modernProtocol)
+	req.Header.Set(methodHeader, method)
+	if name != "" {
+		req.Header.Set(nameHeader, name)
+	}
+	req.Header.Set("Authorization", bearerPrefix+token)
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+func TestModernMCPIsStatelessAndValidatesRoutingHeaders(t *testing.T) {
+	_, srv, token := newTestNetwork(t)
+	resp := modernPost(t, srv, token, "tools/list", "", map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": map[string]any{},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("tools/list status=%d", resp.StatusCode)
+	}
+	var out struct {
+		Result struct {
+			Tools      []toolDescriptor `json:"tools"`
+			TTLMS      int64            `json:"ttlMs"`
+			CacheScope string           `json:"cacheScope"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Result.CacheScope != "private" {
+		t.Fatalf("cacheScope=%q", out.Result.CacheScope)
+	}
+	if out.Result.TTLMS != 0 {
+		t.Fatalf("ttlMs=%d", out.Result.TTLMS)
+	}
+
+	call := modernPost(t, srv, token, "tools/call", "breeze_list_examples", map[string]any{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "breeze_list_examples", "arguments": map[string]any{}},
+	})
+	if call.StatusCode != http.StatusOK {
+		t.Fatalf("modern tools/call status=%d", call.StatusCode)
+	}
+
+	bad := modernPost(t, srv, token, "tools/list", "wrong", map[string]any{
+		"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": map[string]any{},
+	})
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("mismatch status=%d", bad.StatusCode)
+	}
+	var errBody struct {
+		Error struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(bad.Body).Decode(&errBody); err != nil {
+		t.Fatal(err)
+	}
+	if errBody.Error.Code != codeHeaderMismatch {
+		t.Fatalf("error code=%d", errBody.Error.Code)
+	}
+}
+
+func TestModernMCPServerDiscover(t *testing.T) {
+	_, srv, token := newTestNetwork(t)
+	resp := modernPost(t, srv, token, "server/discover", "", map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": map[string]any{},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("discover status=%d", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	result := out["result"].(map[string]any)
+	if result["protocolVersion"] != modernProtocol {
+		t.Fatalf("protocolVersion=%v", result["protocolVersion"])
+	}
+}

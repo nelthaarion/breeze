@@ -500,7 +500,7 @@ func BenchmarkSignVerify(b *testing.B) {
 	v := signedValue(secret, "payload-data-here")
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, ok := unsignValue(secret, v); !ok {
 			b.Fatal("verify failed")
 		}
@@ -517,7 +517,7 @@ func BenchmarkReadSessionCookie(b *testing.B) {
 	read := newCtx("", cookies)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := readSession(read, &cfg); err != nil {
 			b.Fatal(err)
 		}

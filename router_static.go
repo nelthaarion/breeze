@@ -31,13 +31,32 @@ func (r *Router) ServeStatic(prefix, root string) {
 		if fp == "" || fp == "/" {
 			fp = "index.html"
 		}
-		// sanitize path to avoid directory traversal
-		fp = filepath.Clean("/" + fp)[1:] // make it relative and cleaned
-
-		full := filepath.Join(root, fp)
+		// Sanitize path and resolve the final target through symlinks before opening.
+		// filepath.Join alone prevents textual ../ traversal but still permits a
+		// symlink inside the static tree to point outside it.
+		fp = filepath.Clean("/" + fp)[1:]
+		rootResolved, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			staticCounter.Miss()
+			ctx.Status(404)
+			return ctx.WriteString("File not found")
+		}
+		full := filepath.Join(rootResolved, fp)
+		resolved, err := filepath.EvalSymlinks(full)
+		if err != nil {
+			staticCounter.Miss()
+			ctx.Status(404)
+			return ctx.WriteString("File not found")
+		}
+		rel, err := filepath.Rel(rootResolved, resolved)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			staticCounter.Miss()
+			ctx.Status(404)
+			return ctx.WriteString("File not found")
+		}
 
 		// open and serve file
-		f, err := os.Open(full)
+		f, err := os.Open(resolved)
 		if err != nil {
 			staticCounter.Miss()
 			ctx.Status(404)

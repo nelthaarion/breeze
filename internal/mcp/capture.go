@@ -161,6 +161,20 @@ func runInDir(dir string, fn func() error) error {
 		return fn()
 	}
 
+	self := goroutineID()
+	nested := false
+	if holder, ok := captureHolder.Load().(string); ok && holder == self && holder != "" {
+		nested = true
+	}
+	if !nested {
+		captureMu.Lock()
+		captureHolder.Store(self)
+		defer func() {
+			captureHolder.Store("")
+			captureMu.Unlock()
+		}()
+	}
+
 	prev, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("mcp: cannot determine the current directory: %w", err)

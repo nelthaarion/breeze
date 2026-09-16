@@ -29,8 +29,8 @@ func (c *bodyLimitConn) SetContext(v any)            { c.ctx = v }
 
 func TestMaxRequestBodyConfiguration(t *testing.T) {
 	app := New(NewRouter(), NewEventLoopWorkerPool(1))
-	if got := app.MaxRequestBody(); got != 0 {
-		t.Fatalf("default MaxRequestBody() = %d, want 0", got)
+	if got := app.MaxRequestBody(); got != 8<<20 {
+		t.Fatalf("default MaxRequestBody() = %d, want 8 MiB", got)
 	}
 
 	app.SetMaxRequestBody(1024)

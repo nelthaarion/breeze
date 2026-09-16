@@ -39,8 +39,8 @@ func BenchmarkStoreAddNewTraces(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp.TraceID = fmt.Sprintf("%032x", i+1)
+	for b.Loop() {
+		sp.TraceID = fmt.Sprintf("%032x", b.N+1)
 		s.Add(sp, now)
 	}
 }
@@ -56,8 +56,8 @@ func BenchmarkStoreAddExistingTrace(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp.SpanID = fmt.Sprintf("%016x", i+1)
+	for b.Loop() {
+		sp.SpanID = fmt.Sprintf("%016x", b.N+1)
 		s.Add(sp, now)
 	}
 }
@@ -97,8 +97,8 @@ func BenchmarkStoreAddWithTags(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp.TraceID = fmt.Sprintf("%032x", i+1)
+	for b.Loop() {
+		sp.TraceID = fmt.Sprintf("%032x", b.N+1)
 		s.Add(sp, now)
 	}
 }
@@ -123,8 +123,8 @@ func BenchmarkStoreAddAtCapacity(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp.TraceID = fmt.Sprintf("%032x", cap+i+1)
+	for b.Loop() {
+		sp.TraceID = fmt.Sprintf("%032x", cap+b.N+1)
 		s.Add(sp, now)
 	}
 }
@@ -145,8 +145,8 @@ func BenchmarkStoreAddToLongTrace(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp.SpanID = fmt.Sprintf("%016x", 512+i+1)
+	for b.Loop() {
+		sp.SpanID = fmt.Sprintf("%016x", 512+b.N+1)
 		s.Add(sp, now)
 	}
 }
@@ -180,7 +180,7 @@ func BenchmarkStoreTraceAssembly(b *testing.B) {
 			s, id := benchTrace(b, n)
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				if _, ok := s.Trace(id); !ok {
 					b.Fatal("trace missing")
 				}
@@ -204,7 +204,7 @@ func BenchmarkStoreRecent(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if got := s.Recent(TraceQuery{Limit: 100}); len(got) != 100 {
 			b.Fatalf("got %d summaries, want 100", len(got))
 		}
@@ -227,7 +227,7 @@ func BenchmarkStoreRecentByTag(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if got := s.Recent(TraceQuery{TagKey: "order_id", TagValue: "1500"}); len(got) != 1 {
 			b.Fatalf("tag query returned %d rows, want 1", len(got))
 		}
@@ -263,8 +263,8 @@ func BenchmarkStoreAddWhileReading(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp.TraceID = fmt.Sprintf("%032x", 500+i+1)
+	for b.Loop() {
+		sp.TraceID = fmt.Sprintf("%032x", 500+b.N+1)
 		s.Add(sp, now)
 	}
 	b.StopTimer()
@@ -281,7 +281,7 @@ func BenchmarkStoreSweep(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		s := NewMemStore(Config{MaxTraces: 2000, TraceTTL: time.Minute}.withDefaults())
 		sp := traceSpan("a1", "a", "", "gateway", 200)
@@ -323,7 +323,7 @@ func BenchmarkAssemble(b *testing.B) {
 
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_ = Assemble(tid("a1"), spans)
 			}
 		})
@@ -351,7 +351,7 @@ func BenchmarkAssembleDeepChain(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = Assemble(tid("a1"), spans)
 	}
 }

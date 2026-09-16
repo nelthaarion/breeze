@@ -10,6 +10,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/nelthaarion/gnet/v2"
 )
@@ -106,6 +107,13 @@ func wsHandshakeResponse(key string) []byte {
 //   - The mask-XOR inner loop uses 32-bit word operations (4 bytes at a time)
 //     to keep throughput high on large payloads.
 func parseWSFrame(buf []byte, maxPayload int) (frame *wsFrame, consumed int) {
+	return parseWSFrameWithMask(buf, maxPayload, false)
+}
+
+// parseWSFrameWithMask parses one RFC 6455 frame. requireMasked is true only
+// on the server receive path; the same decoder is also used by the client read
+// pump, where server-to-client frames must be unmasked.
+func parseWSFrameWithMask(buf []byte, maxPayload int, requireMasked bool) (frame *wsFrame, consumed int) {
 	if len(buf) < 2 {
 		return nil, 0
 	}
@@ -117,7 +125,14 @@ func parseWSFrame(buf []byte, maxPayload int) (frame *wsFrame, consumed int) {
 		return nil, -1
 	}
 	opcode := b0 & 0x0F
+	if opcode != wsOpContinuation && opcode != wsOpText && opcode != wsOpBinary &&
+		opcode != wsOpClose && opcode != wsOpPing && opcode != wsOpPong {
+		return nil, -1
+	}
 	masked := b1&0x80 != 0
+	if requireMasked && !masked {
+		return nil, -1
+	}
 	payLen := int(b1 & 0x7F)
 
 	// RFC 6455 §5.5: Control frames (opcode >= 0x8) MUST:
@@ -149,7 +164,7 @@ func parseWSFrame(buf []byte, maxPayload int) (frame *wsFrame, consumed int) {
 			return nil, 0
 		}
 		v := binary.BigEndian.Uint64(buf[offset:])
-		if v > uint64(maxPayload) {
+		if v&(uint64(1)<<63) != 0 || v > uint64(maxPayload) {
 			return nil, -1
 		}
 		payLen = int(v)
@@ -403,6 +418,18 @@ func (wc *WSConn) Close(code uint16, reason string) {
 	if wc.closed.Swap(true) {
 		return // already closed
 	}
+	if !validWSCloseCode(code) {
+		code = WsCloseProtocolError
+	}
+	if !utf8.ValidString(reason) {
+		reason = "protocol error"
+	}
+	if len(reason) > wsMaxControlPayload-2 {
+		reason = reason[:wsMaxControlPayload-2]
+		for !utf8.ValidString(reason) {
+			reason = reason[:len(reason)-1]
+		}
+	}
 	payload := make([]byte, 2+len(reason))
 	binary.BigEndian.PutUint16(payload, code)
 	copy(payload[2:], reason)
@@ -410,6 +437,18 @@ func (wc *WSConn) Close(code uint16, reason string) {
 	_ = wc.conn.Close()
 	if wc.clientState != nil {
 		wc.clientState.fireClose(code, reason)
+	}
+}
+
+func validWSCloseCode(code uint16) bool {
+	if code >= 3000 && code <= 4999 {
+		return true
+	}
+	switch code {
+	case 1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014:
+		return true
+	default:
+		return false
 	}
 }
 

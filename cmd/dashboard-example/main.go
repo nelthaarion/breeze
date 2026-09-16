@@ -252,6 +252,8 @@ func main() {
 	//   cfg.GOMEMLIMIT = 1024 * 1024 * 1024  // 1 GB limit
 	//   cfg.GOGC = 100                        // Go default (less aggressive GC)
 	cfg := dashboard.DefaultConfig()
+	cfg.Username = "admin"
+	cfg.Password = "admin"
 	cfg.AllowWrites = true // demonstrates the editable Database Browser; leave false in production unless intended
 
 	coll := dashboard.Install(app, router, cfg)

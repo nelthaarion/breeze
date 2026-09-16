@@ -27,7 +27,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -94,6 +96,22 @@ func (e *liveError) Error() string { return e.Message }
 // log, and rejecting it would be pedantry. A trailing slash is trimmed so that
 // joining never produces a double slash, which some routers treat as a different
 // path.
+var liveServiceAllowlist = loadLiveServiceAllowlist()
+
+// loadLiveServiceAllowlist reads an operator-controlled allowlist once. The safe
+// default is loopback only; remote MCP callers must not be able to turn a live
+// inspection tool into an arbitrary SSRF/credential-forwarding primitive.
+func loadLiveServiceAllowlist() map[string]bool {
+	out := map[string]bool{}
+	for _, raw := range strings.Split(os.Getenv("BREEZE_MCP_LIVE_ALLOWLIST"), ",") {
+		h := strings.ToLower(strings.TrimSpace(raw))
+		if h != "" {
+			out[h] = true
+		}
+	}
+	return out
+}
+
 func normaliseBaseURL(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -108,11 +126,19 @@ func normaliseBaseURL(raw string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%q is not a usable URL: %w", raw, err)
 	}
-	if parsed.Host == "" {
-		return "", fmt.Errorf("%q has no host, so there is nothing to connect to", raw)
+	if parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" {
+		return "", fmt.Errorf("%q is not a safe service base URL", raw)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "", fmt.Errorf("%q uses scheme %q; only http and https can be inspected", raw, parsed.Scheme)
+	}
+	host := strings.ToLower(parsed.Hostname())
+	hostAllowed := host == "localhost" || host == "127.0.0.1" || host == "::1"
+	if ip := net.ParseIP(host); ip != nil {
+		hostAllowed = ip.IsLoopback()
+	}
+	if !hostAllowed && !liveServiceAllowlist[strings.ToLower(parsed.Host)] && !liveServiceAllowlist[host] {
+		return "", fmt.Errorf("service URL %q is outside the loopback live-service allowlist; add its exact host to BREEZE_MCP_LIVE_ALLOWLIST to permit it", raw)
 	}
 
 	return strings.TrimSuffix(parsed.Scheme+"://"+parsed.Host+parsed.Path, "/"), nil

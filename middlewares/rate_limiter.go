@@ -38,29 +38,31 @@ const staleAfter = 10 * time.Minute
 // pruneInterval is how often prune() sweeps the clients map.
 const pruneInterval = time.Minute
 
+const maxRateLimiterClients = 100000
+
 // RateLimiter holds the per-client counters and the pre-formatted limit
 // message so the hot path never calls fmt.Sprintf.
 type RateLimiter struct {
-	options  RateLimiterOptions
-	clients  map[string]*clientData
-	mu       sync.Mutex
-	limitMsg string // FIX: pre-computed to avoid fmt.Sprintf on every 429
+	options   RateLimiterOptions
+	clients   map[string]*clientData
+	mu        sync.Mutex
+	limitMsg  string // pre-computed to avoid fmt.Sprintf on every 429
+	lastPrune time.Time
 }
 
-// prune periodically evicts clients that haven't made a request in a while,
-// so the map doesn't grow without bound over the life of the process.
-func (rl *RateLimiter) prune() {
-	ticker := time.NewTicker(pruneInterval)
-	defer ticker.Stop()
-	for range ticker.C {
-		cutoff := time.Now().Add(-staleAfter)
-		rl.mu.Lock()
-		for key, data := range rl.clients {
-			if data.lastRequest.Before(cutoff) {
-				delete(rl.clients, key)
-			}
+// pruneLocked evicts idle clients. It is called opportunistically from the
+// request path rather than via a permanent goroutine, so constructing a rate
+// limiter does not leak a process-lifetime goroutine.
+func (rl *RateLimiter) pruneLocked(now time.Time) {
+	if !rl.lastPrune.IsZero() && now.Sub(rl.lastPrune) < pruneInterval {
+		return
+	}
+	rl.lastPrune = now
+	cutoff := now.Add(-staleAfter)
+	for key, data := range rl.clients {
+		if data.lastRequest.Before(cutoff) {
+			delete(rl.clients, key)
 		}
-		rl.mu.Unlock()
 	}
 }
 
@@ -74,6 +76,12 @@ func (rl *RateLimiter) prune() {
 // FIX: The limit message is pre-computed at construction time so the 429
 // path does not call fmt.Sprintf on every rejected request.
 func NewRateLimiter(opts RateLimiterOptions) breeze.HandlerFunc {
+	if opts.Requests <= 0 {
+		opts.Requests = 1
+	}
+	if opts.Per <= 0 {
+		opts.Per = time.Second
+	}
 	rl := &RateLimiter{
 		options: opts,
 		clients: make(map[string]*clientData),
@@ -86,8 +94,6 @@ func NewRateLimiter(opts RateLimiterOptions) breeze.HandlerFunc {
 	} else {
 		rl.limitMsg = opts.Message
 	}
-
-	go rl.prune()
 
 	// Recorded for the probe: the limit and window it will report, and the
 	// instance whose client map it will size.
@@ -104,8 +110,18 @@ func NewRateLimiter(opts RateLimiterOptions) breeze.HandlerFunc {
 		// The lock is held for microseconds, never across ctx.Next().
 		rl.mu.Lock()
 		now := time.Now()
+		rl.pruneLocked(now)
 		data, exists := rl.clients[clientIP]
 		if !exists {
+			if len(rl.clients) >= maxRateLimiterClients {
+				rl.pruneLocked(now)
+				if len(rl.clients) >= maxRateLimiterClients {
+					rl.mu.Unlock()
+					ctx.Status(429)
+					rateLimitCounter.Miss()
+					return ctx.WriteString(rl.limitMsg)
+				}
+			}
 			data = &clientData{lastRequest: now, requests: 1}
 			rl.clients[clientIP] = data
 		} else {

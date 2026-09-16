@@ -151,12 +151,12 @@ func registerDashboard() {
 		Name:      "dashboard",
 		Summary:   "developer dashboard: requests, queries, timeline, metrics",
 		Priority:  80,
-		Imports:   []string{dashboardImport},
+		Imports:   []string{dashboardImport, osImport},
 		DependsOn: []string{"events"},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
 			basePath := fs.String("basepath", "/dashboard", "URL prefix the dashboard is served under")
-			user := fs.String("user", "admin", "basic-auth username")
-			pass := fs.String("pass", "admin", "basic-auth password")
+			user := fs.String("user", "", "basic-auth username (defaults to BREEZE_DASHBOARD_USERNAME)")
+			pass := fs.String("pass", "", "basic-auth password (defaults to BREEZE_DASHBOARD_PASSWORD)")
 			noAuth := fs.Bool("no-auth", false, "serve without basic auth (local development only)")
 			allowWrites := fs.Bool("allow-writes", false, "allow the dashboard's query console to run writes")
 
@@ -165,8 +165,16 @@ func registerDashboard() {
 				if *noAuth {
 					extra.WriteString("\tcfg.DisableAuth = true\n")
 				} else {
-					fmt.Fprintf(&extra, "\tcfg.Username = %q\n", *user)
-					fmt.Fprintf(&extra, "\tcfg.Password = %q\n", *pass)
+					if *user == "" {
+						extra.WriteString("\tcfg.Username = os.Getenv(\"BREEZE_DASHBOARD_USERNAME\")\n")
+					} else {
+						fmt.Fprintf(&extra, "\tcfg.Username = %q\n", *user)
+					}
+					if *pass == "" {
+						extra.WriteString("\tcfg.Password = os.Getenv(\"BREEZE_DASHBOARD_PASSWORD\")\n")
+					} else {
+						fmt.Fprintf(&extra, "\tcfg.Password = %q\n", *pass)
+					}
 				}
 				if *allowWrites {
 					extra.WriteString("\tcfg.AllowWrites = true\n")
@@ -201,8 +209,10 @@ func setupDashboard(app *breeze.Breeze, router *breeze.Router) {
 				switch {
 				case *noAuth:
 					notes = append(notes, "Auth is disabled â€” do not expose this build publicly.")
-				case *user == "admin" && *pass == "admin":
-					notes = append(notes, "Credentials are the admin/admin default. Change them before this reaches a shared environment.")
+				case *user != "" || *pass != "":
+					notes = append(notes, "Dashboard credentials were embedded by flags. Prefer BREEZE_DASHBOARD_USERNAME/BREEZE_DASHBOARD_PASSWORD for deployed builds so secrets are not committed to source.")
+				default:
+					notes = append(notes, "Set BREEZE_DASHBOARD_USERNAME and BREEZE_DASHBOARD_PASSWORD before starting the dashboard; missing credentials fail closed.")
 				}
 				if *allowWrites {
 					notes = append(notes, "The query console can execute writes against your database.")

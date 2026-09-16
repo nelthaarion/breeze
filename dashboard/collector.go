@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/events"
 	"github.com/nelthaarion/breeze/v2/observability"
 )
 
@@ -103,7 +104,9 @@ type Collector struct {
 	// AttachEvents; every read path tolerates that, so a dashboard
 	// without the event system wired up costs nothing. See events.go.
 	eventsMu sync.RWMutex
+	eventBus *events.Bus
 	eventCol *observability.Collector
+	querySub *events.Subscription[events.DatabaseQuery]
 
 	// wfLive tracks workflow executions that are still running. The
 	// event ring buffer only ever holds finished executions, so live

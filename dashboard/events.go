@@ -86,9 +86,44 @@ func (c *Collector) attachEvents(bus *events.Bus, payload bool) func() {
 	live := newWorkflowLive()
 	detachLive := live.attach(bus)
 
+	// Query events are handled as typed framework events. This keeps the
+	// query stream on the same event bus as every other subsystem while
+	// avoiding payload capture in the generic observability bridge.
+	events.Name[events.DatabaseQuery](bus, "database.query")
+	querySub := events.OnBus(bus, events.DatabaseQuery{}, func(_ *events.Context, ev events.DatabaseQuery) error {
+		if c.hub != nil {
+			q := queryEvent{
+				ID:         ev.ID,
+				Time:       time.Unix(0, ev.Time).UTC().Format(time.RFC3339Nano),
+				SQL:        ev.SQL,
+				DurationUS: ev.DurationUS,
+				Rows:       ev.Rows,
+				File:       ev.File,
+				Line:       ev.Line,
+				Slow:       ev.Slow,
+				Error:      ev.Error,
+			}
+			eventID, _ := strconv.ParseUint(ev.ID, 16, 64)
+			row := eventRow{
+				ID:         eventID,
+				Name:       "database.query",
+				Source:     "database",
+				Time:       q.Time,
+				DurationMS: float64(q.DurationUS) / 1000,
+				Failed:     q.Error != "",
+				Error:      q.Error,
+				Query:      &q,
+			}
+			pushEvent(c.hub, "event", row)
+		}
+		return nil
+	}).Named("dashboard.query-stream")
+
 	c.eventsMu.Lock()
+	c.eventBus = bus
 	c.eventCol = col
 	c.wfLive = live
+	c.querySub = querySub
 	c.eventsMu.Unlock()
 
 	// Bridge the collector's live stream onto the dashboard hub. The
@@ -99,13 +134,21 @@ func (c *Collector) attachEvents(bus *events.Bus, payload bool) func() {
 	return func() {
 		detachBus()
 		detachLive()
+		if querySub != nil {
+			querySub.Unsubscribe()
+		}
 		stopStream()
 		col.Close()
 
 		c.eventsMu.Lock()
+		if c.eventBus == bus {
+			c.eventBus = nil
+		}
+		if c.querySub == querySub {
+			c.querySub = nil
+		}
 		c.eventCol = nil
 		c.wfLive = nil
-
 		c.eventsMu.Unlock()
 	}
 }
@@ -129,6 +172,13 @@ func (c *Collector) forwardEventSignals(col *observability.Collector) func() {
 			case sig, ok := <-ch:
 				if !ok {
 					return
+				}
+				// Database queries have a typed listener that emits the
+				// compact query projection below. Suppress the generic
+				// observability copy so one database query does not appear
+				// twice in the Events stream.
+				if sig.Source == observability.SourceEvents && sig.Name == "database.query" {
+					continue
 				}
 				if c.hub != nil {
 					pushEvent(c.hub, "event", eventRowFrom(sig))
@@ -185,24 +235,41 @@ func (c *Collector) Observability() *observability.Collector {
 
 // ─── Wire format ──────────────────────────────────────────────────────────
 
+// queryEvent is the compact wire representation used when a database query
+// travels through the framework event stream. Query arguments are intentionally
+// omitted so secrets passed as bound parameters are never mirrored into the
+// WebSocket event payload.
+type queryEvent struct {
+	ID         string `json:"id"`
+	Time       string `json:"time"`
+	SQL        string `json:"sql"`
+	DurationUS int64  `json:"duration_us"`
+	Rows       int64  `json:"rows"`
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Slow       bool   `json:"slow"`
+	Error      string `json:"error,omitempty"`
+}
+
 // eventRow is one dispatch as the Events page consumes it.
 //
 // It is a flattened projection of observability.Signal rather than the
 // Signal itself: the dashboard sends this over WebSocket at up to 10
 // frames a second, so the payload is trimmed to what the table renders.
 type eventRow struct {
-	ID         uint64  `json:"id"`
-	Name       string  `json:"name"`
-	Source     string  `json:"source"`
-	Time       string  `json:"time"`
-	DurationMS float64 `json:"duration_ms"`
-	Listeners  int     `json:"listeners"`
-	Failed     bool    `json:"failed"`
-	Cancelled  bool    `json:"cancelled"`
-	Async      bool    `json:"async"`
-	Error      string  `json:"error,omitempty"`
-	RequestID  string  `json:"request_id,omitempty"`
-	Payload    string  `json:"payload,omitempty"`
+	ID         uint64      `json:"id"`
+	Name       string      `json:"name"`
+	Source     string      `json:"source"`
+	Time       string      `json:"time"`
+	DurationMS float64     `json:"duration_ms"`
+	Listeners  int         `json:"listeners"`
+	Failed     bool        `json:"failed"`
+	Cancelled  bool        `json:"cancelled"`
+	Async      bool        `json:"async"`
+	Error      string      `json:"error,omitempty"`
+	RequestID  string      `json:"request_id,omitempty"`
+	Payload    string      `json:"payload,omitempty"`
+	Query      *queryEvent `json:"query,omitempty"`
 
 	// ExecutionID and State are populated for sources that model a
 	// long-running execution rather than a single dispatch, such as

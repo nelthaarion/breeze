@@ -277,6 +277,10 @@ func (s *Breeze) Stop(ctx context.Context) error {
 
 // shutdown is the body of the first Stop call.
 func (s *Breeze) shutdown(ctx context.Context) error {
+	// Auto-MCP owns a separate net/http server; it is part of the Breeze lifecycle.
+	if mcp := s.mcpHTTP.Load(); mcp != nil {
+		_ = mcp.Shutdown(ctx)
+	}
 	// Before anything else, so no connection is accepted into a server that is
 	// on its way down.
 	s.stopping.Store(true)

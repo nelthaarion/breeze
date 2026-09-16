@@ -97,8 +97,8 @@ func (n *NetworkServer) serveMCP(w http.ResponseWriter, r *http.Request) {
 		writeRPCError(w, http.StatusUnsupportedMediaType, err.Error())
 		return
 	}
-	if err := checkProtocolVersion(r.Header.Get(protocolHeader)); err != nil {
-		// The specification is explicit that this case is 400.
+	version := strings.TrimSpace(r.Header.Get(protocolHeader))
+	if err := checkProtocolVersion(version); err != nil {
 		n.refuse(http.StatusBadRequest, ReasonBadProtocol, remote)
 		writeRPCError(w, http.StatusBadRequest, err.Error())
 		return
@@ -117,14 +117,28 @@ func (n *NetworkServer) serveMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The session rule depends on what the message is, so it is settled after the
-	// body is in hand but before dispatch: an initialize creates a session,
-	// everything else must present one.
-	newSession, herr := n.resolveSession(r, body)
-	if herr != nil {
-		n.refuse(herr.status, herr.reason, remote)
-		writeRPCError(w, herr.status, herr.message)
-		return
+	// Modern MCP (2026-07-28) is stateless. Legacy handshake-era versions keep
+	// their session semantics for backwards compatibility. Standard headers are
+	// validated against the JSON body before dispatch so a gateway cannot be
+	// authorized for one operation while the JSON body invokes another.
+	modern := version == modernProtocol
+	if modern {
+		if err := validateModernRequestHeaders(r.Header, body); err != nil {
+			n.refuse(http.StatusBadRequest, ReasonBadProtocol, remote)
+			writeRPCErrorCode(w, http.StatusBadRequest, codeHeaderMismatch, err.Error())
+			return
+		}
+	}
+
+	newSession := ""
+	if !modern {
+		var herr *httpError
+		newSession, herr = n.resolveSession(r, body)
+		if herr != nil {
+			n.refuse(herr.status, herr.reason, remote)
+			writeRPCError(w, herr.status, herr.message)
+			return
+		}
 	}
 
 	// One call, the same one rpc/stdio.go makes. Everything above is framing.

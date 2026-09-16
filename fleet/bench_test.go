@@ -98,7 +98,7 @@ func BenchmarkRecordSpanDisabled(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		t.RecordSpan(s)
 	}
 }
@@ -113,7 +113,7 @@ func BenchmarkRecordSpanNilTracer(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		t.RecordSpan(s)
 	}
 }
@@ -129,7 +129,7 @@ func BenchmarkMiddlewareDisabled(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = h
 	}
 }
@@ -146,7 +146,7 @@ func BenchmarkRecordSpanEnabled(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		t.RecordSpan(s)
 	}
 }
@@ -161,7 +161,7 @@ func BenchmarkRecordSpanEnabledWithTags(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		t.RecordSpan(s)
 	}
 }
@@ -193,7 +193,7 @@ func BenchmarkParseTraceparent(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		tc, ok := ParseTraceparent(header)
 		if !ok {
 			b.Fatal("well-formed header rejected — this is benchmarking the failure path")
@@ -210,7 +210,7 @@ func BenchmarkParseTraceparentMalformed(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, ok := ParseTraceparent(header); ok {
 			b.Fatal("malformed header accepted — this is benchmarking the wrong path")
 		}
@@ -225,7 +225,7 @@ func BenchmarkTraceparentString(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = tc.String()
 	}
 }
@@ -236,7 +236,7 @@ func BenchmarkTraceparentString(b *testing.B) {
 func BenchmarkNewTraceContext(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = NewTraceContext()
 	}
 }
@@ -246,7 +246,7 @@ func BenchmarkNewChildSpanID(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = tc.NewChildSpanID()
 	}
 }
@@ -258,7 +258,7 @@ func BenchmarkParseBaggage(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		bg, _ := ParseBaggage(header)
 		_ = bg
 	}
@@ -272,7 +272,7 @@ func BenchmarkBaggageString(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = bg.String()
 	}
 }
@@ -289,7 +289,7 @@ func BenchmarkBaggageStringOverLimit(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = bg.String()
 	}
 }
@@ -322,7 +322,7 @@ func BenchmarkSampleRoot(b *testing.B) {
 			s := newSampler(c.rate)
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				_ = s.sampleRoot(tc)
 			}
 		})
@@ -340,14 +340,14 @@ func BenchmarkSamplerDecide(b *testing.B) {
 	b.Run("Inherited", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = s.decide(tc, true)
 		}
 	})
 	b.Run("Root", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			_ = s.decide(tc, false)
 		}
 	})
@@ -372,7 +372,7 @@ func BenchmarkSampleRootContended(b *testing.B) {
 func BenchmarkExportFor(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = exportFor(false, 500, "")
 	}
 }
@@ -391,7 +391,7 @@ func BenchmarkSpanRingDrain(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for j := 0; j < batch; j++ {
 			r.push(s)
 		}
@@ -408,7 +408,7 @@ func BenchmarkSpanRingPush(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r.push(s)
 	}
 }
@@ -426,7 +426,7 @@ func BenchmarkSpanRingPushWhenFull(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		r.push(s)
 	}
 }

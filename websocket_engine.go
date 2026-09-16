@@ -1,10 +1,13 @@
 package breeze
 
 import (
+	"encoding/base64"
 	"fmt"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/nelthaarion/breeze/v2/diag"
 	"github.com/nelthaarion/gnet/v2"
@@ -289,6 +292,15 @@ func (s *Breeze) initWS() {
 // the shared WSHub, which is created on the first call and reused for all
 // subsequent WebSocket routes.
 func (s *Breeze) WebSocket(path string, handler WSHandler) *WSHub {
+	return s.WebSocketWithGuard(path, nil, handler)
+}
+
+// WebSocketWithGuard registers a WebSocket endpoint with an optional HTTP
+// handshake guard. The guard runs before the RFC 6455 upgrade while the
+// original HTTP request headers are still available, so authentication and
+// authorization can be enforced without exposing them through WSConn.
+// A false return sends HTTP 401 and does not upgrade the connection.
+func (s *Breeze) WebSocketWithGuard(path string, guard func(*Context) bool, handler WSHandler) *WSHub {
 	s.initWS()
 	s.wsHandlers[path] = handler
 	// upgradeHandler reads from s.wsHandlers at call time, so updating the
@@ -302,7 +314,7 @@ func (s *Breeze) WebSocket(path string, handler WSHandler) *WSHub {
 	// otherwise block. Running that inline would stall every connection pinned
 	// to that reactor for its duration. Upgrades happen once per connection, so
 	// the pool hop costs nothing measurable.
-	s.Router.HandleBlocking(GET, path, s.upgradeHandler(path, handler))
+	s.Router.HandleBlocking(GET, path, s.upgradeHandler(path, handler, guard))
 	return s.wsHub
 }
 
@@ -326,7 +338,7 @@ func (s *Breeze) Hub() *WSHub {
 // We deliberately do NOT check the Origin header here — that is application
 // policy. Register a CORS/Origin middleware before calling WebSocket() if
 // you need it.
-func (s *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
+func (s *Breeze) upgradeHandler(path string, handler WSHandler, guard func(*Context) bool) HandlerFunc {
 	return func(ctx *Context) error {
 		req := ctx.Req
 
@@ -342,20 +354,34 @@ func (s *Breeze) upgradeHandler(path string, handler WSHandler) HandlerFunc {
 			return ctx.WriteString("Service Unavailable: server shutting down")
 		}
 
-		upgrade := req.Header["upgrade"]
-		if upgrade != "websocket" {
+		if guard != nil && !guard(ctx) {
+			ctx.Status(401)
+			ctx.SetHeader("Connection", "close")
+			return ctx.WriteString("Unauthorized")
+		}
+
+		if req.Method != GET {
+			ctx.Status(405)
+			return ctx.WriteString("Method Not Allowed")
+		}
+		if !headerHasToken(req.Header["upgrade"], "websocket") {
 			ctx.Status(400)
 			return ctx.WriteString("Bad Request: expected Upgrade: websocket")
 		}
-		conn2 := req.Header["connection"]
-		if conn2 != "Upgrade" && conn2 != "keep-alive, Upgrade" {
+		if !headerHasToken(req.Header["connection"], "upgrade") {
 			ctx.Status(400)
 			return ctx.WriteString("Bad Request: expected Connection: Upgrade")
 		}
-		key := req.Header["sec-websocket-key"]
-		if key == "" {
+		if req.Header["sec-websocket-version"] != "13" {
+			ctx.Status(426)
+			ctx.SetHeader("Sec-WebSocket-Version", "13")
+			return ctx.WriteString("Upgrade Required")
+		}
+		key := strings.TrimSpace(req.Header["sec-websocket-key"])
+		decodedKey, err := base64.StdEncoding.DecodeString(key)
+		if err != nil || len(decodedKey) != 16 {
 			ctx.Status(400)
-			return ctx.WriteString("Bad Request: missing Sec-WebSocket-Key")
+			return ctx.WriteString("Bad Request: invalid Sec-WebSocket-Key")
 		}
 
 		wc := &WSConn{
@@ -434,7 +460,7 @@ func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 	buf := append(existing, raw...)
 
 	for len(buf) > 0 {
-		frame, consumed := parseWSFrame(buf, state.maxPayload)
+		frame, consumed := parseWSFrameWithMask(buf, state.maxPayload, true)
 		if consumed == -1 {
 			// Protocol error — send close and drop.
 			wc.Close(WsCloseProtocolError, "protocol error")
@@ -458,12 +484,20 @@ func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 			frame.release()
 
 		case wsOpClose:
-			// FIX: Use frame.payload BEFORE returning frame to the pool.
-			// The original code called frame.release() and then
-			// read frame.payload to build the echo — a use-after-free
-			// because parseWSFrame may have reused the pooled *wsFrame
-			// and overwritten its payload slice.
+			// Validate the close payload before echoing it. An invalid code/reason
+			// must never be reflected back as an invalid Close frame.
 			payload := frame.payload
+			validPayload := len(payload) == 0
+			if len(payload) >= 2 {
+				rawCode := uint16(payload[0])<<8 | uint16(payload[1])
+				validPayload = validWSCloseCode(rawCode) && (len(payload) == 2 || utf8.Valid(payload[2:]))
+			}
+			if len(payload) == 1 || !validPayload {
+				frame.release()
+				wc.Close(WsCloseProtocolError, "invalid close payload")
+				s.cleanupWS(fd, wc, state, WsCloseProtocolError, "invalid close payload")
+				return gnet.Close
+			}
 			code, reason := parseClosePayload(payload)
 			echo := buildWSFrame(wsOpClose, payload)
 			frame.release()
@@ -504,6 +538,11 @@ func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 // handleDataFrame processes a non-continuation data frame.
 // Starts or extends a fragmented message, or dispatches a complete unfragmented one.
 func (s *Breeze) handleDataFrame(wc *WSConn, state *wsConnState, frame *wsFrame) {
+	if wc.fragOp != 0 {
+		frame.release()
+		wc.Close(WsCloseProtocolError, "new data frame during fragmentation")
+		return
+	}
 	if frame.fin {
 		// Complete single-frame message — fast path, no fragBuf allocation.
 		payload := frame.payload
@@ -513,6 +552,11 @@ func (s *Breeze) handleDataFrame(wc *WSConn, state *wsConnState, frame *wsFrame)
 		return
 	}
 	// Begin fragmented message.
+	if len(frame.payload) > state.maxPayload {
+		frame.release()
+		wc.Close(WsCloseMessageTooBig, "message too large")
+		return
+	}
 	wc.fragOp = frame.opcode
 	wc.fragBuf = append(wc.fragBuf[:0], frame.payload...)
 	frame.release()
@@ -520,6 +564,16 @@ func (s *Breeze) handleDataFrame(wc *WSConn, state *wsConnState, frame *wsFrame)
 
 // handleContinuation appends a continuation frame to the in-progress message.
 func (s *Breeze) handleContinuation(wc *WSConn, state *wsConnState, frame *wsFrame) {
+	if wc.fragOp == 0 {
+		frame.release()
+		wc.Close(WsCloseProtocolError, "unexpected continuation")
+		return
+	}
+	if len(wc.fragBuf) > state.maxPayload-len(frame.payload) {
+		frame.release()
+		wc.Close(WsCloseMessageTooBig, "message too large")
+		return
+	}
 	wc.fragBuf = append(wc.fragBuf, frame.payload...)
 	if frame.fin {
 		payload := make([]byte, len(wc.fragBuf))
@@ -576,15 +630,32 @@ func (s *Breeze) cleanupWS(fd int, wc *WSConn, state *wsConnState, code uint16, 
 // parseClosePayload extracts the close code and reason from a Close frame payload.
 // Returns WsCloseNormalClosure (1000) if the payload is empty.
 func parseClosePayload(p []byte) (uint16, string) {
-	if len(p) < 2 {
+	if len(p) == 0 {
 		return WsCloseNormalClosure, ""
 	}
-	code := uint16(p[0])<<8 | uint16(p[1])
-	reason := ""
-	if len(p) > 2 {
-		reason = string(p[2:])
+	if len(p) == 1 || len(p) > wsMaxControlPayload {
+		return WsCloseProtocolError, "invalid close payload"
 	}
-	return code, reason
+	code := uint16(p[0])<<8 | uint16(p[1])
+	if !validWSCloseCode(code) {
+		return WsCloseProtocolError, "invalid close code"
+	}
+	if len(p) == 2 {
+		return code, ""
+	}
+	if !utf8.Valid(p[2:]) {
+		return WsCloseInvalidFramePayloadData, "invalid close reason"
+	}
+	return code, string(p[2:])
+}
+
+func headerHasToken(value, wanted string) bool {
+	for _, part := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), wanted) {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── WSHub fields injected into Breeze ───────────────────────────────────────

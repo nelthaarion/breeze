@@ -58,14 +58,14 @@ func TestAdd(t *testing.T) {
 }
 
 func BenchmarkAddIsAllocationFree(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop()  {
 		intSink = Add(i, 1)
 	}
 }
 
 func BenchmarkJoinAllocates(b *testing.B) {
 	left, right := "left", "right"
-	for i := 0; i < b.N; i++ {
+	for b.Loop()  {
 		stringSink = Join(left, right)
 	}
 }

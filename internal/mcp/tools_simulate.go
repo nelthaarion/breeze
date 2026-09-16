@@ -266,7 +266,13 @@ func simulateRequest(a simulateArgs) toolCallResult {
 	report.Body, report.BodyTruncated = truncateBody(resp.Body)
 	if isJSONContent(report.ContentType) || looksLikeJSON(string(resp.Body)) {
 		var decoded any
-		if json.Unmarshal(resp.Body, &decoded) == nil {
+		const maxSimulateJSONBody = 256 << 10
+		jsonBody := resp.Body
+		if len(jsonBody) > maxSimulateJSONBody {
+			report.Notes = append(report.Notes, "JSON response body exceeded the 256 KiB inspection limit; decoded JSON was omitted")
+			jsonBody = nil
+		}
+		if len(jsonBody) > 0 && json.Unmarshal(jsonBody, &decoded) == nil {
 			report.JSONBody = decoded
 		} else if isJSONContent(report.ContentType) {
 			report.Notes = append(report.Notes, "the response claims to be JSON but does not "+
@@ -380,17 +386,35 @@ func truncateBody(body []byte) (string, bool) {
 
 // flattenHeaders turns a header map into single values, lowercased.
 //
-// Multi-valued headers are joined rather than dropped, because Set-Cookie is
-// exactly the header a caller is checking for and exactly the one that repeats.
+// Multi-valued non-sensitive headers are joined rather than dropped. Security-
+// sensitive response headers such as Set-Cookie are omitted from the result.
 func flattenHeaders(header http.Header) map[string]string {
 	if len(header) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(header))
 	for key, values := range header {
-		out[strings.ToLower(key)] = strings.Join(values, ", ")
+		lower := strings.ToLower(key)
+		if simulateSensitiveResponseHeader(lower) {
+			continue
+		}
+		out[lower] = strings.Join(values, ", ")
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
+}
+
+func simulateSensitiveResponseHeader(name string) bool {
+	switch name {
+	case "authorization", "proxy-authorization", "cookie", "set-cookie",
+		"x-api-key", "x-fleet-token", "x-mcp-token", "x-forwarded-for",
+		"x-forwarded-host", "x-forwarded-proto", "x-real-ip":
+		return true
+	default:
+		return false
+	}
 }
 
 // sentHeaderNames lists the request header names, without values.

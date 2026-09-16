@@ -7,7 +7,7 @@
 #   docker compose -f cmd/fleet-example/docker-compose.yml up
 #   curl http://localhost:3000/api/orders/123
 #
-# Then open http://localhost:3000/dashboard (admin/admin) and pick Fleet View.
+# Then open http://localhost:3000/dashboard (set BREEZE_DASHBOARD_USERNAME/BREEZE_DASHBOARD_PASSWORD) and pick Fleet View.
 #
 # Request path:  client → gateway :3000 → auth :3001 → orders :3002
 # Reporting:     every service → aggregator :9000 (spans and heartbeats)
@@ -35,7 +35,7 @@ services:
       FLEET_PASSWORD: admin
       # Write credential for span/heartbeat ingestion, distinct from the
       # Basic Auth above that humans use to read (§11.1).
-      FLEET_INGEST_TOKEN: fleet-demo-token
+      FLEET_INGEST_TOKEN: ${FLEET_INGEST_TOKEN:?set FLEET_INGEST_TOKEN}
     ports: ["9000:9000"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9000/healthz"]
@@ -52,7 +52,7 @@ services:
         BREEZE_BINARY: orders
     environment: &fleet-env
       FLEET_WRITE_URL: http://aggregator:9000/fleet
-      FLEET_INGEST_TOKEN: fleet-demo-token
+      FLEET_INGEST_TOKEN: ${FLEET_INGEST_TOKEN:?set FLEET_INGEST_TOKEN}
       # Shared secret that lets the aggregator fetch this service's own logs
       # when stitching a trace's merged log panel (§9C.2).
       FLEET_SERVICE_TOKEN: fleet-demo-service-token

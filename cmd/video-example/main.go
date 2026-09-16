@@ -128,8 +128,8 @@ func main() {
 	// requests, so the Live Requests page shows the same film over and
 	// over while answering nothing about bandwidth.
 	coll := dashboard.Install(app, router, dashboard.Config{
-		Username: "admin",
-		Password: "admin",
+		Username: os.Getenv("BREEZE_DASHBOARD_USERNAME"),
+		Password: os.Getenv("BREEZE_DASHBOARD_PASSWORD"),
 	})
 
 	// The same bus video.Mount published on. Mount defaults to
@@ -137,7 +137,7 @@ func main() {
 	// attached here.
 	defer coll.AttachVideo(events.Default)()
 
-	fmt.Println("  dashboard: http://localhost:3000/dashboard/video (admin/admin)")
+	fmt.Println("  dashboard: http://localhost:3000/dashboard/video (set BREEZE_DASHBOARD_USERNAME and BREEZE_DASHBOARD_PASSWORD)")
 
 	app.Run(3000, true)
 }

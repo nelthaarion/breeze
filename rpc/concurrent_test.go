@@ -180,12 +180,24 @@ func TestConcurrentMethodsIntrospection(t *testing.T) {
 
 // TestConcurrentBlockingHandoff drives the worker path from several
 // connections, so the AsyncWrite branch is exercised concurrently.
+//
+// The pool is not decoration. With no pool the server runs a blocking method on a
+// goroutine it does not track (see handoff), and this test would return while
+// hundreds of those were still dispatching. That is what made
+// TestProbeIsDegradedWhenMostCallsNameAnUnknownMethod fail in CI: it measures a
+// process-wide counter, and the strays incremented it after that test opened the
+// counting gate, so the ratio it asserts saw hundreds of hits it never made.
+// trackedPool runs each submission concurrently, as a real pool does, and lets
+// this test wait for the work it started.
 func TestConcurrentBlockingHandoff(t *testing.T) {
 	reg := NewRegistry()
 	reg.RegisterBlocking("slow", func(ctx *Context) {
 		ctx.Result("ok")
 	})
 	s := NewServer(reg)
+
+	pool := &trackedPool{}
+	s.SetPool(pool)
 
 	var wg sync.WaitGroup
 	for n := 0; n < 8; n++ {
@@ -199,6 +211,21 @@ func TestConcurrentBlockingHandoff(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	// The feeds only submit; the handlers run on the pool's goroutines, and
+	// returning before they finish leaves them to run during a later test.
+	pool.wg.Wait()
+}
+
+// trackedPool runs each submission on its own goroutine, which is what a real
+// worker pool does, and tracks them so a test can wait for the work it started.
+type trackedPool struct{ wg sync.WaitGroup }
+
+func (p *trackedPool) Submit(fn func()) {
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		fn()
+	}()
 }
 
 // containsID reports whether the response carries "id":<id>.

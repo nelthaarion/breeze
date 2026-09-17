@@ -6,8 +6,8 @@ github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63Y
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
 github.com/nelthaarion/ants/v2 v2.12.1 h1:UGCNKPiKvumLKdCCPkpjCPdpNnuYkIITiGxu/+lEYTg=
 github.com/nelthaarion/ants/v2 v2.12.1/go.mod h1:f06pdC+hO9q3Qk86+NPaGy0Hq9b+VnYVOSF/bZkoPPM=
-github.com/nelthaarion/gnet/v2 v2.1.5 h1:FQ1iYnVMmllyxWfE7x4ovDKE5tQjI52YapHI4btKviw=
-github.com/nelthaarion/gnet/v2 v2.1.5/go.mod h1:VMw9YzJFfOJ/c5DQm0N74Tmc/YlPTZ4VNHwILswHme4=
+github.com/nelthaarion/gnet/v2 v2.2.0 h1:QCftGMoeJllguf/c8FtNoLKkPHYV0GDZb4OUs3DHy5k=
+github.com/nelthaarion/gnet/v2 v2.2.0/go.mod h1:VMw9YzJFfOJ/c5DQm0N74Tmc/YlPTZ4VNHwILswHme4=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/valyala/bytebufferpool v1.0.0 h1:GqA5TC/0021Y/b9FG4Oi9Mr3q7XYx6KllzawFIhcdPw=

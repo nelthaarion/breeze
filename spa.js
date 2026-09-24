@@ -799,6 +799,8 @@
    //   - data-spa="false" (explicit opt-out)
    //   - action is an external URL (different origin)
    //   - the form has a [download] attribute (unusual but guard it)
+   //   - a page handler already called preventDefault() (e.g. to submit
+   //     via fetch itself)
    //
    // GET forms:
    //   Serialise with URLSearchParams, navigate via SPA router.
@@ -818,6 +820,7 @@
       if (!form || form.tagName !== 'FORM') return;
 
       // ── Opt-out conditions ───────────────────────────────────────────────
+      if (e.defaultPrevented) return;
       if (form.getAttribute('data-spa') === 'false') return;
       if (form.getAttribute('target') === '_blank')  return;
       if ((form.getAttribute('enctype') || '').toLowerCase() === 'multipart/form-data') return;

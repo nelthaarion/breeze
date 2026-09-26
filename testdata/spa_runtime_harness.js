@@ -332,6 +332,48 @@ async function main() {
   eq('an unchanged identity leaves the cache alone',
     calls.filter((c) => c.url === '/acct').length, 1);
 
+  // 11. A form whose own submit handler already called preventDefault() is
+  // left alone. Otherwise a GET form (no method attribute) submitted via
+  // fetch by the page is also serialised into the URL, leaking fields such
+  // as a password into history, and a POST form is submitted twice.
+  sandbox.FormData = function () {
+    this.forEach = (fn) => { fn('hunter2', 'password'); };
+  };
+  function makeForm(attrs) {
+    const f = makeEl('');
+    f.tagName = 'FORM';
+    f.getAttribute = (k) => (Object.prototype.hasOwnProperty.call(attrs, k) ? attrs[k] : null);
+    return f;
+  }
+  function submitEvent(form, alreadyPrevented) {
+    const ev = { target: form, defaultPrevented: !!alreadyPrevented };
+    ev.preventDefault = () => { ev.defaultPrevented = true; };
+    return ev;
+  }
+
+  // Control: an unhandled GET form is intercepted, so the cases below are
+  // meaningful and not passing because interception never happens here.
+  applyUrl('/');
+  breeze.invalidateAll();
+  resetNet();
+  document.dispatch('submit', submitEvent(makeForm({ action: '/login' })));
+  await tick();
+  eq('unhandled GET form is SPA-navigated', location.search, '?password=hunter2');
+
+  [
+    ['GET', { action: '/login' }],
+    ['POST', { action: '/login', method: 'post' }],
+  ].forEach(([label, attrs]) => {
+    applyUrl('/');
+    resetNet();
+    document.dispatch('submit', submitEvent(makeForm(attrs), true));
+    eq(label + ' form prevented by the page issues no request', calls.length, 0);
+    eq(label + ' form prevented by the page leaves the URL alone', location.pathname + location.search, '/');
+  });
+  await tick();
+  eq('prevented forms issue no late requests', calls.length, 0);
+  sandbox.FormData = function FormData() {};
+
   // ── Report ────────────────────────────────────────────────────────────────
   if (failures.length) {
     console.log('FAIL');

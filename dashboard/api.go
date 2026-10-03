@@ -176,12 +176,22 @@ func (c *Collector) registerAuthRoutes(router *breeze.Router, base, dir string) 
 		if err := jsonUnmarshal(body, &req); err != nil {
 			return ctx.JSON(map[string]any{"ok": false, "error": "invalid request body"})
 		}
+		// The login endpoint is the primary brute-force target and was the one
+		// path with no throttle at all (only the Basic-auth fallback had one).
+		peer := dashboardPeer(ctx)
+		if !c.sessions.allowLogin(peer, time.Now()) {
+			ctx.Status(http.StatusTooManyRequests)
+			ctx.SetHeader("Retry-After", strconv.Itoa(int(loginBlockDuration.Seconds())))
+			return ctx.JSON(map[string]any{"ok": false, "error": "too many failed attempts"})
+		}
 		wantUser := []byte(c.cfg.Username)
 		wantPass := hashPass(c.cfg.Password)
 		if subtle.ConstantTimeCompare([]byte(req.Username), wantUser) != 1 ||
 			subtle.ConstantTimeCompare(hashPass(req.Password), wantPass) != 1 {
+			c.sessions.recordLoginFailure(peer, time.Now())
 			return ctx.JSON(map[string]any{"ok": false, "error": "invalid username or password"})
 		}
+		c.sessions.clearLoginFailures(peer)
 		token, err := c.sessions.create(req.Username)
 		if err != nil {
 			return jsonError(ctx, http.StatusInternalServerError, "could not create login session")

@@ -255,7 +255,11 @@ func (s *Breeze) EnableMCPWithToken(addr, token string) error {
 	if strings.Contains(listen, "://") && !strings.HasPrefix(listen, "tcp://") {
 		return fmt.Errorf("breeze: Auto-MCP supports HTTP over TCP only; address %q is not a TCP host:port", addr)
 	}
-	if token == "" {
+	// Decided here, from the argument, not later from the environment: the token
+	// handed in by the caller (from a secret store, say) must never be logged
+	// just because BREEZE_MCP_TOKEN happens to be unset.
+	generated := token == ""
+	if generated {
 		host, _, splitErr := net.SplitHostPort(strings.TrimPrefix(listen, "tcp://"))
 		if splitErr == nil && !isLoopbackMCPHost(host) {
 			return fmt.Errorf("breeze: an explicit BREEZE_MCP_TOKEN is required when Auto-MCP binds to non-loopback host %q", host)
@@ -285,8 +289,10 @@ func (s *Breeze) EnableMCPWithToken(addr, token string) error {
 			log.Printf("breeze: MCP endpoint on %s stopped: %v", record, err)
 		}
 	}()
-	if os.Getenv("BREEZE_MCP_TOKEN") == "" {
+	if generated {
 		log.Printf("breeze: Auto-MCP endpoint on http://%s/mcp; bearer token: %s", record, token)
+	} else {
+		log.Printf("breeze: Auto-MCP endpoint on http://%s/mcp", record)
 	}
 	return nil
 }
@@ -634,14 +640,32 @@ func (s *Breeze) callMCPTool(tool *mcpTool, arguments map[string]json.RawMessage
 		}
 		switch in {
 		case mcpInPath:
-			params[field] = scalarText(raw)
+			text, err := scalarArg(tool.name, field, raw)
+			if err != nil {
+				return mcpCallResult{}, err
+			}
+			params[field] = text
 		case mcpInQuery:
-			query.Set(field, scalarText(raw))
+			// An array of scalars is the natural way to send a repeated query
+			// parameter (?tag=a&tag=b); anything structured is refused. This used
+			// to collapse both to an empty string, so the parameter silently
+			// vanished and the route ran as if it had never been given.
+			values, err := queryArg(tool.name, field, raw)
+			if err != nil {
+				return mcpCallResult{}, err
+			}
+			for _, v := range values {
+				query.Add(field, v)
+			}
 		case mcpInHeader:
 			// Header keys are stored lowercased by the HTTP parser, and
 			// middleware reads them that way. Injecting the canonical form
 			// would produce a header no middleware could find.
-			headers[strings.ToLower(field)] = scalarText(raw)
+			text, err := scalarArg(tool.name, field, raw)
+			if err != nil {
+				return mcpCallResult{}, err
+			}
+			headers[strings.ToLower(field)] = text
 		case mcpInBody:
 			body[field] = raw
 		}
@@ -770,9 +794,12 @@ func mcpResultFrom(tool *mcpTool, path string, ctx *Context, chainErr error) mcp
 			out.Note = "response body was truncated at 2 MiB for MCP transport safety"
 		}
 		out.Body = string(body)
-		var parsed any
-		if json.Unmarshal(body, &parsed) == nil {
-			out.JSONBody = parsed
+		// Kept as the original bytes. Decoding into `any` made every integer a
+		// float64 — an ID above 2^53 came back rounded — and parsed the whole
+		// body only to serialise it again. A truncated body is not valid JSON, so
+		// it is (correctly) left out.
+		if json.Valid(body) {
+			out.JSONBody = json.RawMessage(body)
 		}
 	}
 
@@ -810,6 +837,10 @@ func mcpStatusNote(status int) string {
 }
 
 func mcpRender(out mcpResponse) string {
+	// The text block already carries the body verbatim; repeating it parsed as
+	// json_body made every response roughly a third larger for no new
+	// information. structuredContent keeps both.
+	out.JSONBody = nil
 	b, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return fmt.Sprintf("%s %s -> %d", out.Method, out.Path, out.Status)
@@ -849,6 +880,51 @@ func fillPattern(rt *route, params map[string]string) (string, error) {
 // A JSON string becomes its contents, so "abc" does not travel as "\"abc\"".
 // Everything else keeps its JSON spelling, which is what a number, a boolean
 // and null all look like in a query string anyway.
+// scalarArg is scalarText for a place that can only hold one scalar value (a path
+// segment or a header). A structured value there is a caller mistake worth
+// reporting, not something to turn into an empty string.
+func scalarArg(tool, field string, raw json.RawMessage) (string, error) {
+	switch firstJSONByte(raw) {
+	case '[', '{':
+		return "", fmt.Errorf("tool %q argument %q must be a single string, number or boolean, not an array or object", tool, field)
+	}
+	return scalarText(raw), nil
+}
+
+// queryArg is like scalarArg but accepts an array of scalars as repeated values.
+func queryArg(tool, field string, raw json.RawMessage) ([]string, error) {
+	switch firstJSONByte(raw) {
+	case '{':
+		return nil, fmt.Errorf("tool %q argument %q is a query parameter and cannot be an object", tool, field)
+	case '[':
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return nil, fmt.Errorf("tool %q argument %q is not a valid array: %w", tool, field, err)
+		}
+		out := make([]string, 0, len(items))
+		for _, it := range items {
+			switch firstJSONByte(it) {
+			case '[', '{':
+				return nil, fmt.Errorf("tool %q argument %q may only contain strings, numbers or booleans", tool, field)
+			}
+			out = append(out, scalarText(it))
+		}
+		return out, nil
+	}
+	return []string{scalarText(raw)}, nil
+}
+
+func firstJSONByte(raw json.RawMessage) byte {
+	for _, c := range raw {
+		switch c {
+		case ' ', '\t', '\r', '\n':
+			continue
+		}
+		return c
+	}
+	return 0
+}
+
 func scalarText(raw json.RawMessage) string {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" {

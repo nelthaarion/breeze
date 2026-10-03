@@ -1,10 +1,11 @@
 package dashboard
 
 import (
-	"crypto/pbkdf2"
+	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha512"
+	"crypto/sha256"
 	"crypto/subtle"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -24,8 +25,8 @@ import (
 // When DisableAuth is true, authentication is explicitly disabled. Missing
 // credentials never open the dashboard; they fail closed with HTTP 503.
 //
-// Security: password comparison uses PBKDF2-HMAC-SHA-512 plus
-// subtle.ConstantTimeCompare to avoid storing/comparing the configured password directly.
+// Security: password comparison uses a per-process keyed HMAC-SHA-256 plus
+// subtle.ConstantTimeCompare, so the comparison runs over fixed-size digests.
 func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 	if cfg.DisableAuth {
 		return func(ctx *breeze.Context) error { return ctx.Next() }
@@ -154,11 +155,36 @@ func requestIsSecure(ctx *breeze.Context) bool {
 	return false
 }
 
+// dashboardPeer identifies the client for login throttling. It is the IP only:
+// RemoteAddr() is "ip:port", and the source port changes with every new TCP
+// connection, so keying on the full string gave an attacker a fresh, unthrottled
+// bucket per connection — the lockout never engaged.
 func dashboardPeer(ctx *breeze.Context) string {
 	if ctx.Conn == nil {
 		return "unknown"
 	}
-	return ctx.Conn.RemoteAddr().String()
+	addr := ctx.Conn.RemoteAddr()
+	if addr == nil {
+		return "unknown"
+	}
+	return peerKey(addr.String())
+}
+
+// peerKey reduces "ip:port" (or "[v6]:port") to a throttle key. IPv6 clients are
+// collapsed to their /64, because a single subscriber routinely controls the
+// whole /64 and would otherwise rotate through 2^64 source addresses.
+func peerKey(remote string) string {
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		host = remote
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			return ip4.String()
+		}
+		return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+	}
+	return host
 }
 
 // extractCookieValue parses a Cookie header and returns the value of the
@@ -193,15 +219,20 @@ var dashboardAuthSalt = func() []byte {
 	return s
 }()
 
-const dashboardAuthIterations = 210000
-
-// hashPass returns a PBKDF2 derivation of the password. We compare hashes
-// rather than plaintext so the constant-time comparison always runs on a
-// fixed-size buffer. Authentication is deliberately the slow path; protecting
-// a dashboard credential matters more than shaving microseconds from login.
+// hashPass returns a keyed digest of the password for constant-time comparison.
+//
+// This used to be 210 000 rounds of PBKDF2, which is the right tool for *storing*
+// a password someone may steal. Here the configured password already sits in
+// memory in the clear, so the work factor protected nothing — while costing tens
+// of milliseconds of CPU for every Basic-auth attempt, on the event loop, before
+// any throttle could apply. That is a cheap amplification primitive for an
+// unauthenticated attacker. A process-keyed HMAC gives the same fixed-size,
+// timing-independent comparison at microsecond cost; brute-force resistance is
+// the job of the login throttle, not of slowing every legitimate request.
 func hashPass(p string) []byte {
-	key, _ := pbkdf2.Key(sha512.New, p, dashboardAuthSalt, dashboardAuthIterations, 32)
-	return key
+	m := hmac.New(sha256.New, dashboardAuthSalt)
+	m.Write([]byte(p))
+	return m.Sum(nil)
 }
 
 // decodeBasic decodes a base64-encoded "user:pass" Basic auth payload.

@@ -2,6 +2,7 @@ package aggregator
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/nelthaarion/breeze/v2/fleet"
@@ -25,11 +26,19 @@ type contractEngine struct {
 	schemas    chan schemaJob
 	stop       chan struct{}
 	done       chan struct{}
-	hub        func(contracts.Group)
+	hub        atomic.Pointer[func(contracts.Group)]
 }
 
+// setHub installs the broadcast callback. The engine's goroutine is already
+// running (and ingestion already open) by the time the WebSocket hub exists, so
+// a plain field assignment was a data race with the read in run.
+func (e *contractEngine) setHub(f func(contracts.Group)) { e.hub.Store(&f) }
+
 func newContractEngine(cfg Config) *contractEngine {
-	e := &contractEngine{registry: contracts.NewSchemaRegistry(nil), violations: contracts.NewViolationStore(cfg.MaxViolations, cfg.ViolationDedupeWindow), validate: make(chan contractJob, contractQueueSize), schemas: make(chan schemaJob, 128), stop: make(chan struct{}), done: make(chan struct{})}
+	reg := contracts.NewSchemaRegistry(nil)
+	allowed := cfg.FetchAllowedHosts
+	reg.SetURLGuard(func(u string) error { return checkFetchURL(u, allowed) })
+	e := &contractEngine{registry: reg, violations: contracts.NewViolationStore(cfg.MaxViolations, cfg.ViolationDedupeWindow), validate: make(chan contractJob, contractQueueSize), schemas: make(chan schemaJob, 128), stop: make(chan struct{}), done: make(chan struct{})}
 	go e.run(cfg)
 	return e
 }
@@ -71,8 +80,8 @@ func (e *contractEngine) run(cfg Config) {
 			}
 			for _, v := range contracts.Validate(job.span, job.caller, op, time.Now().UnixNano()) {
 				g := e.violations.Add(v)
-				if e.hub != nil {
-					e.hub(g)
+				if h := e.hub.Load(); h != nil {
+					(*h)(g)
 				}
 			}
 		}

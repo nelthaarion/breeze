@@ -41,7 +41,8 @@ func InstallAggregator(app *breeze.Breeze, router *breeze.Router, cfg Config) *A
 	if app != nil && (a.cfg.transportEnabled("ws") || a.cfg.transportEnabled("events")) {
 		a.hub = newWSHub(a)
 		if a.contracts != nil {
-			a.contracts.hub = func(group contracts.Group) { a.hub.broadcast("contract_violation", group) }
+			hub := a.hub
+			a.contracts.setHub(func(group contracts.Group) { hub.broadcast("contract_violation", group) })
 		}
 		app.WebSocket(strings.TrimSuffix(a.cfg.BasePath, "/")+"/ws", a.hub)
 	}

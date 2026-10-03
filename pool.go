@@ -193,6 +193,7 @@ func releaseRequest(req *HTTPRequest) {
 	req.Query = nil
 	req.Body = nil
 	req.owned = nil
+	req.connMode = connModeKeepAlive
 	requestPool.Put(req)
 }
 

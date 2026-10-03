@@ -35,11 +35,18 @@ func DefaultTokenLookup(ctx *breeze.Context) (string, string, error) {
 	if authHeader == "" {
 		return "", "", fmt.Errorf("authorization header missing")
 	}
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+	// "Bearer <token>" with exactly one space. Parsed in place: strings.Split
+	// allocated a slice on every authenticated request just to count two fields.
+	const scheme = "Bearer"
+	if len(authHeader) <= len(scheme)+1 || authHeader[len(scheme)] != ' ' ||
+		!strings.EqualFold(authHeader[:len(scheme)], scheme) {
 		return "", "", fmt.Errorf("invalid authorization header format")
 	}
-	return parts[1], "", nil
+	token := authHeader[len(scheme)+1:]
+	if strings.IndexByte(token, ' ') >= 0 {
+		return "", "", fmt.Errorf("invalid authorization header format")
+	}
+	return token, "", nil
 }
 
 // DefaultUnauthorizedHandler returns 401 Unauthorized.
@@ -117,7 +124,10 @@ func JWTAuthMiddleware(opts JWTOptions) breeze.HandlerFunc {
 	if opts.TokenLookup == nil {
 		opts.TokenLookup = func(ctx *breeze.Context) (string, string, error) {
 			tk, _, err := DefaultTokenLookup(ctx)
-			return tk, "", err
+			// The refresh token travels in X-Refresh-Token. It used to be
+			// discarded here, so EnableRefreshToken did nothing at all unless the
+			// caller wrote their own TokenLookup.
+			return tk, ctx.Req.Header["x-refresh-token"], err
 		}
 	}
 	if opts.OnUnauthorized == nil {

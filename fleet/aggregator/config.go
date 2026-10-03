@@ -61,6 +61,14 @@ type Config struct {
 	// this feature moves, so the default is to not move them.
 	ServiceToken string
 
+	// FetchAllowedHosts, when non-empty, restricts every URL the aggregator
+	// dereferences on a service's behalf (its OpenAPI document and its dashboard
+	// log endpoint) to these hosts, given as "host" or "host:port". Heartbeats
+	// are unauthenticated unless IngestToken is set, and those URLs come from
+	// them. Without IngestToken *and* without this list, log fan-out stays off:
+	// it would send ServiceToken to an address anyone could choose.
+	FetchAllowedHosts []string
+
 	// TransportsEnabled lists ingestion transports the process exposes. HTTP
 	// is always available as the polyglot correctness baseline; events is the
 	// framework default. Unknown names are ignored by the base package so an

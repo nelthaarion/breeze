@@ -1,12 +1,16 @@
 package breeze
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
 	"runtime/debug"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/nelthaarion/gnet/v2"
 )
@@ -24,6 +28,12 @@ type Breeze struct {
 	// listenHost is the host passed to RunOn. An empty value preserves the
 	// historical all-interface listener.
 	listenHost atomic.Pointer[string]
+
+	// conns is the set of open connections the timeout sweeper walks; idleTimeout
+	// and headerTimeout are its limits in nanoseconds (0 = off). See conn_state.go.
+	conns         sync.Map
+	idleTimeout   atomic.Int64
+	headerTimeout atomic.Int64
 
 	// maxRequestBody is the HTTP request-body limit. A safe default prevents a
 	// public endpoint from buffering arbitrarily large bodies. Zero remains an
@@ -74,6 +84,7 @@ const compactThreshold = 512
 // these shared slices is safe: gnet never retains or mutates them.
 var (
 	resp400 = []byte("HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nBad Request")
+	resp503 = []byte("HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 19\r\n\r\nService Unavailable")
 	resp413 = []byte("HTTP/1.1 413 Request Entity Too Large\r\nContent-Length: 24\r\n\r\nRequest Entity Too Large")
 	resp404 = []byte("HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found")
 	resp500 = []byte("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 21\r\n\r\nInternal Server Error")
@@ -99,6 +110,8 @@ func New(router *Router, pool *WorkerPool) *Breeze {
 		inlineExec:         true,
 	}
 	s.maxRequestBody.Store(defaultMaxRequestBody)
+	s.idleTimeout.Store(int64(DefaultIdleTimeout))
+	s.headerTimeout.Store(int64(DefaultReadHeaderTimeout))
 	// Publish the router, pool, Auto-MCP and WebSocket probes. Four registry
 	// appends, once, at construction; see diag.go.
 	s.registerCoreDiagnostics()
@@ -224,18 +237,33 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 
 	// ── HTTP path ────────────────────────────────────────────────────────
 	data, _ := c.Next(-1)
-	if len(data) == 0 {
-		return gnet.None
-	}
 
 	// The leftover buffer between events lives in gnet's per-connection
 	// context (c.Context/SetContext) rather than a global sync.Map. A gnet
 	// connection is pinned to exactly one event-loop goroutine, so this
 	// storage is accessed single-threaded — no locks, no map hashing, and no
 	// sync.Map amortised-atomic overhead on the hot path.
-	var existing []byte
-	if v := c.Context(); v != nil {
-		existing = v.([]byte)
+	st := connStateOf(c)
+	if len(data) > 0 {
+		st.lastRead.Store(coarseNow())
+	}
+
+	// A request handed to the worker pool has not been answered yet. Parsing
+	// the next pipelined request now would let an inline one overtake it on the
+	// wire, so hold everything until the worker's write completes; its callback
+	// wakes this connection and the held bytes are processed in order.
+	if st.busy.Load() {
+		if len(data) > 0 {
+			if len(st.buf)+len(data) > s.heldBytesLimit() {
+				return gnet.Close // pipelining far past anything legitimate
+			}
+			st.buf = append(st.buf, data...)
+		}
+		return gnet.None
+	}
+	existing := st.buf
+	if len(data) == 0 && len(existing) == 0 {
+		return gnet.None
 	}
 
 	// data is a view into gnet's internal inbound buffer, which gnet may
@@ -281,6 +309,7 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 	zeroCopy := s.zeroCopyHeaders && (s.inlineExec || goOwned)
 
 	closeConn := false
+	progressed := false
 	for len(buf) > 0 {
 		req, consumed, err := parsePooledRequest(buf, !zeroCopy, s.MaxRequestBody())
 		if err != nil {
@@ -289,6 +318,10 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 				closeConn = true
 			} else {
 				_, _ = c.Write(resp400)
+				// The stream is desynchronised: whatever follows a malformed
+				// request cannot be trusted to start on a request boundary, and
+				// behind a proxy that is how smuggling works. Close, as 413 does.
+				closeConn = true
 			}
 			buf = nil
 			break
@@ -296,6 +329,8 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 		if req == nil {
 			break // incomplete — wait for more data
 		}
+		progressed = true
+		mode := req.connMode
 
 		chain, params, blocking := s.Router.findDispatch(req)
 
@@ -304,7 +339,7 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 			if params != nil {
 				releaseParams(params)
 			}
-			_, _ = c.Write(resp404)
+			_, _ = c.Write(withConnectionHeader(resp404, mode))
 		} else {
 			// ── Promotion ────────────────────────────────────────────────
 			// A zero-copy request's strings are views into gnet's read
@@ -330,6 +365,7 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 					// Unreachable: the same bytes parsed once already.
 					releaseRequest(req)
 					_, _ = c.Write(resp400)
+					closeConn = true
 					buf = nil
 					break
 				}
@@ -363,10 +399,23 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 			if s.inlineExec && !blocking {
 				// Run on this event-loop goroutine and answer with a direct
 				// write. No channel, no handoff, no poller wakeup.
-				s.runInline(c, ctx)
+				s.runInline(c, ctx, mode)
 			} else {
-				s.dispatch(c, ctx)
+				st.busy.Store(true)
+				s.dispatch(c, ctx, st, mode)
 			}
+		}
+
+		// The client asked for the connection to end after this response. Stop
+		// reading — anything pipelined behind it is not going to be answered.
+		// An inline response is already written, so close now; a dispatched one
+		// closes from its own write callback, after the bytes are out.
+		if mode == connModeClose {
+			buf = nil
+			if !st.busy.Load() {
+				closeConn = true
+			}
+			break
 		}
 
 		if consumed >= len(buf) {
@@ -374,13 +423,20 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 			break
 		}
 		buf = buf[consumed:]
+
+		// A request just went to a worker: leave the rest for when it is
+		// answered, so responses stay in request order.
+		if st.busy.Load() {
+			break
+		}
 	}
 
 	// Store leftover bytes (a partial next request) in the connection's own
 	// gnet context. Clearing it to nil when empty lets the GC reclaim the
 	// backing array and keeps the fast-path Load above allocation-free.
 	if len(buf) == 0 {
-		c.SetContext(nil)
+		st.buf = nil
+		st.partialSince.Store(0)
 		if closeConn {
 			return gnet.Close
 		}
@@ -398,9 +454,33 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 		copy(compact, buf)
 		buf = compact
 	}
-	c.SetContext(buf)
+	st.buf = buf
+
+	// Timeout bookkeeping, only on the (rare) leftover path. Bytes held back
+	// behind a running request are not an unfinished request, so they do not
+	// start the header clock.
+	if st.busy.Load() {
+		st.partialSince.Store(0)
+	} else {
+		if progressed || st.partialSince.Load() == 0 {
+			st.partialSince.Store(coarseNow())
+		}
+		st.partialHdr.Store(bytes.Index(buf, headerEnd) < 0)
+	}
 
 	return gnet.None
+}
+
+var headerEnd = []byte("\r\n\r\n")
+
+// heldBytesLimit bounds how much a connection may queue behind a running
+// request: the largest legitimate next request, with a floor for unlimited-body
+// configurations so the buffer still has a ceiling.
+func (s *Breeze) heldBytesLimit() int {
+	if b := s.MaxRequestBody(); b > 0 {
+		return int(b) + maxRequestHeaderBytes
+	}
+	return 64 << 20
 }
 
 // runInline executes ctx's chain on the calling event-loop goroutine and
@@ -411,7 +491,7 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 // written it or having copied the remainder into the connection's outbound
 // buffer. AsyncWrite makes no such promise, so the pooled path below uses
 // freshly allocated bytes instead.
-func (s *Breeze) runInline(c gnet.Conn, ctx *Context) {
+func (s *Breeze) runInline(c gnet.Conn, ctx *Context, mode uint8) {
 	// Registered first so it runs last — after the recover below has had its
 	// chance to write a response from ctx.Res.
 	defer releaseContext(ctx)
@@ -432,6 +512,9 @@ func (s *Breeze) runInline(c gnet.Conn, ctx *Context) {
 	if ctx.Res != nil {
 		bp := acquireWireBuf()
 		*bp = ctx.Res.AppendTo(*bp)
+		if mode != connModeKeepAlive {
+			*bp = withConnectionHeader(*bp, mode)
+		}
 		_, _ = c.Write(*bp)
 		releaseWireBuf(bp)
 	}
@@ -440,7 +523,7 @@ func (s *Breeze) runInline(c gnet.Conn, ctx *Context) {
 // dispatch hands ctx's chain to the worker pool (or a bare goroutine when no
 // pool is configured) and answers with AsyncWrite, which is the only safe way
 // to write to a connection from off its event loop.
-func (s *Breeze) dispatch(c gnet.Conn, ctx *Context) {
+func (s *Breeze) dispatch(c gnet.Conn, ctx *Context, st *connState, mode uint8) {
 	// Counted here, on the event-loop goroutine, rather than inside exec: a
 	// task that has been submitted but not yet picked up by a worker is still
 	// a request the server accepted and owes an answer, and a Stop that ran
@@ -456,12 +539,46 @@ func (s *Breeze) dispatch(c gnet.Conn, ctx *Context) {
 		// recover defer). This ensures the response is fully written before
 		// the Context is returned to the pool.
 		defer releaseContext(ctx)
+
+		// finish answers the request and releases the connection for the next
+		// one. Exactly one call per request, whichever way exec ends.
+		answered := false
+		finish := func(wire []byte) {
+			if answered {
+				return
+			}
+			answered = true
+			wire = withConnectionHeader(wire, mode)
+			done := func(gc gnet.Conn, _ error) error {
+				st.busy.Store(false)
+				if mode == connModeClose {
+					_ = gc.Close()
+					return nil
+				}
+				// Continue with whatever was pipelined behind this request. An
+				// upgraded WebSocket connection is no longer an HTTP stream.
+				if s.wsCount.Load() == 0 {
+					_ = gc.Wake(nil)
+				} else if _, isWS := s.isWSConn(gc.Fd()); !isWS {
+					_ = gc.Wake(nil)
+				}
+				return nil
+			}
+			if wire == nil {
+				done(c, nil)
+				return
+			}
+			if err := c.AsyncWrite(wire, done); err != nil {
+				st.busy.Store(false)
+			}
+		}
+
 		// Recover from panics in handlers so a buggy handler does not crash
 		// the worker goroutine.
 		defer func() {
 			if r := recover(); r != nil {
 				fmt.Printf("[Breeze][PANIC] %v\n%s\n", r, debug.Stack())
-				_ = c.AsyncWrite(resp500, nil)
+				finish(resp500)
 			}
 		}()
 		if err := ctx.Next(); err != nil {
@@ -473,7 +590,9 @@ func (s *Breeze) dispatch(c gnet.Conn, ctx *Context) {
 			// Bytes allocates: AsyncWrite returns before the write happens
 			// and keeps the slice until the poller drains it, so this one
 			// must not come from wireBufPool.
-			_ = c.AsyncWrite(ctx.Res.Bytes(), nil)
+			finish(ctx.Res.Bytes())
+		} else {
+			finish(nil)
 		}
 	}
 
@@ -488,6 +607,14 @@ func (s *Breeze) dispatch(c gnet.Conn, ctx *Context) {
 		if err := s.Pool.SubmitErr(exec); err != nil {
 			s.inflight.Add(-1)
 			releaseContext(ctx)
+			// Answer instead of dropping. A silently discarded request leaves the
+			// client waiting on a response that will never come, and the busy
+			// flag set would stall every later request on the connection.
+			st.busy.Store(false)
+			_, _ = c.Write(withConnectionHeader(resp503, mode))
+			if mode == connModeClose {
+				_ = c.Close()
+			}
 		}
 	} else {
 		go exec()
@@ -499,6 +626,7 @@ func (s *Breeze) dispatch(c gnet.Conn, ctx *Context) {
 // we still call OnClose so the application can clean up its own state.
 func (s *Breeze) OnClose(c gnet.Conn, err error) gnet.Action {
 	fd := c.Fd()
+	s.conns.Delete(fd)
 
 	// The HTTP reassembly leftover now lives in the connection's own gnet
 	// context, which gnet discards when the connection is torn down — so
@@ -543,15 +671,34 @@ func (s *Breeze) RunOn(host string, port int, multiCore bool) error {
 	s.listenPort.Store(int64(port))
 	h := host
 	s.listenHost.Store(&h)
-	return gnet.Run(
-		s,
-		"tcp://"+net.JoinHostPort(host, strconv.Itoa(port)),
-		gnet.WithTCPNoDelay(gnet.TCPNoDelay),
-		gnet.WithMulticore(multiCore),
-		gnet.WithLoadBalancing(gnet.RoundRobin),
-		gnet.WithReadBufferCap(64<<10),
-		gnet.WithWriteBufferCap(64<<10),
-	)
+	serve := func(addr string) error {
+		return gnet.Run(
+			s,
+			addr,
+			gnet.WithTCPNoDelay(gnet.TCPNoDelay),
+			gnet.WithMulticore(multiCore),
+			gnet.WithLoadBalancing(gnet.RoundRobin),
+			gnet.WithReadBufferCap(64<<10),
+			gnet.WithWriteBufferCap(64<<10),
+			gnet.WithTicker(true),
+		)
+	}
+	err := serve("tcp://" + net.JoinHostPort(host, strconv.Itoa(port)))
+	// An empty host asks for every interface, which gnet satisfies with a
+	// dual-stack IPv6 socket. Hosts and containers with IPv6 compiled out or
+	// disabled (a common default in minimal container images) reject that with
+	// EAFNOSUPPORT, and the server then refuses to start at all even though IPv4
+	// works. Fall back to the IPv4 wildcard so `Run(port)` keeps meaning "listen
+	// everywhere that exists". An explicit host is never rewritten.
+	if err != nil && host == "" && isAddrFamilyUnsupported(err) && !s.stopping.Load() {
+		err = serve("tcp4://" + net.JoinHostPort("0.0.0.0", strconv.Itoa(port)))
+	}
+	return err
+}
+
+func isAddrFamilyUnsupported(err error) bool {
+	return errors.Is(err, syscall.EAFNOSUPPORT) ||
+		strings.Contains(err.Error(), "address family not supported")
 }
 
 // SetMaxRequestBody sets the maximum HTTP request-body size in bytes.

@@ -259,6 +259,8 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	contentLength := -1
 	hostSeen := false
 	transferEncodingSeen := false
+	connValue := ""
+	headerLines := 0
 	pos := lineEnd + 2 // skip past \r\n of the request line
 
 	for pos < len(header) {
@@ -305,6 +307,14 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 			contentLength = int(cl64)
 		case "transfer-encoding":
 			transferEncodingSeen = true
+		case "connection":
+			// Joined rather than overwritten: "Connection: keep-alive" and a
+			// later "Connection: close" are both in effect, and close wins.
+			if connValue == "" {
+				connValue = val
+			} else {
+				connValue += "," + val
+			}
 		case "host":
 			if hostSeen {
 				return 0, fmt.Errorf("duplicate host")
@@ -312,6 +322,17 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 			hostSeen = true
 		}
 		req.Header[key] = val
+		headerLines++
+	}
+
+	// Duplicates are detected for free: a repeated name overwrites its map entry,
+	// so the map ends up shorter than the number of lines parsed. Only then is
+	// the (rare) second pass paid for. Last-wins silently discarded the earlier
+	// values, which is wrong for lists (X-Forwarded-For, Accept) and lets two
+	// parties — a proxy and this server — disagree about which Authorization
+	// header a request carried.
+	if len(req.Header) != headerLines {
+		joinDuplicateHeaders(req, header[lineEnd+2:])
 	}
 
 	if transferEncodingSeen {
@@ -320,6 +341,7 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	if version == "HTTP/1.1" && !hostSeen {
 		return 0, fmt.Errorf("missing host header")
 	}
+	req.connMode = connectionMode(version == "HTTP/1.0", connValue)
 
 	// ── Body (zero-copy) ───────────────────────────────────────────────────
 	// The cap is checked here, at the first moment the size of the body is
@@ -474,4 +496,84 @@ func internMethod(b []byte) Method {
 // to a live GC-traced object.
 func b2s(b []byte) string {
 	return unsafe.String(unsafe.SliceData(b), len(b))
+}
+
+// Connection modes, from the request's HTTP version and Connection header.
+const (
+	connModeKeepAlive   uint8 = iota // HTTP/1.1 default: keep the connection open
+	connModeClose                    // close after the response
+	connModeKeepAlive10              // HTTP/1.0 that asked to keep alive: say so back
+)
+
+// connectionMode applies RFC 9112 §9.3: HTTP/1.1 persists unless a "close" token
+// is present; HTTP/1.0 closes unless a "keep-alive" token is present.
+//
+// The server used to ignore all of this, which is wrong in a way that is easy to
+// miss: a client that sends "Connection: close", or any HTTP/1.0 client such as
+// ApacheBench without -k, waits for the server to close the socket to know the
+// response has ended, and the server never did.
+func connectionMode(http10 bool, value string) uint8 {
+	closeTok, keepTok := false, false
+	for len(value) > 0 {
+		tok := value
+		if i := strings.IndexByte(value, ','); i >= 0 {
+			tok, value = value[:i], value[i+1:]
+		} else {
+			value = ""
+		}
+		tok = strings.TrimSpace(tok)
+		switch {
+		case strings.EqualFold(tok, "close"):
+			closeTok = true
+		case strings.EqualFold(tok, "keep-alive"):
+			keepTok = true
+		}
+	}
+	switch {
+	case closeTok:
+		return connModeClose
+	case http10 && keepTok:
+		return connModeKeepAlive10
+	case http10:
+		return connModeClose
+	}
+	return connModeKeepAlive
+}
+
+// joinDuplicateHeaders rebuilds the values of repeated request headers as RFC 9110
+// §5.3 prescribes: field values joined with ", " in the order received ("; " for
+// Cookie, per RFC 6265). A repeated Authorization then reads "Bearer a, Bearer b",
+// which no token parser accepts, so it fails closed instead of authenticating
+// whichever copy happened to come last.
+func joinDuplicateHeaders(req *HTTPRequest, block []byte) {
+	seen := make(map[string]string, len(req.Header))
+	dup := make(map[string]bool)
+	for len(block) > 0 {
+		end := bytes.Index(block, []byte("\r\n"))
+		line := block
+		if end >= 0 {
+			line, block = block[:end], block[end+2:]
+		} else {
+			block = nil
+		}
+		colon := bytes.IndexByte(line, ':')
+		if colon <= 0 {
+			continue
+		}
+		key := string(bytes.ToLower(line[:colon]))
+		val := string(bytes.TrimSpace(line[colon+1:]))
+		if prev, ok := seen[key]; ok {
+			sep := ", "
+			if key == "cookie" {
+				sep = "; "
+			}
+			seen[key] = prev + sep + val
+			dup[key] = true
+		} else {
+			seen[key] = val
+		}
+	}
+	for key := range dup {
+		req.Header[key] = seen[key]
+	}
 }

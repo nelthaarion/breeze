@@ -156,6 +156,10 @@ type methodIndex struct {
 }
 
 type Router struct {
+	// preflight is [global middlewares..., 404] for OPTIONS requests that match
+	// no route. Built by Use; nil when there are no global middlewares.
+	preflight []HandlerFunc
+
 	routes        []*route
 	middlewares   []HandlerFunc
 	staticDir     string
@@ -224,8 +228,12 @@ type RouteInfo interface {
 	HasWildcard() bool
 	WildcardName() string
 	ParamCount() int
+	// Blocking reports whether the route was registered with HandleBlocking and
+	// so runs on the worker pool rather than the gnet event loop.
+	Blocking() bool
 }
 
+func (r *route) Blocking() bool       { return r.blocking }
 func (r *route) Method() Method       { return r.method }
 func (r *route) Pattern() string      { return r.pattern }
 func (r *route) Segments() []string   { return r.segments }
@@ -254,6 +262,9 @@ func (r *Router) Use(mw ...HandlerFunc) {
 	for _, rt := range r.routes {
 		rt.chain = r.buildChain(rt.routeMWs, rt.userHandler)
 	}
+	// Rebuilt here, at setup time, so findDispatch reads it without locking.
+	r.preflight = append(append(make([]HandlerFunc, 0, len(r.middlewares)+1), r.middlewares...),
+		func(*Context) error { return NewHTTPError(404, "Not Found") })
 }
 
 // buildChain assembles the full, flat middleware chain for a route:
@@ -641,6 +652,14 @@ func (r *Router) findDispatch(req *HTTPRequest) (chain []HandlerFunc, params map
 	}
 	if autoIndex {
 		return r.autoIndexChain, nil, true
+	}
+	// A CORS preflight is an OPTIONS request to a path whose routes are all
+	// registered for other methods, so nothing matches it. Answering 404 here
+	// meant the global CORS middleware never ran and every browser preflight
+	// failed. Run just the global chain instead; a middleware that answers the
+	// preflight (CORS) does, and anything else falls through to a plain 404.
+	if req.Method == OPTIONS && r.preflight != nil {
+		return r.preflight, nil, false
 	}
 	return nil, nil, false
 }

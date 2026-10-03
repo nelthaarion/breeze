@@ -227,7 +227,12 @@ func TestDashboardBaseFromOpenAPI(t *testing.T) {
 // them for one trace's logs would turn a debugging click into a fleet-wide load
 // event.
 func TestLogEndpointsOnlyIncludesTraceServices(t *testing.T) {
-	a := &Aggregator{cfg: DefaultConfig().withDefaults(), registry: NewServiceRegistry(DefaultConfig().withDefaults())}
+	// This test is about filtering to the services in the trace, not about trust.
+	// Endpoints are only derived for an authenticated fleet (see
+	// TestLogFanoutIsOffWhenHeartbeatsAreUnauthenticated), hence the token.
+	cfg := DefaultConfig()
+	cfg.IngestToken = "ingest-token"
+	a := &Aggregator{cfg: cfg.withDefaults(), registry: NewServiceRegistry(cfg.withDefaults())}
 	now := time.Now()
 	for _, svc := range []string{"gateway", "orders", "unrelated"} {
 		a.registry.Observe(fleet.Heartbeat{

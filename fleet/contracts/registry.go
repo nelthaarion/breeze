@@ -25,11 +25,23 @@ type SchemaRegistry struct {
 	mu     sync.RWMutex
 	docs   map[string]schemaEntry
 	client *client.Client
+	guard  func(url string) error
+}
+
+// SetURLGuard installs a check run on every URL before it is fetched. The URL
+// arrives in a heartbeat, which is untrusted input.
+func (r *SchemaRegistry) SetURLGuard(g func(url string) error) {
+	r.mu.Lock()
+	r.guard = g
+	r.mu.Unlock()
 }
 
 func NewSchemaRegistry(c *client.Client) *SchemaRegistry {
 	if c == nil {
-		c = client.New(client.Config{})
+		// Cap the body at the document limit instead of the client's 32 MiB
+		// default, so an oversized "schema" is refused while being read rather
+		// than after it is all in memory.
+		c = client.New(client.Config{MaxResponseBytes: maxOpenAPIDocument + 1})
 	}
 	return &SchemaRegistry{docs: make(map[string]schemaEntry), client: c}
 }
@@ -43,6 +55,14 @@ func (r *SchemaRegistry) Refresh(ctx context.Context, service, hash, url string)
 	r.mu.RUnlock()
 	if ok && old.hash == hash {
 		return false, nil
+	}
+	r.mu.RLock()
+	guard := r.guard
+	r.mu.RUnlock()
+	if guard != nil {
+		if err := guard(url); err != nil {
+			return false, fmt.Errorf("openapi url refused: %w", err)
+		}
 	}
 	req := client.NewRequest("GET", url, nil).WithContext(ctx)
 	resp, err := r.client.Do(req)

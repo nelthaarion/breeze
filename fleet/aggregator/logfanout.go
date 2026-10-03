@@ -258,15 +258,31 @@ func (a *Aggregator) logEndpoints(services []string) map[string]string {
 		want[s] = struct{}{}
 	}
 
+	// The address comes from a heartbeat, and the fetch sends ServiceToken to
+	// it. When heartbeats are unauthenticated that is a token-exfiltration
+	// primitive, so it is only done for an authenticated fleet or an explicit
+	// host allowlist.
+	if a.cfg.IngestToken == "" && len(a.cfg.FetchAllowedHosts) == 0 {
+		return nil
+	}
+
 	now := time.Now()
 	out := make(map[string]string, len(services))
 	for _, info := range a.registry.Snapshot(now) {
 		if _, ok := want[info.Name]; !ok {
 			continue
 		}
-		if base := dashboardBaseFromOpenAPI(info.OpenAPIURL); base != "" {
-			out[info.Name] = base
+		base := dashboardBaseFromOpenAPI(info.OpenAPIURL)
+		if base == "" {
+			continue
 		}
+		if err := checkFetchURL(base, a.cfg.FetchAllowedHosts); err != nil {
+			if a.cfg.Logger != nil {
+				a.cfg.Logger("warning", "log fan-out skipped "+info.Name+": "+err.Error(), "fleet")
+			}
+			continue
+		}
+		out[info.Name] = base
 	}
 	return out
 }

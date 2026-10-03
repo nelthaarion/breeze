@@ -461,3 +461,17 @@ func (ctx *Context) Bind(dst any) error {
 func (ctx *Context) Abort() {
 	ctx.index = len(ctx.middlewares)
 }
+
+// RemoteAddr returns the peer's "ip:port", or "" when the context has no
+// connection — which is the case for every request Auto-MCP synthesises, since
+// it runs a route's chain without a socket. Middleware that identifies clients
+// must use this rather than ctx.Conn.RemoteAddr(), which panics on a nil Conn.
+func (ctx *Context) RemoteAddr() string {
+	if ctx == nil || ctx.Conn == nil {
+		return ""
+	}
+	if a := ctx.Conn.RemoteAddr(); a != nil {
+		return a.String()
+	}
+	return ""
+}

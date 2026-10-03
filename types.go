@@ -63,6 +63,11 @@ type HTTPRequest struct {
 	// GC can trace the pointer chain from any escaped header string back to
 	// this backing array.
 	owned []byte
+	// connMode is what the client asked for about the connection after this
+	// request: keep-alive (HTTP/1.1 default), close (HTTP/1.0 default or an
+	// explicit "Connection: close"), or an explicit HTTP/1.0 keep-alive that the
+	// response must acknowledge. Set by the parser, consumed by the server.
+	connMode uint8
 }
 
 // HTTPResponse represents an HTTP response.

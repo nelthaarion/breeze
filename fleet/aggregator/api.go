@@ -25,25 +25,30 @@ func (a *Aggregator) registerRoutes(router *breeze.Router) {
 				writeJSON(ctx, 401, map[string]string{"error": "unauthorized"})
 				return nil
 			}
-			next(ctx)
-
-			return nil
+			// The handler's error was being discarded here, so a handler that
+			// returned one produced neither a response nor an error status.
+			return next(ctx)
 		}
 	}
 
-	router.Handle(breeze.POST, base+"/api/spans", ingest(a.ingestSpans))
-	router.Handle(breeze.POST, base+"/api/heartbeat", ingest(a.ingestHeartbeat))
+	// Every route here does real work — gunzip and JSON-decode of up to 32 MiB,
+	// store and topology updates, and for /logs a network fan-out that waits on
+	// other services. Registered with Handle they ran on the gnet event loop,
+	// where one slow request stalls every connection that loop owns. They go to
+	// the worker pool instead.
+	router.HandleBlocking(breeze.POST, base+"/api/spans", ingest(a.ingestSpans))
+	router.HandleBlocking(breeze.POST, base+"/api/heartbeat", ingest(a.ingestHeartbeat))
 
 	auth := readAuth(a.cfg)
-	router.Handle(breeze.GET, base+"/api/services", a.services, auth)
-	router.Handle(breeze.GET, base+"/api/traces", a.traces, auth)
-	router.Handle(breeze.GET, base+"/api/traces/:id", a.trace, auth)
-	router.Handle(breeze.GET, base+"/api/traces/:id/logs", a.traceLogs, auth)
+	router.HandleBlocking(breeze.GET, base+"/api/services", a.services, auth)
+	router.HandleBlocking(breeze.GET, base+"/api/traces", a.traces, auth)
+	router.HandleBlocking(breeze.GET, base+"/api/traces/:id", a.trace, auth)
+	router.HandleBlocking(breeze.GET, base+"/api/traces/:id/logs", a.traceLogs, auth)
 
-	router.Handle(breeze.GET, base+"/api/topology", a.topologySnapshot, auth)
-	router.Handle(breeze.GET, base+"/api/incidents", a.incidentSnapshot, auth)
-	router.Handle(breeze.GET, base+"/api/violations", a.violationSnapshot, auth)
-	router.Handle(breeze.GET, base+"/api/stats", a.stats, auth)
+	router.HandleBlocking(breeze.GET, base+"/api/topology", a.topologySnapshot, auth)
+	router.HandleBlocking(breeze.GET, base+"/api/incidents", a.incidentSnapshot, auth)
+	router.HandleBlocking(breeze.GET, base+"/api/violations", a.violationSnapshot, auth)
+	router.HandleBlocking(breeze.GET, base+"/api/stats", a.stats, auth)
 }
 
 func (a *Aggregator) ingestSpans(ctx *breeze.Context) error {

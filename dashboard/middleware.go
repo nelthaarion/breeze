@@ -93,6 +93,14 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 		if ctx.Res != nil {
 			status = ctx.Res.Status
 		}
+		// The chain's error has not been turned into a response yet (that
+		// happens after the whole chain unwinds), so Res.Status is still 0 for
+		// a handler that returned an error. Resolve it as the default error
+		// handler will, or errorsTotal and the captured record miss every
+		// failing request.
+		if chainErr != nil {
+			status = breeze.ErrorStatus(chainErr)
+		}
 
 		// Always count the request (atomic — zero contention).
 		//

@@ -91,6 +91,31 @@ func (e *HTTPError) Error() string {
 // Unwrap exposes the cause, so errors.Is and errors.As see through an HTTPError.
 func (e *HTTPError) Unwrap() error { return e.Err }
 
+// ErrorStatus reports the HTTP status the default error handler will answer with
+// for a handler error. Middleware that runs *around* ctx.Next() — tracing, metrics,
+// the dashboard — sees the chain's error before handleChainError has turned it into
+// a response, so ctx.Res.Status is still 0 at that point and reading it would file
+// every `return err` as a success. This is the same mapping defaultErrorHandler
+// applies, in one place, so the two cannot drift. A custom Breeze.ErrorHandler may
+// choose differently; this is the best answer available before it has run.
+func ErrorStatus(err error) int {
+	if err == nil {
+		return 0
+	}
+	var verr *binding.ValidationError
+	if errors.As(err, &verr) {
+		return http.StatusUnprocessableEntity
+	}
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		if httpErr.Status < 100 || httpErr.Status > 599 {
+			return http.StatusInternalServerError
+		}
+		return httpErr.Status
+	}
+	return http.StatusInternalServerError
+}
+
 // defaultErrorHandler is the ErrorHandler used when an application sets none.
 //
 // # What it discloses, and what it does not

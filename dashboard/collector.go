@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -267,8 +268,21 @@ func (c *Collector) Config() Config { return c.cfg }
 // the write lock. The earlier version took the write lock unconditionally, which
 // put a global exclusive mutex on the request path of every deployment sitting
 // behind a proxy (i.e. every deployment that sends X-Forwarded-For).
+// maxUniqueIPs caps the unique-viewer set. The address comes from
+// X-Forwarded-For, which any client can set to any value, and this runs on every
+// request before authentication — without a cap, a loop of random header values
+// grows the map until the process is killed.
+const maxUniqueIPs = 100000
+
 func (c *Collector) trackUniqueIP(ip string) {
-	if ip == "" {
+	// X-Forwarded-For is "client, proxy1, proxy2": the first hop is the client.
+	if comma := strings.IndexByte(ip, ','); comma >= 0 {
+		ip = ip[:comma]
+	}
+	ip = strings.TrimSpace(ip)
+	if ip == "" || len(ip) > 45 || net.ParseIP(ip) == nil {
+		// Not an address (45 = longest textual IPv6): not a viewer, and not
+		// something to keep as a map key.
 		return
 	}
 	c.uniqueIPsMu.RLock()
@@ -279,7 +293,7 @@ func (c *Collector) trackUniqueIP(ip string) {
 	}
 
 	c.uniqueIPsMu.Lock()
-	if !c.uniqueIPs[ip] {
+	if !c.uniqueIPs[ip] && len(c.uniqueIPs) < maxUniqueIPs {
 		// Re-checked under the write lock: two goroutines can both miss
 		// the read above for the same new IP.
 		//

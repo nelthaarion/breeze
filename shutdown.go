@@ -191,10 +191,15 @@ func (s *Breeze) OnBoot(eng gnet.Engine) gnet.Action {
 // instruction of Stop rather than from the moment gnet closes the listener,
 // which does not happen until the force phase. The cost on the normal path is
 // one relaxed atomic load per accepted connection — not per request.
-func (s *Breeze) OnOpen(gnet.Conn) ([]byte, gnet.Action) {
+func (s *Breeze) OnOpen(c gnet.Conn) ([]byte, gnet.Action) {
 	if s.stopping.Load() {
 		return nil, gnet.Close
 	}
+	// One small allocation per accepted connection (not per request): the state
+	// that orders pipelined responses and feeds the timeout sweeper.
+	st := newConnState()
+	c.SetContext(st)
+	s.conns.Store(c.Fd(), connEntry{c: c, st: st})
 	return nil, gnet.None
 }
 

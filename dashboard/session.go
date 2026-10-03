@@ -32,6 +32,7 @@ type sessionStore struct {
 type loginFailure struct {
 	count int
 	until time.Time
+	last  time.Time
 }
 
 type sessionEntry struct {
@@ -134,6 +135,10 @@ func buildSessionCookie(token, basePath string, maxAge int, secure bool) string 
 const (
 	maxLoginFailures   = 8
 	loginBlockDuration = 15 * time.Minute
+	// maxTrackedPeers bounds the throttle table. Keyed by client address and
+	// fed by unauthenticated traffic, an unbounded map is a memory-exhaustion
+	// primitive of its own.
+	maxTrackedPeers = 10000
 )
 
 func (s *sessionStore) allowLogin(peer string, now time.Time) bool {
@@ -146,7 +151,8 @@ func (s *sessionStore) allowLogin(peer string, now time.Time) bool {
 	if !entry.until.IsZero() && now.Before(entry.until) {
 		return false
 	}
-	if !entry.until.IsZero() {
+	if !entry.until.IsZero() || now.Sub(entry.last) > loginBlockDuration {
+		// A served block, or a stale partial count: start over.
 		delete(s.failed, peer)
 	}
 	return true
@@ -155,13 +161,40 @@ func (s *sessionStore) allowLogin(peer string, now time.Time) bool {
 func (s *sessionStore) recordLoginFailure(peer string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, known := s.failed[peer]; !known && len(s.failed) >= maxTrackedPeers {
+		s.evictLocked(now)
+	}
 	entry := s.failed[peer]
 	entry.count++
+	entry.last = now
 	if entry.count >= maxLoginFailures {
 		entry.until = now.Add(loginBlockDuration)
 		entry.count = maxLoginFailures
 	}
 	s.failed[peer] = entry
+}
+
+// evictLocked makes room in the throttle table: first by dropping entries that
+// have aged out, and if the table is still full (a flood of distinct sources) by
+// dropping unblocked entries before any active block, so an attacker cannot
+// push a currently-blocked address out of the table by spraying new ones.
+func (s *sessionStore) evictLocked(now time.Time) {
+	for k, e := range s.failed {
+		if (e.until.IsZero() && now.Sub(e.last) > loginBlockDuration) || (!e.until.IsZero() && !now.Before(e.until)) {
+			delete(s.failed, k)
+		}
+	}
+	if len(s.failed) < maxTrackedPeers {
+		return
+	}
+	for k, e := range s.failed {
+		if e.until.IsZero() {
+			delete(s.failed, k)
+			if len(s.failed) < maxTrackedPeers {
+				return
+			}
+		}
+	}
 }
 
 func (s *sessionStore) clearLoginFailures(peer string) {

@@ -178,6 +178,13 @@ type Tracer struct {
 	spansErrored  atomic.Uint64
 	exportFails   atomic.Uint64
 
+	// requestsObserved/errorsObserved count every request the middleware saw,
+	// regardless of the sampling decision. The heartbeat derives rps and error
+	// rate from these; spansRecorded cannot serve, because unsampled successes
+	// are never recorded while errors always are, which skews the ratio.
+	requestsObserved atomic.Uint64
+	errorsObserved   atomic.Uint64
+
 	// lastHeartbeat tracks the window used to derive rps: rate is computed
 	// from the delta since the previous heartbeat rather than from process
 	// start, so a service that was busy yesterday does not report a
@@ -276,6 +283,17 @@ func (t *Tracer) RecordSpan(s Span) {
 		t.spansErrored.Add(1)
 	}
 	t.ring.push(s)
+}
+
+// noteRequest counts one request for the heartbeat's load figures.
+func (t *Tracer) noteRequest(failed bool) {
+	if t == nil || !t.enabled {
+		return
+	}
+	t.requestsObserved.Add(1)
+	if failed {
+		t.errorsObserved.Add(1)
+	}
 }
 
 // Close flushes what remains and stops the background goroutine.
@@ -387,8 +405,8 @@ func (t *Tracer) sendHeartbeat(ctx context.Context) {
 		return
 	}
 	now := time.Now()
-	recorded := t.spansRecorded.Load()
-	errored := t.spansErrored.Load()
+	recorded := t.requestsObserved.Load()
+	errored := t.errorsObserved.Load()
 
 	// Rates over the window since the last heartbeat, not since process
 	// start — a long-running service's current load is the useful number.

@@ -176,19 +176,50 @@ func decorateAutoMCPResponse(out, request []byte, version string) []byte {
 	if json.Unmarshal(request, &probe) != nil {
 		return out
 	}
-	var envelope map[string]any
+	// Only three responses are ever changed. Every other one — above all
+	// tools/call, whose result can be megabytes — used to be decoded into
+	// map[string]any and encoded again anyway, which cost two full passes and
+	// turned every integer above 2^53 into a rounded float64.
+	wantsVersion := probe.Method == "initialize" && version != autoMCPProtocolModern
+	wantsTTL := version == autoMCPProtocolModern && (probe.Method == "tools/list" || probe.Method == "server/discover")
+	if !wantsVersion && !wantsTTL {
+		return out
+	}
+
+	// RawMessage at both levels so everything not being edited is carried
+	// through byte for byte.
+	var envelope map[string]json.RawMessage
 	if json.Unmarshal(out, &envelope) != nil {
 		return out
 	}
-	if result, ok := envelope["result"].(map[string]any); ok {
-		if probe.Method == "initialize" && version != autoMCPProtocolModern {
-			result["protocolVersion"] = version
-		}
-		if version == autoMCPProtocolModern && (probe.Method == "tools/list" || probe.Method == "server/discover") {
-			result["ttlMs"] = float64(0)
-			result["cacheScope"] = "private"
-		}
+	rawResult, ok := envelope["result"]
+	if !ok {
+		return out
 	}
+	var result map[string]json.RawMessage
+	if json.Unmarshal(rawResult, &result) != nil {
+		return out
+	}
+	set := func(k string, v any) bool {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return false
+		}
+		result[k] = b
+		return true
+	}
+	if wantsVersion {
+		set("protocolVersion", version)
+	}
+	if wantsTTL {
+		set("ttlMs", 0)
+		set("cacheScope", "private")
+	}
+	newResult, err := json.Marshal(result)
+	if err != nil {
+		return out
+	}
+	envelope["result"] = newResult
 	b, err := json.Marshal(envelope)
 	if err != nil {
 		return out

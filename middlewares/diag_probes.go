@@ -215,9 +215,7 @@ func rateLimitProbe() diag.Report {
 		detail["per"] = cfg.Per.String()
 	}
 	if rl := rateLimiterHandle.Load(); rl != nil {
-		rl.mu.Lock()
-		detail["tracked_clients"] = len(rl.clients)
-		rl.mu.Unlock()
+		detail["tracked_clients"] = rl.trackedClients()
 	}
 
 	summary := fmt.Sprintf("installed; %d request(s) allowed, %d rejected", snap.Hits, snap.Misses)

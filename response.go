@@ -18,24 +18,27 @@ var statusTexts = [600]string{}
 var statusLines = [600][]byte{}
 
 func init() {
-	statusTexts[200] = "OK"
-	statusTexts[201] = "Created"
-	statusTexts[204] = "No Content"
-	statusTexts[301] = "Moved Permanently"
-	statusTexts[302] = "Found"
-	statusTexts[304] = "Not Modified"
-	statusTexts[400] = "Bad Request"
-	statusTexts[401] = "Unauthorized"
-	statusTexts[403] = "Forbidden"
-	statusTexts[404] = "Not Found"
-	statusTexts[405] = "Method Not Allowed"
-	statusTexts[408] = "Request Timeout"
-	statusTexts[409] = "Conflict"
-	statusTexts[422] = "Unprocessable Entity"
-	statusTexts[429] = "Too Many Requests"
-	statusTexts[500] = "Internal Server Error"
-	statusTexts[502] = "Bad Gateway"
-	statusTexts[503] = "Service Unavailable"
+	for code, text := range map[int]string{
+		100: "Continue", 101: "Switching Protocols", 102: "Processing", 103: "Early Hints",
+		200: "OK", 201: "Created", 202: "Accepted", 203: "Non-Authoritative Information",
+		204: "No Content", 205: "Reset Content", 206: "Partial Content", 207: "Multi-Status",
+		300: "Multiple Choices", 301: "Moved Permanently", 302: "Found", 303: "See Other",
+		304: "Not Modified", 307: "Temporary Redirect", 308: "Permanent Redirect",
+		400: "Bad Request", 401: "Unauthorized", 402: "Payment Required", 403: "Forbidden",
+		404: "Not Found", 405: "Method Not Allowed", 406: "Not Acceptable",
+		407: "Proxy Authentication Required", 408: "Request Timeout", 409: "Conflict", 410: "Gone",
+		411: "Length Required", 412: "Precondition Failed", 413: "Content Too Large",
+		414: "URI Too Long", 415: "Unsupported Media Type", 416: "Range Not Satisfiable",
+		417: "Expectation Failed", 418: "I'm a teapot", 421: "Misdirected Request",
+		422: "Unprocessable Entity", 423: "Locked", 424: "Failed Dependency", 425: "Too Early",
+		426: "Upgrade Required", 428: "Precondition Required", 429: "Too Many Requests",
+		431: "Request Header Fields Too Large", 451: "Unavailable For Legal Reasons",
+		500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway",
+		503: "Service Unavailable", 504: "Gateway Timeout", 505: "HTTP Version Not Supported",
+		507: "Insufficient Storage", 511: "Network Authentication Required",
+	} {
+		statusTexts[code] = text
+	}
 
 	for code, text := range statusTexts {
 		if text != "" {
@@ -151,16 +154,18 @@ func (r *HTTPResponse) AppendTo(buf []byte) []byte {
 	buf = append(buf, line...)
 
 	for k, v := range r.Headers {
-		lk := strings.ToLower(strings.TrimSpace(k))
+		// Compared case-insensitively in place. Lower-casing the key allocated a
+		// new string for every header of every response that took this path.
+		tk := strings.TrimSpace(k)
 		// Framing is owned by the serializer. Never let application headers create
 		// a second Content-Length/Transfer-Encoding, and never emit hop-by-hop
 		// framing that could disagree with the connection writer.
-		if lk == "content-length" || lk == "transfer-encoding" || lk == "connection" {
+		if strings.EqualFold(tk, "content-length") || strings.EqualFold(tk, "transfer-encoding") || strings.EqualFold(tk, "connection") {
 			continue
 		}
 		// Set-Cookie is special: it may contain multiple cookies separated by \r\n.
 		// Write each as a separate header line.
-		if lk == "set-cookie" {
+		if strings.EqualFold(tk, "set-cookie") {
 			for _, cookie := range strings.Split(v, "\r\n") {
 				cookie = strings.TrimSpace(cookie)
 				if cookie == "" {
@@ -169,8 +174,7 @@ func (r *HTTPResponse) AppendTo(buf []byte) []byte {
 				if !validResponseHeaderValue(cookie) {
 					continue
 				}
-				buf = append(buf, k...)
-				buf = append(buf, ": "...)
+				buf = append(buf, "Set-Cookie: "...)
 				buf = append(buf, cookie...)
 				buf = append(buf, "\r\n"...)
 			}
@@ -199,8 +203,20 @@ func responseMustNotHaveBody(status int) bool {
 }
 
 func validResponseHeaderName(name string) bool {
-	b := []byte(name)
-	return validHTTPToken(b)
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' ||
+			c == '+' || c == '-' || c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func validResponseHeaderValue(value string) bool {

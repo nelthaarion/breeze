@@ -135,6 +135,18 @@ func Middleware(t *Tracer) breeze.HandlerFunc {
 		if ctx.Res != nil {
 			status = ctx.Res.Status
 		}
+		// A handler that returned an error has not produced its response yet:
+		// handleChainError runs after the whole chain unwinds, so ctx.Res.Status
+		// is still 0 here. Resolve it the way the default error handler will,
+		// otherwise every `return err` is traced and counted as a success.
+		if chainErr != nil {
+			status = breeze.ErrorStatus(chainErr)
+		}
+
+		// Counted for every request, sampled or not: the heartbeat's rps and
+		// error rate must describe traffic, not the sampled subset (unsampled
+		// successes are never recorded, while errors always are).
+		t.noteRequest(status >= 500)
 
 		var errText string
 		if status >= 500 {

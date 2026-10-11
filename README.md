@@ -90,7 +90,7 @@ on as an afterthought.
 
 ## 📦 Installation
 
-Requires **Go 1.25.13** or later.
+Requires **Go 1.26.9** or later.
 
 ```bash
 go get  github.com/nelthaarion/breeze/v2

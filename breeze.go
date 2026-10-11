@@ -465,7 +465,7 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 		if progressed || st.partialSince.Load() == 0 {
 			st.partialSince.Store(coarseNow())
 		}
-		st.partialHdr.Store(bytes.Index(buf, headerEnd) < 0)
+		st.partialHdr.Store(!bytes.Contains(buf, headerEnd))
 	}
 
 	return gnet.None

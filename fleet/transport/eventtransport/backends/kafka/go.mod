@@ -1,6 +1,6 @@
 module  github.com/nelthaarion/breeze/v2/fleet/transport/eventtransport/backends/kafka
 
-go 1.25.13
+go 1.26.9
 
 require (
 	 github.com/nelthaarion/breeze/v2 v2.0.2

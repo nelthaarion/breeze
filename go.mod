@@ -3,7 +3,7 @@ module github.com/nelthaarion/breeze/v2
 go 1.26.7
 
 require (
-	github.com/goccy/go-json v0.10.6
+	github.com/goccy/go-json v0.11.2
 	github.com/nelthaarion/gnet/v2 v2.2.0
 	gopkg.in/yaml.v3 v3.0.1
 )

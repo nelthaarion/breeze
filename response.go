@@ -119,10 +119,46 @@ func releaseWireBuf(bp *[]byte) {
 //     are also a precomputed slice (see rawHeaders), so the common path never
 //     iterates a map. Ranging over even a one-entry map costs a mapiterinit
 //     plus a bucket walk, which measurably outweighs the bytes being copied.
+//   - A response whose headers came entirely from SetHeaderStatic carries a full
+//     precomputed header block in preBuilt (headers included, not just the
+//     content type); it takes the same allocation-free path via that block.
 //   - The buffer is grown once, to the exact size for the precomputed path.
 //   - strconv.AppendInt writes the content length straight into the buffer.
 func (r *HTTPResponse) AppendTo(buf []byte) []byte {
 	line := statusLine(r.Status)
+
+	if r.preBuilt != nil {
+		// Static-header fast path (Context.SetHeaderStatic): the headers are a
+		// precomputed, read-only block, so serialization is one copy of it plus
+		// the content type a body method recorded — no map, no per-key work.
+		// sctype is empty for a body-less response (a CORS preflight, say), which
+		// then sends the block alone, exactly as the map path would.
+		body := r.Body
+		bodyAllowed := !responseMustNotHaveBody(r.Status)
+		if !bodyAllowed {
+			body = nil
+		}
+		ctLine := 0
+		if r.sctype != "" {
+			ctLine = len("Content-Type: ") + len(r.sctype) + 2
+		}
+		need := len(line) + len(r.preBuilt) + ctLine + len(clHeader) + 24 + len(body)
+		buf = grow(buf, need)
+		buf = append(buf, line...)
+		buf = append(buf, r.preBuilt...)
+		if r.sctype != "" {
+			buf = append(buf, "Content-Type: "...)
+			buf = append(buf, r.sctype...)
+			buf = append(buf, "\r\n"...)
+		}
+		if bodyAllowed {
+			buf = append(buf, clHeader...)
+			buf = strconv.AppendInt(buf, int64(len(body)), 10)
+			buf = append(buf, "\r\n"...)
+		}
+		buf = append(buf, "\r\n"...)
+		return append(buf, body...)
+	}
 
 	// Fast path: precomputed headers, one grow to the exact final size.
 	if r.rawHeaders != nil {
@@ -240,6 +276,35 @@ func grow(buf []byte, n int) []byte {
 	copy(next, buf)
 	return next
 }
+
+// RenderStaticHeaders renders kvs (alternating key, value) into the two pieces
+// a static-header middleware installs once, at registration, and replays on
+// every request through Context.SetHeaderStatic: a pre-rendered wire block and
+// an equivalent lookup map. Both are built here, a single time, so the per-
+// request cost is a reference hand-off rather than a rebuild.
+//
+// The rendering matches what serializing an equivalent map would have produced
+// (trimmed key, ": ", value, CRLF), and keys/values are validated exactly as the
+// map path validates them, so the two representations describe the same bytes.
+func RenderStaticHeaders(kvs ...string) (block []byte, lookup map[string]string) {
+	lookup = make(map[string]string, len(kvs)/2)
+	block = make([]byte, 0, 128)
+	for i := 0; i+1 < len(kvs); i += 2 {
+		k := strings.TrimSpace(kvs[i])
+		v := kvs[i+1]
+		if !validResponseHeaderName(k) || !validResponseHeaderValue(v) {
+			continue
+		}
+		lookup[k] = v
+		block = append(block, k...)
+		block = append(block, ": "...)
+		block = append(block, v...)
+		block = append(block, "\r\n"...)
+	}
+	return block, lookup
+}
+
+
 
 // Bytes serializes the HTTPResponse to raw HTTP/1.1 bytes in a freshly
 // allocated slice.

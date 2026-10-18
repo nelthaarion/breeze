@@ -89,6 +89,17 @@ type Context struct {
 // keep it — sending a JSON body labelled as text. The flag distinguishes the caller's
 // choice from a previous body method's default, and only the former is preserved.
 func (r *HTTPResponse) setContentType(shared map[string]string, raw []byte, ctype string) {
+	// Static-header response (Context.SetHeaderStatic): the shared preBuilt block
+	// is the source of truth for the wire, so record the content type in sctype —
+	// it is emitted just after the block — and leave preBuilt/preHeaders alone.
+	// A second body method simply replaces sctype, so exactly one Content-Type
+	// reaches the wire. (A dynamic SetHeader would have dropped preBuilt already,
+	// so a pinned caller content type never lands on this path.)
+	if r.preBuilt != nil {
+		r.sctype = ctype
+		return
+	}
+
 	if r.Headers == nil || r.headersShared {
 		r.Headers = shared
 		r.headersShared = true
@@ -102,8 +113,7 @@ func (r *HTTPResponse) setContentType(shared map[string]string, raw []byte, ctyp
 	if r.ctypePinned {
 		return
 	}
-	// Delete before assigning, so a previous body method's differently-cased key
-	// cannot survive alongside this one. Both would go on the wire.
+
 	deleteContentType(r.Headers)
 	r.Headers["Content-Type"] = ctype
 }
@@ -235,9 +245,26 @@ func (ctx *Context) SetHeader(key, value string) {
 		return
 	}
 	r := ctx.ensureResponse()
-	// Any mutation invalidates the pre-rendered header block: from here on
-	// the response must be serialized from the map, which is now the only
-	// representation that reflects this write.
+	// A response that carries a static-header block leaves the fast path the
+	// moment a dynamic header is written: fold the shared static map into a
+	// private one, drop the block, and continue onto the ordinary map path so
+	// the union (static + this write) serializes correctly.
+	if r.preBuilt != nil {
+		m := make(map[string]string, len(r.preHeaders)+1)
+		for k, v := range r.preHeaders {
+			m[k] = v
+		}
+		if r.sctype != "" {
+			m["Content-Type"] = r.sctype
+		}
+		r.Headers = m
+		r.preBuilt = nil
+		r.preHeaders = nil
+		r.sctype = ""
+		r.headersShared = false
+		r.rawHeaders = nil
+	}
+	// Any mutation invalidates a pre-rendered content-type header block.
 	r.rawHeaders = nil
 	// Copy-on-write: upgrade shared map to a private one.
 	if r.headersShared {
@@ -282,7 +309,72 @@ func (ctx *Context) GetHeader(key string) string {
 	if ctx.Res == nil {
 		return ""
 	}
+	// A static-header response keeps its headers in the shared preHeaders map,
+	// plus the body method's content type in sctype.
+	if ctx.Res.preHeaders != nil {
+		if strings.EqualFold(key, "Content-Type") && ctx.Res.sctype != "" {
+			return ctx.Res.sctype
+		}
+		if v, ok := ctx.Res.preHeaders[key]; ok {
+			return v
+		}
+		return ""
+	}
 	return ctx.Res.Headers[key]
+}
+
+// SetHeaderStatic installs a fixed set of response headers whose wire form and
+// lookup map were rendered once, at middleware registration, by RenderStaticHeaders
+// — the shape every "apply the same security/CORS headers to every response"
+// middleware has.
+//
+// # What it buys
+//
+// The ordinary path builds a private map per request and, at serialization time,
+// ranges it (mapiterinit plus a bucket walk per header, a full-header EqualFold
+// for framing checks, and a copy-on-write when a body method overwrites a shared
+// map). Measured on this box (middlewares/bench_test.go), CORS plus the twelve-
+// header SecurityMiddleware cost ~2746 ns/op together — more than the two cost
+// separately (CORS ~400, Security ~1465): a copy-on-write and map-growth effect
+// the serializer pays once per header, per request.
+//
+// SetHeaderStatic spends that work once. The response holds a reference to the
+// shared block and map, so a static response serializes by copying one slice and
+// does no per-key work. Content-Type still belongs to whichever body method
+// ultimately writes it; it is recorded separately (sctype) and serialized just
+// after the block, so the shared block is never mutated.
+//
+// # When it is a no-op
+//
+// If headers have already been written through SetHeader (a private map exists),
+// the block is discarded and the response stays on the map path — there is
+// nothing static about a response a caller has already touched.
+func (ctx *Context) SetHeaderStatic(block []byte, lookup map[string]string) {
+	r := ctx.ensureResponse()
+	if r.preBuilt == nil {
+		r.preBuilt = block
+		r.preHeaders = lookup
+		r.headersShared = true // copy-on-write source is preHeaders
+		r.rawHeaders = nil
+		return
+	}
+	// A second static middleware (CORS then Security, say): the response can hold
+	// one block, so render the union. This is the only per-request allocation the
+	// static path makes, and only when two static middlewares meet.
+	nb := make([]byte, 0, len(r.preBuilt)+len(block))
+	nb = append(nb, r.preBuilt...)
+	nb = append(nb, block...)
+	nm := make(map[string]string, len(r.preHeaders)+len(lookup))
+	for k, v := range r.preHeaders {
+		nm[k] = v
+	}
+	for k, v := range lookup {
+		nm[k] = v
+	}
+	r.preBuilt = nb
+	r.preHeaders = nm
+	r.headersShared = true
+	r.rawHeaders = nil
 }
 
 // --- Typed store (Set/Get) ---

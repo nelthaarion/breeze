@@ -99,4 +99,24 @@ type HTTPResponse struct {
 	// while an unpinned type is replaced, so WriteString followed by JSON does not
 	// send a JSON body labelled text/plain.
 	ctypePinned bool
+
+	// preBuilt is the fully-rendered header block (every "Key: Value\r\n"
+	// line, Content-Type included) of a response whose headers were installed
+	// through SetHeaderStatic. It lets such a response serialize by copying
+	// one slice instead of ranging a per-request map. It is nil for every
+	// ordinary response, so untouched and SetHeader responses are unaffected.
+	//
+	// It is invalidated (set to nil) the moment the response takes a dynamic
+	// header through SetHeader, so it can never disagree with Headers.
+	preBuilt []byte
+	// preHeaders is the read-only header map matching preBuilt, so GetHeader and
+	// a later SetHeader copy-on-write see the static headers as if they were a
+	// normal response map. It is built once when the static middleware is
+	// registered and shared across requests; it is never mutated in place.
+	preHeaders map[string]string
+	// sctype is the content type of a static-header response, held separately
+	// because preBuilt is a shared, read-only block that must not be extended
+	// per request. It is serialized as the Content-Type line just after the
+	// block, and answered by GetHeader.
+	sctype string
 }

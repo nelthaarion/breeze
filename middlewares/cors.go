@@ -46,9 +46,39 @@ func CORSMiddleware(opts CORSOptions) breeze.HandlerFunc {
 		}
 	}
 
+	// The five settings below never vary per request, so their wire block and
+	// lookup map are rendered once and replayed on every request. Only the
+	// allow-origin value is per-request, and only in the multi-origin (echo)
+	// case — which is therefore left entirely on the ordinary map path.
+	var kv []string
+	addKV := func(name, value string) {
+		if value != "" {
+			kv = append(kv, name, value)
+		}
+	}
+	addKV("Access-Control-Allow-Methods", opts.AllowMethods)
+	addKV("Access-Control-Allow-Headers", opts.AllowHeaders)
+	addKV("Access-Control-Expose-Headers", opts.ExposeHeaders)
+	addKV("Access-Control-Allow-Credentials", opts.AllowCredentials)
+	addKV("Access-Control-Max-Age", opts.MaxAge)
+	baseBlock, baseLookup := breeze.RenderStaticHeaders(kv...)
+
+	// A single fixed origin (the common "*" case) has a fully static header set,
+	// so the whole thing is precomputed as one block.
+	hasSingle := !multi && opts.AllowOrigins != ""
+	var singleBlock []byte
+	var singleLookup map[string]string
+	if hasSingle {
+		singleKV := append([]string{"Access-Control-Allow-Origin", opts.AllowOrigins}, kv...)
+		singleBlock, singleLookup = breeze.RenderStaticHeaders(singleKV...)
+	}
+
 	return func(ctx *breeze.Context) error {
 		switch {
 		case multi:
+			// Genuinely per-request: the origin is echoed, so this response is
+			// not a single precomputed block. Write every header through the
+			// ordinary map path, exactly as before.
 			ctx.SetHeader("Vary", "Origin")
 			if origin := ctx.Req.Header["origin"]; origin != "" {
 				for _, allowed := range origins {
@@ -58,23 +88,13 @@ func CORSMiddleware(opts CORSOptions) breeze.HandlerFunc {
 					}
 				}
 			}
-		case opts.AllowOrigins != "":
-			ctx.SetHeader("Access-Control-Allow-Origin", opts.AllowOrigins)
-		}
-		if opts.AllowMethods != "" {
-			ctx.SetHeader("Access-Control-Allow-Methods", opts.AllowMethods)
-		}
-		if opts.AllowHeaders != "" {
-			ctx.SetHeader("Access-Control-Allow-Headers", opts.AllowHeaders)
-		}
-		if opts.ExposeHeaders != "" {
-			ctx.SetHeader("Access-Control-Expose-Headers", opts.ExposeHeaders)
-		}
-		if opts.AllowCredentials != "" {
-			ctx.SetHeader("Access-Control-Allow-Credentials", opts.AllowCredentials)
-		}
-		if opts.MaxAge != "" {
-			ctx.SetHeader("Access-Control-Max-Age", opts.MaxAge)
+			for i := 0; i+1 < len(kv); i += 2 {
+				ctx.SetHeader(kv[i], kv[i+1])
+			}
+		case hasSingle:
+			ctx.SetHeaderStatic(singleBlock, singleLookup)
+		default:
+			ctx.SetHeaderStatic(baseBlock, baseLookup)
 		}
 
 		// Handle preflight OPTIONS request.

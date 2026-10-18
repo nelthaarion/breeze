@@ -3,7 +3,6 @@ package middleware
 import (
 	"github.com/nelthaarion/breeze/v2"
 )
-
 // SecurityOptions defines configurable HTTP security headers
 type SecurityOptions struct {
 	ContentSecurityPolicy     string
@@ -24,43 +23,34 @@ type SecurityOptions struct {
 func SecurityMiddleware(opts SecurityOptions) breeze.HandlerFunc {
 	securityInstalled.Store(true)
 	securityConfig.Store(&opts)
+
+	// The security header set is fixed at registration, so its wire block and
+	// lookup map are rendered once and replayed on every request. That keeps a
+	// security-instrumented response on the serializer's allocation-free fast
+	// path instead of building and ranging a twelve-entry map per request (see
+	// Context.SetHeaderStatic for the measurement).
+	var kv []string
+	addKV := func(name, value string) {
+		if value != "" {
+			kv = append(kv, name, value)
+		}
+	}
+	addKV("Content-Security-Policy", opts.ContentSecurityPolicy)
+	addKV("X-Frame-Options", opts.XFrameOptions)
+	addKV("X-Content-Type-Options", opts.XContentTypeOptions)
+	addKV("Referrer-Policy", opts.ReferrerPolicy)
+	addKV("Strict-Transport-Security", opts.StrictTransportSecurity)
+	addKV("Permissions-Policy", opts.FeaturePolicy)
+	addKV("X-XSS-Protection", opts.XXSSProtection)
+	addKV("Expect-CT", opts.ExpectCT)
+	addKV("Cross-Origin-Embedder-Policy", opts.CrossOriginEmbedderPolicy)
+	addKV("Cross-Origin-Opener-Policy", opts.CrossOriginOpenerPolicy)
+	addKV("Cross-Origin-Resource-Policy", opts.CrossOriginResourcePolicy)
+	addKV("Cache-Control", opts.CacheControl)
+	block, lookup := breeze.RenderStaticHeaders(kv...)
+
 	return func(ctx *breeze.Context) error {
-		if opts.ContentSecurityPolicy != "" {
-			ctx.SetHeader("Content-Security-Policy", opts.ContentSecurityPolicy)
-		}
-		if opts.XFrameOptions != "" {
-			ctx.SetHeader("X-Frame-Options", opts.XFrameOptions)
-		}
-		if opts.XContentTypeOptions != "" {
-			ctx.SetHeader("X-Content-Type-Options", opts.XContentTypeOptions)
-		}
-		if opts.ReferrerPolicy != "" {
-			ctx.SetHeader("Referrer-Policy", opts.ReferrerPolicy)
-		}
-		if opts.StrictTransportSecurity != "" {
-			ctx.SetHeader("Strict-Transport-Security", opts.StrictTransportSecurity)
-		}
-		if opts.FeaturePolicy != "" {
-			ctx.SetHeader("Permissions-Policy", opts.FeaturePolicy)
-		}
-		if opts.XXSSProtection != "" {
-			ctx.SetHeader("X-XSS-Protection", opts.XXSSProtection)
-		}
-		if opts.ExpectCT != "" {
-			ctx.SetHeader("Expect-CT", opts.ExpectCT)
-		}
-		if opts.CrossOriginEmbedderPolicy != "" {
-			ctx.SetHeader("Cross-Origin-Embedder-Policy", opts.CrossOriginEmbedderPolicy)
-		}
-		if opts.CrossOriginOpenerPolicy != "" {
-			ctx.SetHeader("Cross-Origin-Opener-Policy", opts.CrossOriginOpenerPolicy)
-		}
-		if opts.CrossOriginResourcePolicy != "" {
-			ctx.SetHeader("Cross-Origin-Resource-Policy", opts.CrossOriginResourcePolicy)
-		}
-		if opts.CacheControl != "" {
-			ctx.SetHeader("Cache-Control", opts.CacheControl)
-		}
+		ctx.SetHeaderStatic(block, lookup)
 		securityCounter.Hit()
 		return ctx.Next()
 	}

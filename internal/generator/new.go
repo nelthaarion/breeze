@@ -24,7 +24,7 @@ var viewsTemplateFS embed.FS
 // fallbackGoDirective is used when the toolchain version cannot be parsed out
 // of runtime.Version(). It matches the go directive in breeze's own go.mod â€”
 // a scaffold that imports breeze cannot ask for less.
-const fallbackGoDirective = "1.25.13"
+const fallbackGoDirective = "1.27.3"
 
 // breezeModulePath is the framework's import path, needed both as a go.mod
 // require and as the anchor ensureImports keys off.
@@ -251,8 +251,8 @@ func goModContent(modulePath string) string {
 	return b.String()
 }
 
-// goDirectiveRe pulls "1.25.13" out of a runtime version string like
-// "go1.25.13". Release candidates ("go1.26rc1") and devel builds
+// goDirectiveRe pulls "1.27.3" out of a runtime version string like
+// "go1.27.3". Release candidates ("go1.28rc1") and devel builds
 // ("devel +abc123") intentionally fail to match and fall back.
 var goDirectiveRe = regexp.MustCompile(`^go(\d+\.\d+(?:\.\d+)?)$`)
 

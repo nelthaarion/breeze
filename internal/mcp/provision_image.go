@@ -84,7 +84,7 @@ func buildImageTag() string {
 	return fallbackBuildImage
 }
 
-// goVersionRe pulls "1.26.4" out of "go1.26.4". A release candidate ("go1.27rc1") or a
+// goVersionRe pulls "1.27.3" out of "go1.27.3". A release candidate ("go1.28rc1") or a
 // devel build deliberately fails to match, since neither names a published image tag.
 var goVersionRe = regexp.MustCompile(`^go(\d+\.\d+(?:\.\d+)?)$`)
 
@@ -92,7 +92,7 @@ var goVersionRe = regexp.MustCompile(`^go(\d+\.\d+(?:\.\d+)?)$`)
 //
 // A bare minor line rather than a patch, so it tracks the newest patch of that line —
 // which is what a fallback wants.
-const fallbackBuildImage = "golang:1.25-alpine"
+const fallbackBuildImage = "golang:1.27-alpine"
 
 // The ports *inside* a provisioned container. They are fixed, and the host-side
 // ports the allocator hands out are mapped onto them.

@@ -8,7 +8,7 @@ path to production.
 
 [![Documentation](https://img.shields.io/badge/Documentation-Latest-blue?style=for-the-badge)](https://nelthaarion.github.io/breeze)
 ![GitHub](https://img.shields.io/badge/GitHub-nelthaarion%2Fbreeze-181717?style=for-the-badge&logo=github)
-[![Go Version](https://img.shields.io/badge/Go-1.26.9%2B-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
+[![Go Version](https://img.shields.io/badge/Go-1.27.3%2B-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](./LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge)](./CONTRIBUTING.md)
 
@@ -90,7 +90,7 @@ on as an afterthought.
 
 ## 📦 Installation
 
-Requires **Go 1.26.9** or later.
+Requires **Go 1.27.3** or later.
 
 ```bash
 go get  github.com/nelthaarion/breeze/v2

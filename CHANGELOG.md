@@ -6,6 +6,40 @@ All changes made to the Breeze framework.
 
 ## [Unreleased]
 
+### Maintenance
+
+- Toolchain moved to **Go 1.27.3**, which clears fourteen standard-library
+  advisories found by `govulncheck`. The build was on 1.27.1, whose stdlib
+  carries twelve reachable findings and two more reached through imports:
+
+  `crypto/x509` (GO-2026-6809 — distrust compromised intermediate
+  certificates, reached through `websocket_client.go`'s `AsyncWrite`), the
+  `net/http` HTTP/2 cluster (GO-2026-6617, -6612, -6611, -6610, -6603 — HPACK
+  encoder race, double flow-control refund, repeated initial window changes,
+  malformed framing headers, trailer-driven memory exhaustion), HTTP/1
+  connection desynchronisation around CONNECT (GO-2026-6613, -6605),
+  `net/textproto` MIME header parsing bypassing the memory limit
+  (GO-2026-6608, reached through `ParseMultipart`), `crypto/tls` ECH outer
+  extension references (GO-2026-6607), and `html/template` context tracking
+  and `yield` keyword handling (GO-2026-6600, -6599, reached through template
+  execution). A further two — unbounded parsed `Range` headers in `net/http`
+  and `os.Root.MkdirAll` following junctions out of the root on Windows — are
+  imported but not called, so `govulncheck` reported them as unreachable.
+
+  Because CI resolves its toolchain with `go-version-file: go.mod`, the `go`
+  directive is the single source of truth and the only edit needed.
+- `Dockerfile` `GO_VERSION` raised to match, so the pinned builder no longer
+  reports stdlib vulnerabilities the pinned toolchain has already fixed. The
+  comment above it explains why that mismatch is worth chasing.
+- Nested `go.mod` in `fleet/transport/eventtransport/backends/kafka` moved in
+  step. `./...` never reaches it — kafka-go is deliberately outside the
+  framework's dependency graph — so it carries its own directive, and a stale
+  one there is invisible to every existing check.
+- The two fallbacks used when `runtime.Version()` is a release candidate or
+  devel build now track the directive they document themselves as mirroring:
+  `internal/generator`'s `fallbackGoDirective` and `internal/mcp`'s
+  `fallbackBuildImage` (`golang:1.27-alpine`).
+
 Six work items were developed concurrently and each had written its own
 `## [Unreleased]` heading, so the file had six sections at the same level all
 claiming to be the next release. They are now `###` subsections under this one

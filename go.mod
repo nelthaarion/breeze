@@ -4,7 +4,7 @@ go 1.26.9
 
 require (
 	github.com/goccy/go-json v0.11.2
-	github.com/nelthaarion/gnet/v2 v2.2.1
+	github.com/nelthaarion/gnet/v2 v2.3.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

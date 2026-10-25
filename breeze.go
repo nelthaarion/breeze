@@ -310,9 +310,19 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 
 	closeConn := false
 	progressed := false
+
+	// Responses to inline requests are collected here and leave in one
+	// Conn.Write, so a pipelined batch costs one write(2) instead of one per
+	// request. The deferred flush covers every return below; paths that must
+	// keep wire order against something else (a direct error write, a worker
+	// dispatch) flush explicitly first.
+	batch := inlineBatch{c: c}
+	defer batch.flush()
+
 	for len(buf) > 0 {
 		req, consumed, err := parsePooledRequest(buf, !zeroCopy, s.MaxRequestBody())
 		if err != nil {
+			batch.flush()
 			if errors.Is(err, ErrBodyTooLarge) {
 				_, _ = c.Write(resp413)
 				closeConn = true
@@ -339,7 +349,8 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 			if params != nil {
 				releaseParams(params)
 			}
-			_, _ = c.Write(withConnectionHeader(resp404, mode))
+			w := batch.wire()
+			*w = append(*w, withConnectionHeader(resp404, mode)...)
 		} else {
 			// ── Promotion ────────────────────────────────────────────────
 			// A zero-copy request's strings are views into gnet's read
@@ -364,6 +375,7 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 				if err := promoteRequest(req, buf, s.MaxRequestBody()); err != nil {
 					// Unreachable: the same bytes parsed once already.
 					releaseRequest(req)
+					batch.flush()
 					_, _ = c.Write(resp400)
 					closeConn = true
 					buf = nil
@@ -399,8 +411,11 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 			if s.inlineExec && !blocking {
 				// Run on this event-loop goroutine and answer with a direct
 				// write. No channel, no handoff, no poller wakeup.
-				s.runInline(c, ctx, mode)
+				s.runInlineBatched(c, ctx, mode, &batch)
 			} else {
+				// Everything answered so far goes out before the worker's
+				// response can be queued behind it.
+				batch.flush()
 				st.busy.Store(true)
 				s.dispatch(c, ctx, st, mode)
 			}
@@ -481,6 +496,82 @@ func (s *Breeze) heldBytesLimit() int {
 		return int(b) + maxRequestHeaderBytes
 	}
 	return 64 << 20
+}
+
+// inlineBatch accumulates the wire bytes of inline responses for one
+// OnTraffic event. It lives on the event-loop goroutine's stack and is never
+// shared, so it needs no locking.
+type inlineBatch struct {
+	c   gnet.Conn
+	buf *[]byte
+}
+
+// inlineBatchFlushAt bounds how much a single event may accumulate before it is
+// written out, so a very large pipelined burst does not build an equally large
+// response buffer.
+const inlineBatchFlushAt = 64 << 10
+
+// wire returns the batch's buffer, taking one from the pool on first use.
+func (b *inlineBatch) wire() *[]byte {
+	if b.buf == nil {
+		b.buf = acquireWireBuf()
+		*b.buf = (*b.buf)[:0]
+	}
+	return b.buf
+}
+
+// flush writes whatever has accumulated and returns the buffer to the pool.
+// Conn.Write has finished with the slice by the time it returns, which is what
+// licenses pooling it (see runInline). Safe to call when the batch is empty.
+func (b *inlineBatch) flush() {
+	if b.buf == nil {
+		return
+	}
+	if len(*b.buf) > 0 {
+		_, _ = b.c.Write(*b.buf)
+	}
+	releaseWireBuf(b.buf)
+	b.buf = nil
+}
+
+// runInlineBatched is runInline for the pipelined hot path: the response is
+// appended to batch instead of being written immediately.
+//
+// A request that asks for anything other than keep-alive flushes the batch and
+// takes the original single-response path, because withConnectionHeader
+// rewrites a whole wire buffer and must only ever see one response.
+func (s *Breeze) runInlineBatched(c gnet.Conn, ctx *Context, mode uint8, batch *inlineBatch) {
+	defer releaseContext(ctx)
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[Breeze][PANIC] %v\n%s\n", r, debug.Stack())
+			batch.flush() // earlier responses first, then the 500
+			c.Write(resp500)
+		}
+	}()
+
+	if err := ctx.Next(); err != nil {
+		s.handleChainError(ctx, err)
+	}
+	if ctx.Res == nil {
+		return
+	}
+
+	if mode != connModeKeepAlive {
+		batch.flush()
+		bp := acquireWireBuf()
+		*bp = ctx.Res.AppendTo(*bp)
+		*bp = withConnectionHeader(*bp, mode)
+		_, _ = c.Write(*bp)
+		releaseWireBuf(bp)
+		return
+	}
+
+	w := batch.wire()
+	*w = ctx.Res.AppendTo(*w)
+	if len(*w) >= inlineBatchFlushAt {
+		batch.flush()
+	}
 }
 
 // runInline executes ctx's chain on the calling event-loop goroutine and

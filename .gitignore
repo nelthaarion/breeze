@@ -17,7 +17,7 @@
 coverage.html
 /.claude/
 /.kilo/
-
+/perf/results
 # Host-built binaries for cmd/fleet-example's runtime-only images. Produced by
 # cmd/fleet-example/build.ps1 and consumed by Dockerfile.prebuilt; they are
 # platform-specific build output, not source.

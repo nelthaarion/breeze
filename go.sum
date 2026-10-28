@@ -8,6 +8,8 @@ github.com/nelthaarion/ants/v2 v2.12.1 h1:UGCNKPiKvumLKdCCPkpjCPdpNnuYkIITiGxu/+
 github.com/nelthaarion/ants/v2 v2.12.1/go.mod h1:f06pdC+hO9q3Qk86+NPaGy0Hq9b+VnYVOSF/bZkoPPM=
 github.com/nelthaarion/gnet/v2 v2.3.0 h1:S0RJLWHumolxrtv70iEcNj13mUYUzvoue6krO6XRF84=
 github.com/nelthaarion/gnet/v2 v2.3.0/go.mod h1:Vg6Bf4ii+MmjfZOzShvIFfJaKxElr6GLArTTD0n2KP8=
+github.com/nelthaarion/gnet/v2 v2.3.1 h1:DS0CepraTGrvLAmHsxncYwiL1uZFOjXbYs6VmJ3LRMQ=
+github.com/nelthaarion/gnet/v2 v2.3.1/go.mod h1:Vg6Bf4ii+MmjfZOzShvIFfJaKxElr6GLArTTD0n2KP8=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/valyala/bytebufferpool v1.0.0 h1:GqA5TC/0021Y/b9FG4Oi9Mr3q7XYx6KllzawFIhcdPw=

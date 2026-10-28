@@ -20,6 +20,15 @@ type JWTOptions struct {
 	RequiredRoles      []string                                          // Optional: roles required to access the route
 	ClaimsValidator    func(claims jwt.MapClaims) bool                   // Optional: extra claim validation
 	EnableRefreshToken bool                                              // Enable refresh token support
+
+	// CacheSize, when above zero, keeps up to that many verified access tokens in
+	// memory (sharded, evicting an arbitrary entry when full) and accepts a cached
+	// token without verifying its signature again until the token's own exp. For a
+	// client that sends the same token on every request this removes the HMAC and
+	// JSON decoding from the request path. RequiredRoles and ClaimsValidator still
+	// run on every request, against a private copy of the claims. Off by default:
+	// it trades a little memory, and re-verification on each request, for speed.
+	CacheSize int
 }
 
 // DefaultTokenLookup extracts access token from Authorization header.
@@ -140,6 +149,11 @@ func JWTAuthMiddleware(opts JWTOptions) breeze.HandlerFunc {
 	facts.Algorithm = opts.SigningMethod.Alg()
 	facts.ContextKey = opts.UserContextKey
 	jwtConfig.Store(&facts)
+	var cache *jwtCache
+	if opts.CacheSize > 0 {
+		cache = newJWTCache(opts.CacheSize)
+	}
+	accessKey := []byte(opts.AccessSecret)
 
 	return func(ctx *breeze.Context) error {
 		accessToken, refreshToken, err := opts.TokenLookup(ctx)
@@ -149,7 +163,7 @@ func JWTAuthMiddleware(opts JWTOptions) breeze.HandlerFunc {
 			return nil
 		}
 
-		claims, valid := validateJWTType(accessToken, opts.AccessSecret, opts.SigningMethod, "access")
+		claims, valid := verifyAccess(cache, accessToken, accessKey, opts.SigningMethod)
 		if !valid && opts.EnableRefreshToken && refreshToken != "" {
 			// Attempt refresh token. A refresh token is never accepted as an access token.
 			refreshClaims, ok := validateJWTType(refreshToken, opts.RefreshSecret, opts.SigningMethod, "refresh")
@@ -214,11 +228,17 @@ func validateJWT(tokenString, secret string, method jwt.SigningMethod) (jwt.MapC
 }
 
 func validateJWTType(tokenString, secret string, method jwt.SigningMethod, expectedType string) (jwt.MapClaims, bool) {
+	return validateJWTKey(tokenString, []byte(secret), method, expectedType)
+}
+
+// validateJWTKey is validateJWTType with the HMAC key already converted to bytes,
+// so the middleware converts its secret once instead of on every request.
+func validateJWTKey(tokenString string, key []byte, method jwt.SigningMethod, expectedType string) (jwt.MapClaims, bool) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		if token.Method.Alg() != method.Alg() {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(secret), nil
+		return key, nil
 	})
 	if err != nil || !token.Valid {
 		return nil, false

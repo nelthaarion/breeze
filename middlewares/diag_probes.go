@@ -183,9 +183,7 @@ func etagProbe() diag.Report {
 	snap := etagCounter.Snapshot()
 	detail := counterDetail(snap, "not_modified_304", "full_body")
 	if cache := etagCacheHandle.Load(); cache != nil {
-		cache.mu.RLock()
-		detail["stored_entries"] = len(cache.store)
-		cache.mu.RUnlock()
+		detail["stored_entries"] = cache.entries()
 	}
 
 	report := diag.OK(fmt.Sprintf("installed; %d 304(s) served, %d full body/bodies",

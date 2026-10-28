@@ -189,7 +189,7 @@ func main() {
 	router.Handle(breeze.GET, "/", func(ctx *breeze.Context) error {
 		return ctx.WriteString("Breeze — HTTP + WebSocket server")
 	})
-
+	app.SetPollYield(breeze.PollYieldNever)
 	fmt.Println("Breeze listening on :3000")
 	fmt.Println("  WebSocket chat : ws://localhost:3000/ws")
 	fmt.Println("  WebSocket echo : ws://localhost:3000/ws/echo")

@@ -63,6 +63,10 @@ type route struct {
 	// connection pinned to the same reactor — so it is handed to the worker
 	// pool instead. Set via HandleBlocking.
 	blocking bool
+
+	// order is the route's position in its method bucket, i.e. its registration
+	// order. The segment trie uses it to return the first-registered match.
+	order int
 }
 
 // bucket indices for the per-method route index. Requests and routes are
@@ -153,6 +157,10 @@ type methodIndex struct {
 	// order — the only routes that can shadow a static path. Kept separate so
 	// eligibility testing does not walk the whole bucket.
 	dynamic []*route
+
+	// root is the segment trie over every route in the bucket (see router_trie.go).
+	// It is not built for bucketOther, which keeps the ordered scan.
+	root *segNode
 }
 
 type Router struct {
@@ -412,7 +420,11 @@ func (r *Router) HandleBlocking(method Method, pattern string, handler HandlerFu
 func (r *Router) indexRoute(rt *route) {
 	b := methodBucket(rt.method)
 	idx := &r.byMethod[b]
+	rt.order = len(idx.routes)
 	idx.routes = append(idx.routes, rt)
+	if b != bucketOther {
+		idx.insertTrie(rt)
+	}
 
 	if rt.hasWildcard || rt.paramCount > 0 {
 		// A dynamic route can only shadow static routes registered after it,
@@ -466,16 +478,23 @@ func (r *route) matchesSegments(segs []string) bool {
 	return true
 }
 
-// lookup resolves req to a registered route.
+// lookup resolves req to a route.
 //
-// It is the single matching implementation behind Find and findChain. Keeping
-// the path-splitting scratch array local to this function is deliberate: the
-// segments slice points into it, so handing the array to a helper would force
-// it onto the heap and put an allocation back on the request path.
+// Resolution order:
 //
-// Returns the matched route, its captured params (nil when the route has
-// none), and autoIndex — true when nothing matched but the request is a GET
-// for "/" and root auto-serving is on.
+//  1. Exact-path map (methodIndex.static): fully static routes that no earlier
+//     dynamic route can shadow are found with a single hash of the path.
+//  2. Segment trie (methodIndex.root, router_trie.go): everything else - routes
+//     with :params, trailing wildcards, and static routes that an earlier dynamic
+//     route would shadow - is resolved by walking the request's segments through a
+//     trie. The walk returns the matching route with the lowest registration
+//     index, which is exactly what the ordered scan it replaces returned, so
+//     "first registered wins" is unchanged; only the cost moves from O(routes) to
+//     O(path depth).
+//  3. bucketOther (HEAD, TRACE, CONNECT, extension methods) mixes methods in one
+//     bucket and holds few routes, so it keeps the ordered scan.
+//
+// When params is non-nil it came from the pooled params set and the caller owns it.
 func (r *Router) lookup(req *HTTPRequest) (matched *route, params map[string]string, autoIndex bool) {
 	path := req.Path
 	if len(path) > 0 && path[0] == '/' {
@@ -488,18 +507,14 @@ func (r *Router) lookup(req *HTTPRequest) (matched *route, params map[string]str
 	b := methodBucket(req.Method)
 	idx := &r.byMethod[b]
 
-	// Exact-path fast path: one map probe, and the path is never split.
 	if idx.static != nil {
 		if rt := idx.static[path]; rt != nil {
 			return rt, nil, false
 		}
 	}
 
-	// Split the request path into segments without allocating a []string.
-	// We store them in a small stack-allocated array for the common case.
 	var segBuf [16]string
 	reqSegments := segBuf[:0]
-
 	if path != "" {
 		start := 0
 		for i := 0; i <= len(path); i++ {
@@ -509,7 +524,6 @@ func (r *Router) lookup(req *HTTPRequest) (matched *route, params map[string]str
 					reqSegments = reqSegments[:len(reqSegments)+1]
 					reqSegments[len(reqSegments)-1] = seg
 				} else {
-					// Overflow: fall back to heap allocation (paths with >16 segments)
 					reqSegments = append(reqSegments, seg)
 				}
 				start = i + 1
@@ -517,80 +531,19 @@ func (r *Router) lookup(req *HTTPRequest) (matched *route, params map[string]str
 		}
 	}
 
-	nReq := len(reqSegments)
-
-	// Within buckets 0..5 every route shares the request's method, so the
-	// method comparison is skipped entirely. bucketOther mixes methods and
-	// still needs it.
-	checkMethod := b == bucketOther
-
-	for _, rt := range idx.routes {
-		if checkMethod && rt.method != req.Method {
-			continue
-		}
-
-		if rt.hasWildcard {
-			if nReq < len(rt.segments) {
-				continue
-			}
-			match := true
-			for i, rseg := range rt.segments {
-				if rt.paramIndex[i] {
-					// param: always matches, captured below
-				} else if rseg != reqSegments[i] {
-					match = false
-					break
-				}
-			}
-			if !match {
-				continue
-			}
-			if rt.paramCount > 0 || rt.wildcardName != "" {
-				params = acquireParams()
-				for i, rseg := range rt.segments {
-					if rt.paramIndex[i] {
-						params[rseg[1:]] = reqSegments[i]
-					}
-				}
-				params[rt.wildcardName] = strings.Join(reqSegments[len(rt.segments):], "/")
-			}
-			return rt, params, false
-		}
-
-		// Normal route: segment count must match exactly.
-		if len(rt.segments) != nReq {
-			continue
-		}
-
-		match := true
-		for i, rseg := range rt.segments {
-			if !rt.paramIndex[i] && rseg != reqSegments[i] {
-				match = false
-				break
-			}
-		}
-		if !match {
-			continue
-		}
-
-		// Only allocate the params map when there are actual params.
-		if rt.paramCount > 0 {
-			params = acquireParams()
-			for i, rseg := range rt.segments {
-				if rt.paramIndex[i] {
-					params[rseg[1:]] = reqSegments[i]
-				}
-			}
-		}
-
-		return rt, params, false
+	var rt *route
+	if b == bucketOther {
+		rt = idx.scan(req.Method, reqSegments)
+	} else if idx.root != nil {
+		rt, _ = idx.root.match(reqSegments, 0, nil, maxRouteOrder)
+	}
+	if rt != nil {
+		return rt, bindParams(rt, path, reqSegments), false
 	}
 
-	// Nothing matched. GET "/" may still be served from staticDir/index.html.
-	if r.autoServeRoot && nReq == 0 && b == bucketGET {
+	if r.autoServeRoot && len(reqSegments) == 0 && b == bucketGET {
 		return nil, nil, true
 	}
-
 	return nil, nil, false
 }
 

@@ -38,6 +38,23 @@ import (
 // acquired from the pool, Reset with the output buffer, used, and returned.
 // The bytes.Buffer is also pooled to avoid its internal []byte allocation.
 func CompressionMiddleware() breeze.HandlerFunc {
+	return CompressionMiddlewareWith(CompressionOptions{})
+}
+
+// CompressionOptions tunes CompressionMiddlewareWith. The zero value is the
+// behaviour of CompressionMiddleware.
+type CompressionOptions struct {
+	// MinSize is the smallest response body, in bytes, that is compressed. Shorter
+	// bodies are sent as they are: compressing a few dozen bytes pays the whole
+	// encoder setup, usually saves nothing and can make the body larger. The zero
+	// value compresses every non-empty body, as CompressionMiddleware always has;
+	// a few hundred bytes is the usual choice for JSON APIs (nginx's
+	// gzip_min_length defaults to 20, many servers use 256 to 1024).
+	MinSize int
+}
+
+// CompressionMiddlewareWith is CompressionMiddleware with options.
+func CompressionMiddlewareWith(opts CompressionOptions) breeze.HandlerFunc {
 	compressionInstalled.Store(true)
 	return func(ctx *breeze.Context) error {
 		// Run the handler first — we need its response to compress. A failure is
@@ -49,6 +66,10 @@ func CompressionMiddleware() breeze.HandlerFunc {
 
 		// Nothing to compress.
 		if ctx.Res == nil || len(ctx.Res.Body) == 0 {
+			return nil
+		}
+		if len(ctx.Res.Body) < opts.MinSize {
+			compressionCounter.Miss()
 			return nil
 		}
 
@@ -71,8 +92,9 @@ func CompressionMiddleware() breeze.HandlerFunc {
 
 		// Honor q-values. strings.Contains("gzip;q=0", "gzip") was a protocol bug:
 		// it compressed responses the client explicitly said it did not accept.
+		qs := parseAcceptEncoding(accept)
 		for _, candidate := range []string{"br", "gzip", "deflate"} {
-			if encodingQValue(accept, candidate) <= 0 {
+			if qs.of(candidate) <= 0 {
 				continue
 			}
 			switch candidate {

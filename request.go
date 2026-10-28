@@ -371,15 +371,31 @@ func validHTTPToken(b []byte) bool {
 		return false
 	}
 	for _, c := range b {
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-		case strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c)):
-		default:
+		if !tokenChar[c] {
 			return false
 		}
 	}
 	return true
 }
+
+// tokenChar is the RFC 9110 tchar set as a lookup table. The header-name check
+// runs for every header of every request, and '-' (in most real header names)
+// used to fall through to a strings.ContainsRune scan.
+var tokenChar = func() (t [256]bool) {
+	for c := 'a'; c <= 'z'; c++ {
+		t[c] = true
+	}
+	for c := 'A'; c <= 'Z'; c++ {
+		t[c] = true
+	}
+	for c := '0'; c <= '9'; c++ {
+		t[c] = true
+	}
+	for _, c := range "!#$%&'*+-.^_`|~" {
+		t[c] = true
+	}
+	return
+}()
 
 func validHeaderValue(b []byte) bool {
 	for _, c := range b {

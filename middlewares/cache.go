@@ -3,128 +3,141 @@ package middleware
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"hash/maphash"
 	"strings"
 	"sync"
 
 	"github.com/nelthaarion/breeze/v2"
 )
 
-// ETagCache stores cached responses per route or URL.
+// ETagCache remembers the ETag last computed for each request URL (path plus
+// query) so that a conditional request can be answered 304 without running the
+// handler.
 //
-// FIX: The original middleware inspected ctx.Res BEFORE calling ctx.Next(),
-// so it always saw nil and short-circuited — ETag generation never ran.
-// The middleware now calls ctx.Next() first, then computes the ETag from
-// the handler's response body (strong validation).
-//
-// FIX: The cache key now includes the query string so that
-// /api/users?page=1 and /api/users?page=2 get distinct ETags.
-//
-// Performance decisions:
-//   - RLock for the store read (If-None-Match pre-check) allows concurrent
-//     304 checks without contention.
-//   - Lock for the store write is held for a single map assignment —
-//     microseconds, never across ctx.Next().
-//   - MD5 is used because it is already in the stdlib and the body is in
-//     memory. For extreme throughput, xxhash would be ~5x faster but adds
-//     a dependency. The body hash is O(len(body)) regardless.
-//   - hex.EncodeToString allocates one string per response. This is
-//     unavoidable with the current ETag header API.
-//
-// NOTE: The store grows unboundedly. For production use, add LRU or TTL
-// eviction. The store is written on every response but only read on
-// If-None-Match requests — it exists for observability and future
-// cache-hit support.
+// It is sharded, so concurrent event loops do not queue on one lock, and bounded:
+// a full shard evicts an arbitrary entry, which at worst makes one conditional
+// request run its handler again (it is still answered 304 afterwards when the
+// ETag matches). It stores only the ETag, not the response body.
 type ETagCache struct {
-	mu    sync.RWMutex
-	store map[string]*cachedResponse
+	shards [etagShards]etagShard
 }
 
-type cachedResponse struct {
-	body []byte
-	etag string
+const (
+	etagShards   = 32
+	etagShardMax = 512 // entries per shard, 16384 URLs in all
+)
+
+type etagShard struct {
+	mu sync.RWMutex
+	m  map[string]string // URL -> ETag
+	_  [32]byte          // keep neighbouring shards off one cache line
 }
 
-// NewETagCache creates a new ETag cache.
-func NewETagCache() *ETagCache {
-	c := &ETagCache{
-		store: make(map[string]*cachedResponse),
+var etagSeed = maphash.MakeSeed()
+
+func (c *ETagCache) shard(key string) *etagShard {
+	return &c.shards[maphash.String(etagSeed, key)%etagShards]
+}
+
+func (c *ETagCache) get(key string) (string, bool) {
+	sh := c.shard(key)
+	sh.mu.RLock()
+	etag, ok := sh.m[key]
+	sh.mu.RUnlock()
+	return etag, ok
+}
+
+// put records etag for key. The common case, the same content as last time, only
+// takes the read lock and writes nothing.
+func (c *ETagCache) put(key, etag string) {
+	sh := c.shard(key)
+	sh.mu.RLock()
+	cur, ok := sh.m[key]
+	sh.mu.RUnlock()
+	if ok && cur == etag {
+		return
 	}
-	// Recorded so the probe can report this instance's store size. The most
-	// recently constructed cache wins, matching the registry's rule everywhere.
+	sh.mu.Lock()
+	if _, exists := sh.m[key]; !exists && len(sh.m) >= etagShardMax {
+		for k := range sh.m {
+			delete(sh.m, k)
+			break
+		}
+	}
+	sh.m[strings.Clone(key)] = etag // key may alias request memory
+	sh.mu.Unlock()
+}
+
+func (c *ETagCache) entries() int {
+	n := 0
+	for i := range c.shards {
+		c.shards[i].mu.RLock()
+		n += len(c.shards[i].m)
+		c.shards[i].mu.RUnlock()
+	}
+	return n
+}
+
+// NewETagCache returns an empty cache.
+func NewETagCache() *ETagCache {
+	c := &ETagCache{}
+	for i := range c.shards {
+		c.shards[i].m = make(map[string]string)
+	}
 	etagCacheHandle.Store(c)
 	return c
 }
 
-// ETagMiddleware returns a Breeze middleware that sets ETag headers
-// and returns 304 Not Modified when the client's If-None-Match matches.
-//
-// The ETag is computed from the fresh response body on every request
-// (strong validation), so stale 304s are impossible — if the handler
-// produces a different body, the ETag changes and the client gets a
-// full 200 response.
+// ETagMiddleware sets an ETag (the MD5 of the response body) on every response with
+// a body and answers a matching If-None-Match with 304 Not Modified. When the
+// cache already holds the matching ETag for the URL the handler is skipped.
 func (c *ETagCache) ETagMiddleware() breeze.HandlerFunc {
 	etagInstalled.Store(true)
 	return func(ctx *breeze.Context) error {
-		// Pre-check: if the client sent If-None-Match, see if we have a
-		// stored ETag for this URL. If it matches, we can skip the handler
-		// entirely and return 304 immediately.
 		inm := ctx.Req.Header["if-none-match"]
 		if inm != "" {
-			cacheKey := buildCacheKey(ctx)
-			c.mu.RLock()
-			cached, ok := c.store[cacheKey]
-			c.mu.RUnlock()
-			if ok && cached.etag == inm {
+			if etag, ok := c.get(etagKey(ctx)); ok && etag == inm {
 				ctx.Status(304)
 				ctx.SetHeader("ETag", inm)
 				ctx.Res.Body = nil
-				// A 304 served without running the handler at all — the best
-				// outcome this middleware has, and the one its hit rate means.
 				etagCounter.Hit()
-				return nil // skip handler — client's cache is still valid
+				return nil // skip handler: the client's copy is still valid
 			}
 		}
 
-		// Run the handler to produce the response. A failure short-circuits: an
-		// ETag over an error body would let a client cache the failure.
 		if err := ctx.Next(); err != nil {
 			return err
 		}
-
 		if ctx.Res == nil || len(ctx.Res.Body) == 0 {
 			return nil
 		}
 
-		// Compute ETag from the fresh response body.
 		hash := md5.Sum(ctx.Res.Body)
-		etag := hex.EncodeToString(hash[:])
+		var hexETag [md5.Size * 2]byte
+		hex.Encode(hexETag[:], hash[:])
+		etag := string(hexETag[:])
+		c.put(etagKey(ctx), etag)
 
-		cacheKey := buildCacheKey(ctx)
-
-		// Store for future If-None-Match pre-checks.
-		c.mu.Lock()
-		c.store[cacheKey] = &cachedResponse{
-			body: ctx.Res.Body,
-			etag: etag,
-		}
-		c.mu.Unlock()
-
-		// Set ETag header on the response.
 		ctx.SetHeader("ETag", etag)
-
-		// If the client's If-None-Match matches the fresh ETag, return 304.
 		if inm != "" && inm == etag {
 			ctx.Status(304)
 			ctx.Res.Body = nil
-			// Counted as a hit even though the handler ran: the body did not go
-			// on the wire, which is the bandwidth this middleware saves.
 			etagCounter.Hit()
 		} else {
 			etagCounter.Miss()
 		}
-
 		return nil
 	}
+}
+
+// etagKey is the cache key of the request: its path, plus the canonical query
+// when there is one. Without a query it is the path itself, not a copy, so a
+// lookup allocates nothing; put clones the key before storing it.
+func etagKey(ctx *breeze.Context) string {
+	if len(ctx.Req.Query) == 0 {
+		return ctx.Req.Path
+	}
+	return buildCacheKey(ctx)
 }
 
 // buildCacheKey constructs a cache key from the path and query string.

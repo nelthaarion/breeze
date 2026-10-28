@@ -361,18 +361,11 @@ func (ctx *Context) SetHeaderStatic(block []byte, lookup map[string]string) {
 	// A second static middleware (CORS then Security, say): the response can hold
 	// one block, so render the union. This is the only per-request allocation the
 	// static path makes, and only when two static middlewares meet.
-	nb := make([]byte, 0, len(r.preBuilt)+len(block))
-	nb = append(nb, r.preBuilt...)
-	nb = append(nb, block...)
-	nm := make(map[string]string, len(r.preHeaders)+len(lookup))
-	for k, v := range r.preHeaders {
-		nm[k] = v
-	}
-	for k, v := range lookup {
-		nm[k] = v
-	}
-	r.preBuilt = nb
-	r.preHeaders = nm
+	// The merge of two given static blocks never changes, so it is computed once
+	// per pair and shared (read-only, behind headersShared) by every response.
+	u := staticUnionOf(r.preBuilt, r.preHeaders, block, lookup)
+	r.preBuilt = u.block
+	r.preHeaders = u.lookup
 	r.headersShared = true
 	r.rawHeaders = nil
 }

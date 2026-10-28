@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -45,6 +46,12 @@ type Breeze struct {
 	// SetInlineExecution for the reasoning and the trade-off.
 	inlineExec bool
 
+	// pollYield is the PollYield mode, see SetPollYield in pollyield.go.
+	pollYield atomic.Int32
+
+	// yieldOnDispatch is set by Run when the event loops run without gnet's
+	// pre-block yield: a loop that hands a request to a worker then yields itself.
+	yieldOnDispatch atomic.Bool
 	// zeroCopyHeaders parses headers in place in gnet's read buffer instead of
 	// copying the header block. Off by default because it narrows the lifetime
 	// of every string on the request. See SetZeroCopyHeaders.
@@ -710,6 +717,12 @@ func (s *Breeze) dispatch(c gnet.Conn, ctx *Context, st *connState, mode uint8) 
 	} else {
 		go exec()
 	}
+	// Without gnet's pre-block yield (see PollYield) nothing would otherwise let
+	// the worker that was just made runnable have this P before the loop sleeps in
+	// the kernel; yield here, only for requests that were actually handed off.
+	if s.yieldOnDispatch.Load() {
+		runtime.Gosched()
+	}
 }
 
 // OnClose cleans up all per-connection state when a connection closes.
@@ -762,6 +775,8 @@ func (s *Breeze) RunOn(host string, port int, multiCore bool) error {
 	s.listenPort.Store(int64(port))
 	h := host
 	s.listenHost.Store(&h)
+	noYield := s.noPollYield()
+	s.yieldOnDispatch.Store(noYield)
 	serve := func(addr string) error {
 		return gnet.Run(
 			s,
@@ -772,6 +787,7 @@ func (s *Breeze) RunOn(host string, port int, multiCore bool) error {
 			gnet.WithReadBufferCap(64<<10),
 			gnet.WithWriteBufferCap(64<<10),
 			gnet.WithTicker(true),
+			gnet.WithNoPollYield(noYield),
 		)
 	}
 	err := serve("tcp://" + net.JoinHostPort(host, strconv.Itoa(port)))

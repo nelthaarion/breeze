@@ -6,7 +6,7 @@ require (
 	github.com/andybalholm/brotli v1.2.6
 	github.com/goccy/go-json v0.11.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/nelthaarion/gnet/v2 v2.3.0
+	github.com/nelthaarion/gnet/v2 v2.3.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 

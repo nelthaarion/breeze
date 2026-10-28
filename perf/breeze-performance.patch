@@ -1,0 +1,2359 @@
+diff -ruN --strip-trailing-cr -x perf a/breeze.go b/breeze.go
+--- a/breeze.go	2026-10-26 01:58:54.000000000 +0000
++++ b/breeze.go	2026-10-27 21:10:53.841420591 +0000
+@@ -5,6 +5,7 @@
+ 	"errors"
+ 	"fmt"
+ 	"net"
++	"runtime"
+ 	"runtime/debug"
+ 	"strconv"
+ 	"strings"
+@@ -45,6 +46,12 @@
+ 	// SetInlineExecution for the reasoning and the trade-off.
+ 	inlineExec bool
+ 
++	// pollYield is the PollYield mode, see SetPollYield in pollyield.go.
++	pollYield atomic.Int32
++
++	// yieldOnDispatch is set by Run when the event loops run without gnet's
++	// pre-block yield: a loop that hands a request to a worker then yields itself.
++	yieldOnDispatch atomic.Bool
+ 	// zeroCopyHeaders parses headers in place in gnet's read buffer instead of
+ 	// copying the header block. Off by default because it narrows the lifetime
+ 	// of every string on the request. See SetZeroCopyHeaders.
+@@ -710,6 +717,12 @@
+ 	} else {
+ 		go exec()
+ 	}
++	// Without gnet's pre-block yield (see PollYield) nothing would otherwise let
++	// the worker that was just made runnable have this P before the loop sleeps in
++	// the kernel; yield here, only for requests that were actually handed off.
++	if s.yieldOnDispatch.Load() {
++		runtime.Gosched()
++	}
+ }
+ 
+ // OnClose cleans up all per-connection state when a connection closes.
+@@ -762,6 +775,8 @@
+ 	s.listenPort.Store(int64(port))
+ 	h := host
+ 	s.listenHost.Store(&h)
++	noYield := s.noPollYield()
++	s.yieldOnDispatch.Store(noYield)
+ 	serve := func(addr string) error {
+ 		return gnet.Run(
+ 			s,
+@@ -772,6 +787,7 @@
+ 			gnet.WithReadBufferCap(64<<10),
+ 			gnet.WithWriteBufferCap(64<<10),
+ 			gnet.WithTicker(true),
++			gnet.WithNoPollYield(noYield),
+ 		)
+ 	}
+ 	err := serve("tcp://" + net.JoinHostPort(host, strconv.Itoa(port)))
+diff -ruN --strip-trailing-cr -x perf a/context.go b/context.go
+--- a/context.go	2026-10-18 01:52:48.000000000 +0000
++++ b/context.go	2026-10-27 21:06:42.991932818 +0000
+@@ -361,18 +361,11 @@
+ 	// A second static middleware (CORS then Security, say): the response can hold
+ 	// one block, so render the union. This is the only per-request allocation the
+ 	// static path makes, and only when two static middlewares meet.
+-	nb := make([]byte, 0, len(r.preBuilt)+len(block))
+-	nb = append(nb, r.preBuilt...)
+-	nb = append(nb, block...)
+-	nm := make(map[string]string, len(r.preHeaders)+len(lookup))
+-	for k, v := range r.preHeaders {
+-		nm[k] = v
+-	}
+-	for k, v := range lookup {
+-		nm[k] = v
+-	}
+-	r.preBuilt = nb
+-	r.preHeaders = nm
++	// The merge of two given static blocks never changes, so it is computed once
++	// per pair and shared (read-only, behind headersShared) by every response.
++	u := staticUnionOf(r.preBuilt, r.preHeaders, block, lookup)
++	r.preBuilt = u.block
++	r.preHeaders = u.lookup
+ 	r.headersShared = true
+ 	r.rawHeaders = nil
+ }
+diff -ruN --strip-trailing-cr -x perf a/middlewares/accept_encoding.go b/middlewares/accept_encoding.go
+--- a/middlewares/accept_encoding.go	1970-01-01 00:00:00.000000000 +0000
++++ b/middlewares/accept_encoding.go	2026-10-27 21:17:33.167066652 +0000
+@@ -0,0 +1,92 @@
++package middleware
++
++import (
++	"strconv"
++	"strings"
++)
++
++// acceptQ holds the quality values of the three encodings this package can
++// produce, as encodingQValue reports them for the same header.
++type acceptQ struct{ br, gzip, deflate float64 }
++
++func (a acceptQ) of(encoding string) float64 {
++	switch encoding {
++	case "br":
++		return a.br
++	case "gzip":
++		return a.gzip
++	case "deflate":
++		return a.deflate
++	}
++	return 0
++}
++
++// parseAcceptEncoding evaluates an Accept-Encoding header for br, gzip and
++// deflate in one pass without allocating. encodingQValue, which it replaces on
++// the request path, re-split the header with strings.Split for every candidate
++// encoding (up to three times per request, several allocations each).
++//
++// The result is identical to calling encodingQValue once per encoding: the last
++// explicit entry for an encoding wins, then the last "*", then 0. A header with
++// non-ASCII bytes is handed to encodingQValue itself so its Unicode case folding
++// and whitespace rules apply unchanged.
++func parseAcceptEncoding(header string) acceptQ {
++	for i := 0; i < len(header); i++ {
++		if header[i] >= 0x80 {
++			return acceptQ{encodingQValue(header, "br"), encodingQValue(header, "gzip"), encodingQValue(header, "deflate")}
++		}
++	}
++	best := [3]float64{-1, -1, -1}
++	wildcard := -1.0
++	rest := header
++	for {
++		raw, more := rest, false
++		if i := strings.IndexByte(rest, ','); i >= 0 {
++			raw, rest, more = rest[:i], rest[i+1:], true
++		}
++		name, params := raw, ""
++		if i := strings.IndexByte(raw, ';'); i >= 0 {
++			name, params = raw[:i], raw[i+1:]
++		}
++		q := 1.0
++		for params != "" {
++			param := params
++			if i := strings.IndexByte(params, ';'); i >= 0 {
++				param, params = params[:i], params[i+1:]
++			} else {
++				params = ""
++			}
++			param = strings.TrimSpace(param)
++			if eq := strings.IndexByte(param, '='); eq >= 0 && strings.EqualFold(strings.TrimSpace(param[:eq]), "q") {
++				if v, err := strconv.ParseFloat(strings.TrimSpace(param[eq+1:]), 64); err == nil && v >= 0 && v <= 1 {
++					q = v
++				} else {
++					q = 0
++				}
++			}
++		}
++		switch name = strings.TrimSpace(name); {
++		case strings.EqualFold(name, "br"):
++			best[0] = q
++		case strings.EqualFold(name, "gzip"):
++			best[1] = q
++		case strings.EqualFold(name, "deflate"):
++			best[2] = q
++		case name == "*":
++			wildcard = q
++		}
++		if !more {
++			break
++		}
++	}
++	resolve := func(v float64) float64 {
++		if v >= 0 {
++			return v
++		}
++		if wildcard >= 0 {
++			return wildcard
++		}
++		return 0
++	}
++	return acceptQ{resolve(best[0]), resolve(best[1]), resolve(best[2])}
++}
+diff -ruN --strip-trailing-cr -x perf a/middlewares/accept_encoding_test.go b/middlewares/accept_encoding_test.go
+--- a/middlewares/accept_encoding_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/middlewares/accept_encoding_test.go	2026-10-27 21:17:33.169556741 +0000
+@@ -0,0 +1,73 @@
++package middleware
++
++import (
++	"math/rand"
++	"strings"
++	"testing"
++)
++
++func TestParseAcceptEncodingMatchesGeneric(t *testing.T) {
++	names := []string{"br", "gzip", "deflate", "*", "BR", "GZip", "identity", "compress", "x-gzip", " br ", "\tgzip", "deflate ", "", "gzip2", "g zip"}
++	qs := []string{"", ";q=1", ";q=0", ";q=0.5", "; q=0.001", ";Q=0.3", ";q=1.0", ";q=abc", ";q=-1", ";q=2", ";q= 0.7 ", ";q=.5",
++		";q=1e0", ";q=0x1p-1", ";q=", ";level=1;q=0.2", ";q=0.1;q=0.9", ";;q=0.4", ";", "; q = 0.2", ";q=NaN", ";q=+1", ";x=y"}
++	seps := []string{",", ", ", " , ", ",,", ";", ", ,"}
++	rng := rand.New(rand.NewSource(11))
++	for i := 0; i < 300000; i++ {
++		var sb strings.Builder
++		for j, n := 0, rng.Intn(6); j < n; j++ {
++			if j > 0 {
++				sb.WriteString(seps[rng.Intn(len(seps))])
++			}
++			sb.WriteString(names[rng.Intn(len(names))])
++			sb.WriteString(qs[rng.Intn(len(qs))])
++		}
++		h := sb.String()
++		switch rng.Intn(40) {
++		case 0:
++			h += "\u00a0" // non-ASCII: must take the generic path
++		case 1:
++			h = "gz\u0130p, " + h
++		}
++		got := parseAcceptEncoding(h)
++		for _, e := range []string{"br", "gzip", "deflate"} {
++			if got.of(e) != encodingQValue(h, e) {
++				t.Fatalf("header %q, %s: got %v want %v", h, e, got.of(e), encodingQValue(h, e))
++			}
++		}
++	}
++}
++
++var sinkQ acceptQ
++
++func TestParseAcceptEncodingNoAllocs(t *testing.T) {
++	if n := testing.AllocsPerRun(1000, func() { sinkQ = parseAcceptEncoding("gzip, deflate, br;q=0.8, *;q=0.1") }); n != 0 {
++		t.Fatalf("allocates %v times per call", n)
++	}
++}
++
++func BenchmarkAcceptEncodingGeneric(b *testing.B) {
++	b.ReportAllocs()
++	h := "gzip, deflate, br"
++	for i := 0; i < b.N; i++ {
++		for _, e := range []string{"br", "gzip", "deflate"} {
++			if encodingQValue(h, e) <= 0 {
++				continue
++			}
++			break
++		}
++	}
++}
++
++func BenchmarkAcceptEncodingSinglePass(b *testing.B) {
++	b.ReportAllocs()
++	h := "gzip, deflate, br"
++	for i := 0; i < b.N; i++ {
++		q := parseAcceptEncoding(h)
++		for _, e := range []string{"br", "gzip", "deflate"} {
++			if q.of(e) <= 0 {
++				continue
++			}
++			break
++		}
++	}
++}
+diff -ruN --strip-trailing-cr -x perf a/middlewares/cache.go b/middlewares/cache.go
+--- a/middlewares/cache.go	2026-09-06 00:19:44.000000000 +0000
++++ b/middlewares/cache.go	2026-10-28 02:07:37.215232743 +0000
+@@ -3,130 +3,143 @@
+ import (
+ 	"crypto/md5"
+ 	"encoding/hex"
++	"hash/maphash"
+ 	"strings"
+ 	"sync"
+ 
+ 	"github.com/nelthaarion/breeze/v2"
+ )
+ 
+-// ETagCache stores cached responses per route or URL.
++// ETagCache remembers the ETag last computed for each request URL (path plus
++// query) so that a conditional request can be answered 304 without running the
++// handler.
+ //
+-// FIX: The original middleware inspected ctx.Res BEFORE calling ctx.Next(),
+-// so it always saw nil and short-circuited — ETag generation never ran.
+-// The middleware now calls ctx.Next() first, then computes the ETag from
+-// the handler's response body (strong validation).
+-//
+-// FIX: The cache key now includes the query string so that
+-// /api/users?page=1 and /api/users?page=2 get distinct ETags.
+-//
+-// Performance decisions:
+-//   - RLock for the store read (If-None-Match pre-check) allows concurrent
+-//     304 checks without contention.
+-//   - Lock for the store write is held for a single map assignment —
+-//     microseconds, never across ctx.Next().
+-//   - MD5 is used because it is already in the stdlib and the body is in
+-//     memory. For extreme throughput, xxhash would be ~5x faster but adds
+-//     a dependency. The body hash is O(len(body)) regardless.
+-//   - hex.EncodeToString allocates one string per response. This is
+-//     unavoidable with the current ETag header API.
+-//
+-// NOTE: The store grows unboundedly. For production use, add LRU or TTL
+-// eviction. The store is written on every response but only read on
+-// If-None-Match requests — it exists for observability and future
+-// cache-hit support.
++// It is sharded, so concurrent event loops do not queue on one lock, and bounded:
++// a full shard evicts an arbitrary entry, which at worst makes one conditional
++// request run its handler again (it is still answered 304 afterwards when the
++// ETag matches). It stores only the ETag, not the response body.
+ type ETagCache struct {
+-	mu    sync.RWMutex
+-	store map[string]*cachedResponse
++	shards [etagShards]etagShard
++}
++
++const (
++	etagShards   = 32
++	etagShardMax = 512 // entries per shard, 16384 URLs in all
++)
++
++type etagShard struct {
++	mu sync.RWMutex
++	m  map[string]string // URL -> ETag
++	_  [32]byte          // keep neighbouring shards off one cache line
++}
++
++var etagSeed = maphash.MakeSeed()
++
++func (c *ETagCache) shard(key string) *etagShard {
++	return &c.shards[maphash.String(etagSeed, key)%etagShards]
++}
++
++func (c *ETagCache) get(key string) (string, bool) {
++	sh := c.shard(key)
++	sh.mu.RLock()
++	etag, ok := sh.m[key]
++	sh.mu.RUnlock()
++	return etag, ok
++}
++
++// put records etag for key. The common case, the same content as last time, only
++// takes the read lock and writes nothing.
++func (c *ETagCache) put(key, etag string) {
++	sh := c.shard(key)
++	sh.mu.RLock()
++	cur, ok := sh.m[key]
++	sh.mu.RUnlock()
++	if ok && cur == etag {
++		return
++	}
++	sh.mu.Lock()
++	if _, exists := sh.m[key]; !exists && len(sh.m) >= etagShardMax {
++		for k := range sh.m {
++			delete(sh.m, k)
++			break
++		}
++	}
++	sh.m[strings.Clone(key)] = etag // key may alias request memory
++	sh.mu.Unlock()
+ }
+ 
+-type cachedResponse struct {
+-	body []byte
+-	etag string
++func (c *ETagCache) entries() int {
++	n := 0
++	for i := range c.shards {
++		c.shards[i].mu.RLock()
++		n += len(c.shards[i].m)
++		c.shards[i].mu.RUnlock()
++	}
++	return n
+ }
+ 
+-// NewETagCache creates a new ETag cache.
++// NewETagCache returns an empty cache.
+ func NewETagCache() *ETagCache {
+-	c := &ETagCache{
+-		store: make(map[string]*cachedResponse),
++	c := &ETagCache{}
++	for i := range c.shards {
++		c.shards[i].m = make(map[string]string)
+ 	}
+-	// Recorded so the probe can report this instance's store size. The most
+-	// recently constructed cache wins, matching the registry's rule everywhere.
+ 	etagCacheHandle.Store(c)
+ 	return c
+ }
+ 
+-// ETagMiddleware returns a Breeze middleware that sets ETag headers
+-// and returns 304 Not Modified when the client's If-None-Match matches.
+-//
+-// The ETag is computed from the fresh response body on every request
+-// (strong validation), so stale 304s are impossible — if the handler
+-// produces a different body, the ETag changes and the client gets a
+-// full 200 response.
++// ETagMiddleware sets an ETag (the MD5 of the response body) on every response with
++// a body and answers a matching If-None-Match with 304 Not Modified. When the
++// cache already holds the matching ETag for the URL the handler is skipped.
+ func (c *ETagCache) ETagMiddleware() breeze.HandlerFunc {
+ 	etagInstalled.Store(true)
+ 	return func(ctx *breeze.Context) error {
+-		// Pre-check: if the client sent If-None-Match, see if we have a
+-		// stored ETag for this URL. If it matches, we can skip the handler
+-		// entirely and return 304 immediately.
+ 		inm := ctx.Req.Header["if-none-match"]
+ 		if inm != "" {
+-			cacheKey := buildCacheKey(ctx)
+-			c.mu.RLock()
+-			cached, ok := c.store[cacheKey]
+-			c.mu.RUnlock()
+-			if ok && cached.etag == inm {
++			if etag, ok := c.get(etagKey(ctx)); ok && etag == inm {
+ 				ctx.Status(304)
+ 				ctx.SetHeader("ETag", inm)
+ 				ctx.Res.Body = nil
+-				// A 304 served without running the handler at all — the best
+-				// outcome this middleware has, and the one its hit rate means.
+ 				etagCounter.Hit()
+-				return nil // skip handler — client's cache is still valid
++				return nil // skip handler: the client's copy is still valid
+ 			}
+ 		}
+ 
+-		// Run the handler to produce the response. A failure short-circuits: an
+-		// ETag over an error body would let a client cache the failure.
+ 		if err := ctx.Next(); err != nil {
+ 			return err
+ 		}
+-
+ 		if ctx.Res == nil || len(ctx.Res.Body) == 0 {
+ 			return nil
+ 		}
+ 
+-		// Compute ETag from the fresh response body.
+ 		hash := md5.Sum(ctx.Res.Body)
+-		etag := hex.EncodeToString(hash[:])
+-
+-		cacheKey := buildCacheKey(ctx)
++		var hexETag [md5.Size * 2]byte
++		hex.Encode(hexETag[:], hash[:])
++		etag := string(hexETag[:])
++		c.put(etagKey(ctx), etag)
+ 
+-		// Store for future If-None-Match pre-checks.
+-		c.mu.Lock()
+-		c.store[cacheKey] = &cachedResponse{
+-			body: ctx.Res.Body,
+-			etag: etag,
+-		}
+-		c.mu.Unlock()
+-
+-		// Set ETag header on the response.
+ 		ctx.SetHeader("ETag", etag)
+-
+-		// If the client's If-None-Match matches the fresh ETag, return 304.
+ 		if inm != "" && inm == etag {
+ 			ctx.Status(304)
+ 			ctx.Res.Body = nil
+-			// Counted as a hit even though the handler ran: the body did not go
+-			// on the wire, which is the bandwidth this middleware saves.
+ 			etagCounter.Hit()
+ 		} else {
+ 			etagCounter.Miss()
+ 		}
+-
+ 		return nil
+ 	}
+ }
+ 
++// etagKey is the cache key of the request: its path, plus the canonical query
++// when there is one. Without a query it is the path itself, not a copy, so a
++// lookup allocates nothing; put clones the key before storing it.
++func etagKey(ctx *breeze.Context) string {
++	if len(ctx.Req.Query) == 0 {
++		return ctx.Req.Path
++	}
++	return buildCacheKey(ctx)
++}
++
+ // buildCacheKey constructs a cache key from the path and query string.
+ //
+ // The path is cloned rather than used directly. ctx.Req.Path is a view into the
+diff -ruN --strip-trailing-cr -x perf a/middlewares/compression.go b/middlewares/compression.go
+--- a/middlewares/compression.go	2026-09-16 06:26:26.000000000 +0000
++++ b/middlewares/compression.go	2026-10-27 21:17:33.153890301 +0000
+@@ -38,6 +38,23 @@
+ // acquired from the pool, Reset with the output buffer, used, and returned.
+ // The bytes.Buffer is also pooled to avoid its internal []byte allocation.
+ func CompressionMiddleware() breeze.HandlerFunc {
++	return CompressionMiddlewareWith(CompressionOptions{})
++}
++
++// CompressionOptions tunes CompressionMiddlewareWith. The zero value is the
++// behaviour of CompressionMiddleware.
++type CompressionOptions struct {
++	// MinSize is the smallest response body, in bytes, that is compressed. Shorter
++	// bodies are sent as they are: compressing a few dozen bytes pays the whole
++	// encoder setup, usually saves nothing and can make the body larger. The zero
++	// value compresses every non-empty body, as CompressionMiddleware always has;
++	// a few hundred bytes is the usual choice for JSON APIs (nginx's
++	// gzip_min_length defaults to 20, many servers use 256 to 1024).
++	MinSize int
++}
++
++// CompressionMiddlewareWith is CompressionMiddleware with options.
++func CompressionMiddlewareWith(opts CompressionOptions) breeze.HandlerFunc {
+ 	compressionInstalled.Store(true)
+ 	return func(ctx *breeze.Context) error {
+ 		// Run the handler first — we need its response to compress. A failure is
+@@ -51,6 +68,10 @@
+ 		if ctx.Res == nil || len(ctx.Res.Body) == 0 {
+ 			return nil
+ 		}
++		if len(ctx.Res.Body) < opts.MinSize {
++			compressionCounter.Miss()
++			return nil
++		}
+ 
+ 		accept := ctx.Req.Header["accept-encoding"]
+ 		if accept == "" {
+@@ -71,8 +92,9 @@
+ 
+ 		// Honor q-values. strings.Contains("gzip;q=0", "gzip") was a protocol bug:
+ 		// it compressed responses the client explicitly said it did not accept.
++		qs := parseAcceptEncoding(accept)
+ 		for _, candidate := range []string{"br", "gzip", "deflate"} {
+-			if encodingQValue(accept, candidate) <= 0 {
++			if qs.of(candidate) <= 0 {
+ 				continue
+ 			}
+ 			switch candidate {
+diff -ruN --strip-trailing-cr -x perf a/middlewares/diag_probes.go b/middlewares/diag_probes.go
+--- a/middlewares/diag_probes.go	2026-10-04 11:21:22.000000000 +0000
++++ b/middlewares/diag_probes.go	2026-10-28 02:07:36.745876168 +0000
+@@ -183,9 +183,7 @@
+ 	snap := etagCounter.Snapshot()
+ 	detail := counterDetail(snap, "not_modified_304", "full_body")
+ 	if cache := etagCacheHandle.Load(); cache != nil {
+-		cache.mu.RLock()
+-		detail["stored_entries"] = len(cache.store)
+-		cache.mu.RUnlock()
++		detail["stored_entries"] = cache.entries()
+ 	}
+ 
+ 	report := diag.OK(fmt.Sprintf("installed; %d 304(s) served, %d full body/bodies",
+diff -ruN --strip-trailing-cr -x perf a/middlewares/etag_bench_test.go b/middlewares/etag_bench_test.go
+--- a/middlewares/etag_bench_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/middlewares/etag_bench_test.go	2026-10-28 02:31:59.976116770 +0000
+@@ -0,0 +1,25 @@
++package middleware
++
++import (
++	"testing"
++
++	"github.com/nelthaarion/breeze/v2"
++)
++
++var etagBody = []byte(`[{"id":1,"name":"User Number 1","email":"user1@example.com","active":true,"role":"member"},{"id":2,"name":"User Number 2","email":"user2@example.com","active":false,"role":"member"},{"id":3,"name":"User Number 3","email":"user3@example.com","active":true,"role":"member"}]`)
++
++func BenchmarkETagMiddlewareSteadyState(b *testing.B) {
++	cache := NewETagCache()
++	mw := cache.ETagMiddleware()
++	handler := func(c *breeze.Context) error { c.Res = &breeze.HTTPResponse{Status: 200, Body: etagBody}; return nil }
++	chain := []breeze.HandlerFunc{mw}
++	b.ReportAllocs()
++	b.ResetTimer()
++	for i := 0; i < b.N; i++ {
++		ctx := breeze.NewContext(breeze.GET, "/users")
++		ctx.SetMiddlewareChain(chain, handler)
++		if err := ctx.Next(); err != nil {
++			b.Fatal(err)
++		}
++	}
++}
+diff -ruN --strip-trailing-cr -x perf a/middlewares/etag_jwt_cache_test.go b/middlewares/etag_jwt_cache_test.go
+--- a/middlewares/etag_jwt_cache_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/middlewares/etag_jwt_cache_test.go	2026-10-28 09:21:29.859053839 +0000
+@@ -0,0 +1,150 @@
++package middleware
++
++import (
++	"fmt"
++	"reflect"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/golang-jwt/jwt/v5"
++	"github.com/nelthaarion/breeze/v2"
++)
++
++func TestETagCacheIsBoundedAndWritesNothingWhenUnchanged(t *testing.T) {
++	c := NewETagCache()
++	for i := 0; i < 100000; i++ {
++		c.put(fmt.Sprintf("/u/%d", i), "e")
++	}
++	if n := c.entries(); n > etagShards*etagShardMax {
++		t.Fatalf("%d entries, bound is %d", n, etagShards*etagShardMax)
++	}
++	c.put("/a", "x")
++	if v, ok := c.get("/a"); !ok || v != "x" {
++		t.Fatalf("get after put: %q %v", v, ok)
++	}
++	if n := testing.AllocsPerRun(500, func() { c.put("/a", "x") }); n != 0 {
++		t.Fatalf("re-putting the same ETag allocates %v times", n)
++	}
++	c.put("/a", "y")
++	if v, _ := c.get("/a"); v != "y" {
++		t.Fatalf("update lost: %q", v)
++	}
++}
++
++func TestETagCacheConcurrent(t *testing.T) {
++	c := NewETagCache()
++	var wg sync.WaitGroup
++	for g := 0; g < 8; g++ {
++		wg.Add(1)
++		go func(g int) {
++			defer wg.Done()
++			for i := 0; i < 5000; i++ {
++				k := fmt.Sprintf("/k/%d", (i*7+g)%900)
++				c.put(k, fmt.Sprint(i%3))
++				c.get(k)
++			}
++		}(g)
++	}
++	wg.Wait()
++}
++
++func TestJWTCacheVerifiedTokensExpiryIsolationAndBound(t *testing.T) {
++	const secret = "unit-test-secret-unit-test-secret-1234"
++	tok, err := GenerateJWT(secret, jwt.MapClaims{"user_id": "7", "role": "admin", "perms": []any{"a", "b"}}, time.Hour, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	claims, ok := validateJWTType(tok, secret, jwt.SigningMethodHS256, "access")
++	if !ok {
++		t.Fatal("token should verify")
++	}
++	c := newJWTCache(64)
++	if _, hit := c.lookup(tok); hit {
++		t.Fatal("hit before store")
++	}
++	c.store(tok, claims)
++	got, hit := c.lookup(tok)
++	if !hit || !reflect.DeepEqual(got, claims) {
++		t.Fatalf("lookup: hit=%v got=%v want=%v", hit, got, claims)
++	}
++	got["role"] = "root"
++	got["perms"].([]any)[0] = "zzz"
++	again, _ := c.lookup(tok)
++	if again["role"] != "admin" || again["perms"].([]any)[0] != "a" {
++		t.Fatalf("a handler's edits leaked into the cache: %v", again)
++	}
++
++	jwtNow = func() time.Time { return time.Now().Add(2 * time.Hour) }
++	defer func() { jwtNow = time.Now }()
++	if _, hit := c.lookup(tok); hit {
++		t.Fatal("expired token served from the cache")
++	}
++	jwtNow = time.Now
++
++	for i := 0; i < 2000; i++ {
++		c.store(fmt.Sprintf("tok-%d", i), claims)
++	}
++	if n := c.entries(); n > 64+jwtCacheShards {
++		t.Fatalf("%d entries for a size-64 cache", n)
++	}
++}
++
++func jwtRun(t *testing.T, mw breeze.HandlerFunc, token string) (status int, ran bool, claims jwt.MapClaims) {
++	ctx := breeze.NewContext(breeze.GET, "/x")
++	ctx.Req.Header["authorization"] = "Bearer " + token
++	ctx.SetMiddlewareChain([]breeze.HandlerFunc{mw}, func(c *breeze.Context) error {
++		ran = true
++		v, _ := c.Get("user")
++		claims, _ = v.(jwt.MapClaims)
++		return c.WriteString("ok")
++	})
++	if err := ctx.Next(); err != nil {
++		t.Fatal(err)
++	}
++	return ctx.Res.Status, ran, claims
++}
++
++func TestJWTMiddlewareWithCacheKeepsRejecting(t *testing.T) {
++	const secret = "unit-test-secret-unit-test-secret-1234"
++	good, _ := GenerateJWT(secret, jwt.MapClaims{"user_id": "7", "role": "admin"}, time.Hour, nil)
++	expired, _ := GenerateJWT(secret, jwt.MapClaims{"user_id": "7", "role": "admin"}, -time.Hour, nil)
++	wrong, _ := GenerateJWT("another-secret-another-secret-another", jwt.MapClaims{"user_id": "7", "role": "admin"}, time.Hour, nil)
++	for _, size := range []int{0, 32} {
++		mw := JWTAuthMiddleware(JWTOptions{AccessSecret: secret, RequiredRoles: []string{"admin"}, CacheSize: size})
++		for round := 0; round < 3; round++ { // rounds 2 and 3 are cache hits when size > 0
++			if st, ran, cl := jwtRun(t, mw, good); st == 401 || !ran || cl["user_id"] != "7" {
++				t.Fatalf("size %d round %d: good token rejected (status %d ran %v claims %v)", size, round, st, ran, cl)
++			}
++			for name, bad := range map[string]string{"expired": expired, "wrong key": wrong, "garbage": "a.b.c", "tampered": good[:len(good)-2] + "xx"} {
++				if st, ran, _ := jwtRun(t, mw, bad); st != 401 || ran {
++					t.Fatalf("size %d round %d: %s token accepted (status %d ran %v)", size, round, name, st, ran)
++				}
++			}
++		}
++	}
++}
++
++func TestJWTCacheConcurrent(t *testing.T) {
++	c := newJWTCache(64)
++	claims := jwt.MapClaims{"user_id": "1", "exp": float64(time.Now().Add(time.Hour).Unix()), "perms": []any{"a"}}
++	var wg sync.WaitGroup
++	for g := 0; g < 8; g++ {
++		wg.Add(1)
++		go func(g int) {
++			defer wg.Done()
++			for i := 0; i < 3000; i++ {
++				tok := fmt.Sprintf("t-%d", (i*7+g)%200)
++				c.store(tok, claims)
++				if got, ok := c.lookup(tok); ok {
++					got["x"] = i // edits to a returned copy must stay private
++					got["perms"].([]any)[0] = "z"
++				}
++			}
++		}(g)
++	}
++	wg.Wait()
++	if claims["perms"].([]any)[0] != "a" || claims["x"] != nil {
++		t.Fatal("the stored claims were modified through a returned copy")
++	}
++}
+diff -ruN --strip-trailing-cr -x perf a/middlewares/jwt.go b/middlewares/jwt.go
+--- a/middlewares/jwt.go	2026-10-04 11:21:22.000000000 +0000
++++ b/middlewares/jwt.go	2026-10-27 21:19:49.783159150 +0000
+@@ -20,6 +20,15 @@
+ 	RequiredRoles      []string                                          // Optional: roles required to access the route
+ 	ClaimsValidator    func(claims jwt.MapClaims) bool                   // Optional: extra claim validation
+ 	EnableRefreshToken bool                                              // Enable refresh token support
++
++	// CacheSize, when above zero, keeps up to that many verified access tokens in
++	// memory (sharded, evicting an arbitrary entry when full) and accepts a cached
++	// token without verifying its signature again until the token's own exp. For a
++	// client that sends the same token on every request this removes the HMAC and
++	// JSON decoding from the request path. RequiredRoles and ClaimsValidator still
++	// run on every request, against a private copy of the claims. Off by default:
++	// it trades a little memory, and re-verification on each request, for speed.
++	CacheSize int
+ }
+ 
+ // DefaultTokenLookup extracts access token from Authorization header.
+@@ -140,6 +149,11 @@
+ 	facts.Algorithm = opts.SigningMethod.Alg()
+ 	facts.ContextKey = opts.UserContextKey
+ 	jwtConfig.Store(&facts)
++	var cache *jwtCache
++	if opts.CacheSize > 0 {
++		cache = newJWTCache(opts.CacheSize)
++	}
++	accessKey := []byte(opts.AccessSecret)
+ 
+ 	return func(ctx *breeze.Context) error {
+ 		accessToken, refreshToken, err := opts.TokenLookup(ctx)
+@@ -149,7 +163,7 @@
+ 			return nil
+ 		}
+ 
+-		claims, valid := validateJWTType(accessToken, opts.AccessSecret, opts.SigningMethod, "access")
++		claims, valid := verifyAccess(cache, accessToken, accessKey, opts.SigningMethod)
+ 		if !valid && opts.EnableRefreshToken && refreshToken != "" {
+ 			// Attempt refresh token. A refresh token is never accepted as an access token.
+ 			refreshClaims, ok := validateJWTType(refreshToken, opts.RefreshSecret, opts.SigningMethod, "refresh")
+@@ -214,11 +228,17 @@
+ }
+ 
+ func validateJWTType(tokenString, secret string, method jwt.SigningMethod, expectedType string) (jwt.MapClaims, bool) {
++	return validateJWTKey(tokenString, []byte(secret), method, expectedType)
++}
++
++// validateJWTKey is validateJWTType with the HMAC key already converted to bytes,
++// so the middleware converts its secret once instead of on every request.
++func validateJWTKey(tokenString string, key []byte, method jwt.SigningMethod, expectedType string) (jwt.MapClaims, bool) {
+ 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
+ 		if token.Method.Alg() != method.Alg() {
+ 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+ 		}
+-		return []byte(secret), nil
++		return key, nil
+ 	})
+ 	if err != nil || !token.Valid {
+ 		return nil, false
+diff -ruN --strip-trailing-cr -x perf a/middlewares/jwt_cache.go b/middlewares/jwt_cache.go
+--- a/middlewares/jwt_cache.go	1970-01-01 00:00:00.000000000 +0000
++++ b/middlewares/jwt_cache.go	2026-10-27 21:19:49.792022424 +0000
+@@ -0,0 +1,141 @@
++package middleware
++
++import (
++	"hash/maphash"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/golang-jwt/jwt/v5"
++)
++
++// jwtNow is the clock the verified-token cache checks expiry against; tests replace it.
++var jwtNow = time.Now
++
++// jwtCacheEntry is a token that passed full verification. claims is a private
++// copy that is never handed out; every hit gets its own deep copy.
++type jwtCacheEntry struct {
++	claims jwt.MapClaims
++	exp    time.Time
++}
++
++const jwtCacheShards = 16
++
++type jwtCacheShard struct {
++	mu  sync.RWMutex
++	m   map[string]*jwtCacheEntry
++	max int
++	_   [24]byte // keep neighbouring shards off one cache line
++}
++
++// jwtCache remembers access tokens whose signature, expiry and type have already
++// been verified, so a client that sends the same token on every request does not
++// pay for the HMAC, three base64 decodes and two JSON decodes each time.
++//
++// An entry only exists for a token that verified, and it is trusted only until the
++// token's own exp. Everything that depends on the request rather than the token
++// (required roles, ClaimsValidator) still runs on every request against a fresh
++// copy of the claims.
++type jwtCache struct {
++	seed   maphash.Seed
++	shards [jwtCacheShards]jwtCacheShard
++}
++
++func newJWTCache(size int) *jwtCache {
++	c := &jwtCache{seed: maphash.MakeSeed()}
++	per := (size + jwtCacheShards - 1) / jwtCacheShards
++	for i := range c.shards {
++		c.shards[i].m = make(map[string]*jwtCacheEntry)
++		c.shards[i].max = per
++	}
++	return c
++}
++
++func (c *jwtCache) shard(token string) *jwtCacheShard {
++	return &c.shards[maphash.String(c.seed, token)%jwtCacheShards]
++}
++
++// lookup returns a private copy of the claims of a previously verified, still
++// unexpired token.
++func (c *jwtCache) lookup(token string) (jwt.MapClaims, bool) {
++	sh := c.shard(token)
++	sh.mu.RLock()
++	e := sh.m[token]
++	sh.mu.RUnlock()
++	if e == nil || !jwtNow().Before(e.exp) {
++		return nil, false // unknown, or expired: the full path decides (and rejects)
++	}
++	return cloneClaims(e.claims), true
++}
++
++// store records a token that has just passed verification.
++func (c *jwtCache) store(token string, claims jwt.MapClaims) {
++	exp, err := claims.GetExpirationTime()
++	if err != nil || exp == nil {
++		return
++	}
++	e := &jwtCacheEntry{claims: cloneClaims(claims), exp: exp.Time}
++	sh := c.shard(token)
++	sh.mu.Lock()
++	if _, ok := sh.m[token]; !ok && len(sh.m) >= sh.max {
++		for k := range sh.m { // bounded: make room by dropping an arbitrary entry
++			delete(sh.m, k)
++			break
++		}
++	}
++	sh.m[strings.Clone(token)] = e
++	sh.mu.Unlock()
++}
++
++func (c *jwtCache) entries() int {
++	n := 0
++	for i := range c.shards {
++		c.shards[i].mu.RLock()
++		n += len(c.shards[i].m)
++		c.shards[i].mu.RUnlock()
++	}
++	return n
++}
++
++// cloneClaims deep-copies claims decoded from JSON, so a handler that edits the
++// map it receives, or a slice or map inside it, cannot change what the next
++// request with the same token sees.
++func cloneClaims(c jwt.MapClaims) jwt.MapClaims {
++	out := make(jwt.MapClaims, len(c))
++	for k, v := range c {
++		out[k] = cloneJSONValue(v)
++	}
++	return out
++}
++
++func cloneJSONValue(v any) any {
++	switch x := v.(type) {
++	case map[string]any:
++		m := make(map[string]any, len(x))
++		for k, e := range x {
++			m[k] = cloneJSONValue(e)
++		}
++		return m
++	case []any:
++		s := make([]any, len(x))
++		for i, e := range x {
++			s[i] = cloneJSONValue(e)
++		}
++		return s
++	}
++	return v // string, float64, bool, nil, json.Number: immutable
++}
++
++// verifyAccess validates an access token, through the cache when one is configured.
++func verifyAccess(cache *jwtCache, token string, key []byte, method jwt.SigningMethod) (jwt.MapClaims, bool) {
++	if cache != nil {
++		if claims, ok := cache.lookup(token); ok {
++			return claims, true
++		}
++	}
++	claims, ok := validateJWTKey(token, key, method, "access")
++	if ok && cache != nil {
++		cache.store(token, claims)
++	}
++	return claims, ok
++}
+diff -ruN --strip-trailing-cr -x perf a/middlewares/logger.go b/middlewares/logger.go
+--- a/middlewares/logger.go	2026-09-06 00:19:44.000000000 +0000
++++ b/middlewares/logger.go	2026-10-27 21:17:33.163551069 +0000
+@@ -1,14 +1,67 @@
+ package middleware
+ 
+ import (
+-	"fmt"
++	"io"
++	"os"
++	"sync"
++	"sync/atomic"
+ 	"time"
+ 
+ 	"github.com/nelthaarion/breeze/v2"
+ )
+ 
+-func LoggingMiddleware() breeze.HandlerFunc {
++// LoggingOptions configures LoggingMiddlewareWith. The zero value is exactly
++// LoggingMiddleware: one synchronous write per request to os.Stdout.
++type LoggingOptions struct {
++	// Output receives the log lines. Nil means os.Stdout, looked up on every write
++	// so a replaced os.Stdout is honoured.
++	Output io.Writer
++
++	// Buffered batches the lines in memory and writes them from a background
++	// goroutine instead of making one write system call per request on the event
++	// loop. That is the single largest cost of request logging: at tens of
++	// thousands of requests per second the synchronous form spends more time in
++	// write(2) than the whole rest of the request.
++	//
++	// The price is timing and durability. A line reaches Output up to
++	// FlushInterval after the request, lines from this middleware can interleave
++	// differently with output the application prints itself, and lines still
++	// buffered when the process dies abruptly (SIGKILL, a crash, os.Exit) are lost.
++	// Call FlushLogs from the shutdown path to write what is pending.
++	Buffered bool
++
++	// FlushInterval is how often buffered lines are written. Default 10ms.
++	FlushInterval time.Duration
++
++	// BufferSize is the amount of pending output that triggers an early flush.
++	// Default 64 KiB. If the writer cannot keep up and pending output reaches 16
++	// times this, the request that crosses the limit writes synchronously, so
++	// memory stays bounded and no line is dropped.
++	BufferSize int
++}
++
++// LoggingMiddleware prints one line per request,
++//
++//	[Breeze][2026-10-28T09:30:00Z] GET /path -> 200 (1.5ms)
++//
++// after the rest of the chain has run. See LoggingOptions and LoggingMiddlewareWith
++// to batch the writes.
++func LoggingMiddleware() breeze.HandlerFunc { return LoggingMiddlewareWith(LoggingOptions{}) }
++
++// LoggingMiddlewareWith is LoggingMiddleware with options.
++func LoggingMiddlewareWith(opts LoggingOptions) breeze.HandlerFunc {
+ 	loggingInstalled.Store(true)
++	var sink *asyncLog
++	if opts.Buffered {
++		interval, size := opts.FlushInterval, opts.BufferSize
++		if interval <= 0 {
++			interval = 10 * time.Millisecond
++		}
++		if size <= 0 {
++			size = 64 << 10
++		}
++		sink = newAsyncLog(opts.Output, interval, size)
++	}
+ 	return func(ctx *breeze.Context) error {
+ 		start := time.Now()
+ 		method := ctx.Req.Method
+@@ -23,7 +76,19 @@
+ 		if ctx.Res != nil {
+ 			status = ctx.Res.Status
+ 		}
+-		fmt.Printf("[Breeze][%s] %s %s -> %d (%v)\n", start.Format(time.RFC3339), method, path, status, time.Since(start))
++
++		ll := logLinePool.Get().(*logLine)
++		line := appendLogLine(ll.b[:0], start, method, path, status, time.Since(start))
++		switch {
++		case sink != nil:
++			sink.write(line)
++		case opts.Output != nil:
++			_, _ = opts.Output.Write(line)
++		default:
++			_, _ = os.Stdout.Write(line)
++		}
++		ll.b = line[:0]
++		logLinePool.Put(ll)
+ 
+ 		// Counted after the line is printed, so the count is of lines actually
+ 		// emitted rather than of requests that reached this middleware.
+@@ -35,3 +100,164 @@
+ 		return err
+ 	}
+ }
++
++type logLine struct{ b []byte }
++
++var logLinePool = sync.Pool{New: func() any { return &logLine{b: make([]byte, 0, 160)} }}
++
++// appendLogLine appends the log line for one request. The bytes are those of
++//
++//	fmt.Sprintf("[Breeze][%s] %s %s -> %d (%v)\n", start.Format(time.RFC3339), method, path, status, d)
++//
++// without fmt's boxing and its intermediate strings.
++func appendLogLine(b []byte, start time.Time, method breeze.Method, path string, status int, d time.Duration) []byte {
++	b = append(b, "[Breeze]["...)
++	b = appendRFC3339(b, start)
++	b = append(b, "] "...)
++	b = append(b, string(method)...)
++	b = append(b, ' ')
++	b = append(b, path...)
++	b = append(b, " -> "...)
++	b = appendInt(b, status)
++	b = append(b, " ("...)
++	b = append(b, d.String()...) // does not escape, so the string lives on the stack
++	b = append(b, ")\n"...)
++	return b
++}
++
++func appendInt(b []byte, n int) []byte {
++	if n >= 0 && n < 1000 {
++		if n >= 100 {
++			b = append(b, byte('0'+n/100))
++		}
++		if n >= 10 {
++			b = append(b, byte('0'+n/10%10))
++		}
++		return append(b, byte('0'+n%10))
++	}
++	return appendBigInt(b, n)
++}
++
++// tsEntry is one second's formatted timestamp. Every request in the same second
++// shares it, so the time formatting runs once per second instead of per request.
++type tsEntry struct {
++	sec  int64
++	loc  *time.Location
++	text string
++}
++
++var lastTS atomic.Pointer[tsEntry]
++
++func appendRFC3339(b []byte, t time.Time) []byte {
++	sec, loc := t.Unix(), t.Location()
++	if e := lastTS.Load(); e != nil && e.sec == sec && e.loc == loc {
++		return append(b, e.text...)
++	}
++	text := t.Format(time.RFC3339)
++	lastTS.Store(&tsEntry{sec: sec, loc: loc, text: text})
++	return append(b, text...)
++}
++
++// asyncLog is the buffered sink behind LoggingOptions.Buffered: producers append
++// to one buffer under a short mutex, a background goroutine swaps it out and
++// writes it.
++type asyncLog struct {
++	out    io.Writer // nil means os.Stdout at write time
++	size   int
++	hard   int
++	mu     sync.Mutex // guards buf
++	buf    []byte
++	flushM sync.Mutex // serialises flushes; guards spare and writes to out
++	spare  []byte
++	kick   chan struct{}
++	stop   chan struct{}
++	done   chan struct{}
++	once   sync.Once
++}
++
++var asyncLogs struct {
++	sync.Mutex
++	list []*asyncLog
++}
++
++func newAsyncLog(out io.Writer, interval time.Duration, size int) *asyncLog {
++	l := &asyncLog{
++		out: out, size: size, hard: 16 * size,
++		buf: make([]byte, 0, 2*size), spare: make([]byte, 0, 2*size),
++		kick: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}),
++	}
++	asyncLogs.Lock()
++	asyncLogs.list = append(asyncLogs.list, l)
++	asyncLogs.Unlock()
++	go l.run(interval)
++	return l
++}
++
++func (l *asyncLog) run(interval time.Duration) {
++	defer close(l.done)
++	t := time.NewTicker(interval)
++	defer t.Stop()
++	for {
++		select {
++		case <-t.C:
++		case <-l.kick:
++		case <-l.stop:
++			l.flush()
++			return
++		}
++		l.flush()
++	}
++}
++
++func (l *asyncLog) write(line []byte) {
++	l.mu.Lock()
++	l.buf = append(l.buf, line...)
++	n := len(l.buf)
++	l.mu.Unlock()
++	switch {
++	case n >= l.hard:
++		l.flush() // the writer is behind: apply backpressure instead of growing
++	case n >= l.size:
++		select {
++		case l.kick <- struct{}{}:
++		default:
++		}
++	}
++}
++
++func (l *asyncLog) flush() {
++	l.flushM.Lock()
++	defer l.flushM.Unlock()
++	l.mu.Lock()
++	b := l.buf
++	l.buf = l.spare[:0]
++	l.mu.Unlock()
++	if len(b) > 0 {
++		w := l.out
++		if w == nil {
++			w = os.Stdout
++		}
++		_, _ = w.Write(b)
++	}
++	if cap(b) > 1<<20 {
++		b = nil // a burst grew it; do not keep the memory
++	}
++	l.spare = b[:0]
++}
++
++func (l *asyncLog) close() {
++	l.once.Do(func() { close(l.stop) })
++	<-l.done
++}
++
++// FlushLogs writes every line that LoggingMiddlewareWith(LoggingOptions{Buffered:
++// true}) is still holding. Call it when the server shuts down. It is a no-op when
++// no buffered logger exists.
++func FlushLogs() {
++	asyncLogs.Lock()
++	list := append([]*asyncLog(nil), asyncLogs.list...)
++	asyncLogs.Unlock()
++	for _, l := range list {
++		l.flush()
++	}
++}
+diff -ruN --strip-trailing-cr -x perf a/middlewares/logger_test.go b/middlewares/logger_test.go
+--- a/middlewares/logger_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/middlewares/logger_test.go	2026-10-27 21:17:49.052253338 +0000
+@@ -0,0 +1,119 @@
++package middleware
++
++import (
++	"bytes"
++	"fmt"
++	"math/rand"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/nelthaarion/breeze/v2"
++)
++
++func TestAppendLogLineMatchesFmt(t *testing.T) {
++	locs := []*time.Location{time.UTC, time.FixedZone("t", 3*3600+1800), time.FixedZone("n", -5*3600), time.Local}
++	rng := rand.New(rand.NewSource(3))
++	const pathChars = "/abcXYZ019-_.~%?=&:*"
++	for i := 0; i < 30000; i++ {
++		start := time.Unix(rng.Int63n(4e9), rng.Int63n(1e9)).In(locs[rng.Intn(len(locs))])
++		var d time.Duration
++		switch rng.Intn(6) {
++		case 0:
++			d = time.Duration(rng.Int63n(1000))
++		case 1:
++			d = time.Duration(rng.Int63n(1e6))
++		case 2:
++			d = time.Duration(rng.Int63n(1e9))
++		case 3:
++			d = time.Duration(rng.Int63n(1e12))
++		case 4:
++			d = time.Duration(rng.Int63())
++		default:
++			d = 0
++		}
++		pb := make([]byte, rng.Intn(30))
++		for j := range pb {
++			pb[j] = pathChars[rng.Intn(len(pathChars))]
++		}
++		method := []breeze.Method{"GET", "POST", "DELETE", "PATCH"}[rng.Intn(4)]
++		status := []int{0, 7, 99, 200, 204, 404, 500, 999, 1000, 12345}[rng.Intn(10)]
++		want := fmt.Sprintf("[Breeze][%s] %s %s -> %d (%v)\n", start.Format(time.RFC3339), method, string(pb), status, d)
++		if got := string(appendLogLine(nil, start, method, string(pb), status, d)); got != want {
++			t.Fatalf("got  %q\nwant %q", got, want)
++		}
++	}
++}
++
++func TestAppendLogLineNoAllocs(t *testing.T) {
++	start := time.Now()
++	buf := make([]byte, 0, 256)
++	appendLogLine(buf, start, "GET", "/x", 200, time.Millisecond) // warm the timestamp cache
++	if n := testing.AllocsPerRun(1000, func() {
++		buf = appendLogLine(buf[:0], start, "GET", "/api/v1/users/42", 200, 1234*time.Microsecond)
++	}); n != 0 {
++		t.Fatalf("appendLogLine allocates %v times per call", n)
++	}
++}
++
++type lockedBuf struct {
++	mu sync.Mutex
++	b  bytes.Buffer
++}
++
++func (l *lockedBuf) Write(p []byte) (int, error) {
++	l.mu.Lock()
++	defer l.mu.Unlock()
++	return l.b.Write(p)
++}
++func (l *lockedBuf) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
++
++func TestAsyncLogKeepsEveryLineIntact(t *testing.T) {
++	out := &lockedBuf{}
++	l := newAsyncLog(out, 5*time.Millisecond, 256) // tiny buffer: exercises early flush and backpressure
++	var wg sync.WaitGroup
++	for g := 0; g < 8; g++ {
++		wg.Add(1)
++		go func(g int) {
++			defer wg.Done()
++			for i := 0; i < 2000; i++ {
++				l.write([]byte(fmt.Sprintf("line g=%d i=%04d padding-padding-padding\n", g, i)))
++			}
++		}(g)
++	}
++	wg.Wait()
++	l.close()
++	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
++	if len(lines) != 16000 {
++		t.Fatalf("got %d lines, want 16000", len(lines))
++	}
++	seen := map[string]bool{}
++	for _, ln := range lines {
++		if !strings.HasPrefix(ln, "line g=") || !strings.HasSuffix(ln, " padding-padding-padding") {
++			t.Fatalf("corrupt line %q", ln)
++		}
++		seen[ln] = true
++	}
++	if len(seen) != 16000 {
++		t.Fatalf("duplicate or missing lines: %d unique", len(seen))
++	}
++}
++
++func TestLoggingMiddlewareOutputOption(t *testing.T) {
++	out := &lockedBuf{}
++	for _, opts := range []LoggingOptions{{Output: out}, {Output: out, Buffered: true, FlushInterval: time.Millisecond}} {
++		out.b.Reset()
++		mw := LoggingMiddlewareWith(opts)
++		ctx := breeze.NewContext(breeze.GET, "/hello")
++		ctx.SetMiddlewareChain([]breeze.HandlerFunc{mw}, func(c *breeze.Context) error { return c.WriteString("hi") })
++		if err := ctx.Next(); err != nil {
++			t.Fatal(err)
++		}
++		FlushLogs()
++		got := out.String()
++		if !strings.HasPrefix(got, "[Breeze][") || !strings.HasSuffix(got, "] GET /hello -> 200 ("+strings.SplitN(strings.SplitN(got, "(", 2)[1], ")", 2)[0]+")\n") {
++			t.Fatalf("buffered=%v: unexpected line %q", opts.Buffered, got)
++		}
++	}
++}
+diff -ruN --strip-trailing-cr -x perf a/middlewares/logger_util.go b/middlewares/logger_util.go
+--- a/middlewares/logger_util.go	1970-01-01 00:00:00.000000000 +0000
++++ b/middlewares/logger_util.go	2026-10-27 21:17:33.165789842 +0000
+@@ -0,0 +1,5 @@
++package middleware
++
++import "strconv"
++
++func appendBigInt(b []byte, n int) []byte { return strconv.AppendInt(b, int64(n), 10) }
+diff -ruN --strip-trailing-cr -x perf a/pollyield.go b/pollyield.go
+--- a/pollyield.go	1970-01-01 00:00:00.000000000 +0000
++++ b/pollyield.go	2026-10-28 02:28:57.532966934 +0000
+@@ -0,0 +1,69 @@
++package breeze
++
++import "runtime"
++
++// PollYield selects what the gnet event loops do right before they block in the
++// kernel waiting for the next event.
++//
++// By default gnet calls runtime.Gosched there, so that goroutines the callbacks
++// have just made runnable (a worker-pool task, a WebSocket dispatch) get the CPU
++// before the loop sleeps. A server that handles every request inline in OnTraffic
++// never creates such goroutines, and for it the yield is cost: an extra
++// non-blocking poll, a scheduler round trip and the futex wake-ups that go with
++// it, on every idle transition.
++//
++// Skipping it is an opt-in because the effect is workload- and machine-dependent.
++// Measured on a 1-vCPU box with wrk sharing the core and GOMAXPROCS=2: 5-13% more
++// requests per second for light handlers (plaintext, small JSON, header
++// middleware), no change for a JWT-verifying handler, about 9% fewer for an
++// MD5-hashing ETag handler, and about 20% fewer with GOMAXPROCS=1. Measure it on
++// the hardware you deploy to before enabling it.
++type PollYield int32
++
++const (
++	// PollYieldDefault keeps gnet's behaviour: yield before blocking. This is
++	// what Breeze has always done and it is the default.
++	PollYieldDefault PollYield = iota
++	// PollYieldAuto skips the yield when this server serves its routes inline
++	// (inline execution is on and no route was registered with HandleBlocking,
++	// which also covers static files and WebSocket upgrades) and GOMAXPROCS is
++	// above 1. It keeps the yield otherwise. The decision is taken once, in Run.
++	// When the yield is skipped, a loop that does hand a request to a worker (the
++	// auto-served index page, say) yields right after the hand-off instead.
++	PollYieldAuto
++	// PollYieldNever removes the yield whatever the routes and GOMAXPROCS are.
++	PollYieldNever
++)
++
++// SetPollYield chooses the event-loop yield policy. Call it before Run.
++func (s *Breeze) SetPollYield(mode PollYield) { s.pollYield.Store(int32(mode)) }
++
++func (s *Breeze) noPollYield() bool {
++	return decideNoPollYield(PollYield(s.pollYield.Load()), s.inlineExec, s.Router, runtime.GOMAXPROCS(0))
++}
++
++func decideNoPollYield(mode PollYield, inline bool, r *Router, procs int) bool {
++	switch mode {
++	case PollYieldNever:
++		return true
++	case PollYieldAuto:
++		// With a single P nothing else can run while the loop sleeps in the
++		// kernel, and the scheduler has to hand the P over and take it back on
++		// every sleep; there the yield is the cheaper arrangement.
++		return procs > 1 && inline && r != nil && !r.hasBlockingRoutes()
++	}
++	return false
++}
++
++// hasBlockingRoutes reports whether a route registered with HandleBlocking (which
++// also covers WebSocket upgrades and static files) exists, i.e. whether requests
++// are routinely dispatched off the event loop. The auto-served index page is not
++// counted: it only answers "GET /" when no route does, and dispatch yields for it.
++func (r *Router) hasBlockingRoutes() bool {
++	for _, rt := range r.routes {
++		if rt.blocking {
++			return true
++		}
++	}
++	return false
++}
+diff -ruN --strip-trailing-cr -x perf a/pollyield_test.go b/pollyield_test.go
+--- a/pollyield_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/pollyield_test.go	2026-10-28 02:28:57.536231938 +0000
+@@ -0,0 +1,36 @@
++package breeze
++
++import "testing"
++
++func TestDecideNoPollYield(t *testing.T) {
++	inline := NewRouter()
++	inline.Handle(GET, "/a", trieNoop)
++	blocking := NewRouter()
++	blocking.Handle(GET, "/a", trieNoop)
++	blocking.HandleBlocking(GET, "/b", trieNoop)
++	index := NewRouter()
++	index.autoServeRoot = true
++
++	cases := []struct {
++		name   string
++		mode   PollYield
++		inline bool
++		r      *Router
++		procs  int
++		want   bool
++	}{
++		{"default keeps the yield", PollYieldDefault, true, inline, 4, false},
++		{"auto, all inline", PollYieldAuto, true, inline, 4, true},
++		{"auto, empty router", PollYieldAuto, true, NewRouter(), 2, true},
++		{"auto, single P keeps the yield", PollYieldAuto, true, inline, 1, false},
++		{"auto, blocking route", PollYieldAuto, true, blocking, 4, false},
++		{"auto, auto index only", PollYieldAuto, true, index, 4, true},
++		{"auto, inline execution off", PollYieldAuto, false, inline, 4, false},
++		{"never forces no-yield", PollYieldNever, true, blocking, 1, true},
++	}
++	for _, c := range cases {
++		if got := decideNoPollYield(c.mode, c.inline, c.r, c.procs); got != c.want {
++			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
++		}
++	}
++}
+diff -ruN --strip-trailing-cr -x perf a/request.go b/request.go
+--- a/request.go	2026-10-04 11:21:22.000000000 +0000
++++ b/request.go	2026-10-27 21:06:42.992395716 +0000
+@@ -371,16 +371,32 @@
+ 		return false
+ 	}
+ 	for _, c := range b {
+-		switch {
+-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+-		case strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c)):
+-		default:
++		if !tokenChar[c] {
+ 			return false
+ 		}
+ 	}
+ 	return true
+ }
+ 
++// tokenChar is the RFC 9110 tchar set as a lookup table. The header-name check
++// runs for every header of every request, and '-' (in most real header names)
++// used to fall through to a strings.ContainsRune scan.
++var tokenChar = func() (t [256]bool) {
++	for c := 'a'; c <= 'z'; c++ {
++		t[c] = true
++	}
++	for c := 'A'; c <= 'Z'; c++ {
++		t[c] = true
++	}
++	for c := '0'; c <= '9'; c++ {
++		t[c] = true
++	}
++	for _, c := range "!#$%&'*+-.^_`|~" {
++		t[c] = true
++	}
++	return
++}()
++
+ func validHeaderValue(b []byte) bool {
+ 	for _, c := range b {
+ 		if c == '\t' || (c >= 0x20 && c != 0x7f) {
+diff -ruN --strip-trailing-cr -x perf a/request_token_test.go b/request_token_test.go
+--- a/request_token_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/request_token_test.go	2026-10-27 21:10:53.883714453 +0000
+@@ -0,0 +1,43 @@
++package breeze
++
++import (
++	"math/rand"
++	"strings"
++	"testing"
++)
++
++func refValidHTTPToken(b []byte) bool {
++	if len(b) == 0 {
++		return false
++	}
++	for _, c := range b {
++		switch {
++		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
++		case strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c)):
++		default:
++			return false
++		}
++	}
++	return true
++}
++
++func TestValidHTTPTokenTableMatchesReference(t *testing.T) {
++	for c := 0; c < 256; c++ {
++		if got, want := validHTTPToken([]byte{byte(c)}), refValidHTTPToken([]byte{byte(c)}); got != want {
++			t.Fatalf("byte %#x: got %v want %v", c, got, want)
++		}
++	}
++	rng := rand.New(rand.NewSource(7))
++	for i := 0; i < 20000; i++ {
++		b := make([]byte, rng.Intn(24))
++		for j := range b {
++			b[j] = byte(rng.Intn(256))
++			if rng.Intn(4) != 0 {
++				b[j] = "abcXYZ019-_.~!"[rng.Intn(14)]
++			}
++		}
++		if got, want := validHTTPToken(b), refValidHTTPToken(b); got != want {
++			t.Fatalf("%q: got %v want %v", b, got, want)
++		}
++	}
++}
+diff -ruN --strip-trailing-cr -x perf a/router.go b/router.go
+--- a/router.go	2026-10-04 11:21:22.000000000 +0000
++++ b/router.go	2026-10-27 21:06:42.989916759 +0000
+@@ -63,6 +63,10 @@
+ 	// connection pinned to the same reactor — so it is handed to the worker
+ 	// pool instead. Set via HandleBlocking.
+ 	blocking bool
++
++	// order is the route's position in its method bucket, i.e. its registration
++	// order. The segment trie uses it to return the first-registered match.
++	order int
+ }
+ 
+ // bucket indices for the per-method route index. Requests and routes are
+@@ -153,6 +157,10 @@
+ 	// order — the only routes that can shadow a static path. Kept separate so
+ 	// eligibility testing does not walk the whole bucket.
+ 	dynamic []*route
++
++	// root is the segment trie over every route in the bucket (see router_trie.go).
++	// It is not built for bucketOther, which keeps the ordered scan.
++	root *segNode
+ }
+ 
+ type Router struct {
+@@ -412,7 +420,11 @@
+ func (r *Router) indexRoute(rt *route) {
+ 	b := methodBucket(rt.method)
+ 	idx := &r.byMethod[b]
++	rt.order = len(idx.routes)
+ 	idx.routes = append(idx.routes, rt)
++	if b != bucketOther {
++		idx.insertTrie(rt)
++	}
+ 
+ 	if rt.hasWildcard || rt.paramCount > 0 {
+ 		// A dynamic route can only shadow static routes registered after it,
+@@ -466,16 +478,23 @@
+ 	return true
+ }
+ 
+-// lookup resolves req to a registered route.
++// lookup resolves req to a route.
++//
++// Resolution order:
+ //
+-// It is the single matching implementation behind Find and findChain. Keeping
+-// the path-splitting scratch array local to this function is deliberate: the
+-// segments slice points into it, so handing the array to a helper would force
+-// it onto the heap and put an allocation back on the request path.
++//  1. Exact-path map (methodIndex.static): fully static routes that no earlier
++//     dynamic route can shadow are found with a single hash of the path.
++//  2. Segment trie (methodIndex.root, router_trie.go): everything else - routes
++//     with :params, trailing wildcards, and static routes that an earlier dynamic
++//     route would shadow - is resolved by walking the request's segments through a
++//     trie. The walk returns the matching route with the lowest registration
++//     index, which is exactly what the ordered scan it replaces returned, so
++//     "first registered wins" is unchanged; only the cost moves from O(routes) to
++//     O(path depth).
++//  3. bucketOther (HEAD, TRACE, CONNECT, extension methods) mixes methods in one
++//     bucket and holds few routes, so it keeps the ordered scan.
+ //
+-// Returns the matched route, its captured params (nil when the route has
+-// none), and autoIndex — true when nothing matched but the request is a GET
+-// for "/" and root auto-serving is on.
++// When params is non-nil it came from the pooled params set and the caller owns it.
+ func (r *Router) lookup(req *HTTPRequest) (matched *route, params map[string]string, autoIndex bool) {
+ 	path := req.Path
+ 	if len(path) > 0 && path[0] == '/' {
+@@ -488,18 +507,14 @@
+ 	b := methodBucket(req.Method)
+ 	idx := &r.byMethod[b]
+ 
+-	// Exact-path fast path: one map probe, and the path is never split.
+ 	if idx.static != nil {
+ 		if rt := idx.static[path]; rt != nil {
+ 			return rt, nil, false
+ 		}
+ 	}
+ 
+-	// Split the request path into segments without allocating a []string.
+-	// We store them in a small stack-allocated array for the common case.
+ 	var segBuf [16]string
+ 	reqSegments := segBuf[:0]
+-
+ 	if path != "" {
+ 		start := 0
+ 		for i := 0; i <= len(path); i++ {
+@@ -509,7 +524,6 @@
+ 					reqSegments = reqSegments[:len(reqSegments)+1]
+ 					reqSegments[len(reqSegments)-1] = seg
+ 				} else {
+-					// Overflow: fall back to heap allocation (paths with >16 segments)
+ 					reqSegments = append(reqSegments, seg)
+ 				}
+ 				start = i + 1
+@@ -517,80 +531,19 @@
+ 		}
+ 	}
+ 
+-	nReq := len(reqSegments)
+-
+-	// Within buckets 0..5 every route shares the request's method, so the
+-	// method comparison is skipped entirely. bucketOther mixes methods and
+-	// still needs it.
+-	checkMethod := b == bucketOther
+-
+-	for _, rt := range idx.routes {
+-		if checkMethod && rt.method != req.Method {
+-			continue
+-		}
+-
+-		if rt.hasWildcard {
+-			if nReq < len(rt.segments) {
+-				continue
+-			}
+-			match := true
+-			for i, rseg := range rt.segments {
+-				if rt.paramIndex[i] {
+-					// param: always matches, captured below
+-				} else if rseg != reqSegments[i] {
+-					match = false
+-					break
+-				}
+-			}
+-			if !match {
+-				continue
+-			}
+-			if rt.paramCount > 0 || rt.wildcardName != "" {
+-				params = acquireParams()
+-				for i, rseg := range rt.segments {
+-					if rt.paramIndex[i] {
+-						params[rseg[1:]] = reqSegments[i]
+-					}
+-				}
+-				params[rt.wildcardName] = strings.Join(reqSegments[len(rt.segments):], "/")
+-			}
+-			return rt, params, false
+-		}
+-
+-		// Normal route: segment count must match exactly.
+-		if len(rt.segments) != nReq {
+-			continue
+-		}
+-
+-		match := true
+-		for i, rseg := range rt.segments {
+-			if !rt.paramIndex[i] && rseg != reqSegments[i] {
+-				match = false
+-				break
+-			}
+-		}
+-		if !match {
+-			continue
+-		}
+-
+-		// Only allocate the params map when there are actual params.
+-		if rt.paramCount > 0 {
+-			params = acquireParams()
+-			for i, rseg := range rt.segments {
+-				if rt.paramIndex[i] {
+-					params[rseg[1:]] = reqSegments[i]
+-				}
+-			}
+-		}
+-
+-		return rt, params, false
++	var rt *route
++	if b == bucketOther {
++		rt = idx.scan(req.Method, reqSegments)
++	} else if idx.root != nil {
++		rt, _ = idx.root.match(reqSegments, 0, nil, maxRouteOrder)
++	}
++	if rt != nil {
++		return rt, bindParams(rt, path, reqSegments), false
+ 	}
+ 
+-	// Nothing matched. GET "/" may still be served from staticDir/index.html.
+-	if r.autoServeRoot && nReq == 0 && b == bucketGET {
++	if r.autoServeRoot && len(reqSegments) == 0 && b == bucketGET {
+ 		return nil, nil, true
+ 	}
+-
+ 	return nil, nil, false
+ }
+ 
+diff -ruN --strip-trailing-cr -x perf a/router_rest_bench_test.go b/router_rest_bench_test.go
+--- a/router_rest_bench_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/router_rest_bench_test.go	2026-10-28 02:28:57.539583213 +0000
+@@ -0,0 +1,80 @@
++package breeze
++
++import (
++	"fmt"
++	"testing"
++)
++
++func trieNoop(*Context) error { return nil }
++
++// A GitHub-API-shaped table: the shape on which the ordered scan degrades.
++func trieRESTTable() (*Router, []string) {
++	r := NewRouter()
++	res := []string{"users", "orgs", "teams", "repos", "issues", "pulls", "gists", "hooks", "keys", "labels", "milestones",
++		"releases", "events", "notifications", "projects", "boards", "cards", "columns", "assets", "comments", "reviews",
++		"commits", "branches", "tags", "forks", "stars", "watchers", "invites", "billing", "audit"}
++	for _, n := range res {
++		r.Handle(GET, "/api/v1/"+n, trieNoop)
++		r.Handle(POST, "/api/v1/"+n, trieNoop)
++		r.Handle(GET, "/api/v1/"+n+"/:a", trieNoop)
++		r.Handle(PUT, "/api/v1/"+n+"/:a", trieNoop)
++		r.Handle(DELETE, "/api/v1/"+n+"/:a", trieNoop)
++		r.Handle(GET, "/api/v1/"+n+"/:a/sub", trieNoop)
++		r.Handle(GET, "/api/v1/"+n+"/:a/sub/:b", trieNoop)
++		r.Handle(POST, "/api/v1/"+n+"/:a/sub", trieNoop)
++	}
++	for _, p := range []string{"/health", "/version", "/metrics", "/api/v1/ping"} {
++		r.Handle(GET, p, trieNoop)
++	}
++	return r, []string{"/api/v1/users/17", "/api/v1/orgs/9/sub", "/api/v1/teams/3/sub/4", "/api/v1/gists/5",
++		"/api/v1/commits/8/sub/2", "/api/v1/billing/1", "/api/v1/audit/6/sub/1", "/health", "/api/v1/ping", "/api/v1/stars/12/sub"}
++}
++
++func BenchmarkRouterLookupREST244(b *testing.B) {
++	r, paths := trieRESTTable()
++	req := &HTTPRequest{Method: GET}
++	b.ReportAllocs()
++	b.ResetTimer()
++	for i := 0; i < b.N; i++ {
++		req.Path = paths[i%len(paths)]
++		rt, params, _ := r.lookup(req)
++		if rt == nil {
++			b.Fatal("no route for ", req.Path)
++		}
++		if params != nil {
++			releaseParams(params)
++		}
++	}
++}
++
++// Lookup cost as the table grows: the ordered scan is O(routes), the trie O(path
++// depth). Paths are the last-registered resource (worst case for a scan), one in
++// the middle, and the first.
++func BenchmarkRouterLookupScaling(b *testing.B) {
++	for _, n := range []int{25, 100, 250, 1000} {
++		b.Run(fmt.Sprintf("resources=%d", n), func(b *testing.B) {
++			r := NewRouter()
++			for i := 0; i < n; i++ {
++				base := fmt.Sprintf("/api/v1/res%d", i)
++				r.Handle(GET, base, trieNoop)
++				r.Handle(GET, base+"/:id", trieNoop)
++				r.Handle(GET, base+"/:id/sub", trieNoop)
++				r.Handle(GET, base+"/:id/sub/:n", trieNoop)
++			}
++			paths := []string{fmt.Sprintf("/api/v1/res%d/42/sub/7", n-1), fmt.Sprintf("/api/v1/res%d/42", n/2), "/api/v1/res0/1"}
++			req := &HTTPRequest{Method: GET}
++			b.ReportAllocs()
++			b.ResetTimer()
++			for i := 0; i < b.N; i++ {
++				req.Path = paths[i%3]
++				rt, params, _ := r.lookup(req)
++				if rt == nil {
++					b.Fatal("no route")
++				}
++				if params != nil {
++					releaseParams(params)
++				}
++			}
++		})
++	}
++}
+diff -ruN --strip-trailing-cr -x perf a/router_trie.go b/router_trie.go
+--- a/router_trie.go	1970-01-01 00:00:00.000000000 +0000
++++ b/router_trie.go	2026-10-27 21:10:53.851617078 +0000
+@@ -0,0 +1,171 @@
++package breeze
++
++// maxRouteOrder is larger than any registration index.
++const maxRouteOrder = int(^uint(0) >> 1)
++
++// segNodeLinear is how many static children a node finds by scanning its keys
++// before it also builds a map: small fan-outs are cheaper to scan than to hash.
++const segNodeLinear = 8
++
++// segNode is a node of a method bucket's segment trie.
++//
++// A pattern is a path of segments. A literal segment descends into the static
++// child of that name, a :param segment into the node's single param child (the
++// parameter names are irrelevant to matching, they only matter when the params
++// map is built from the winning route), and a trailing *wildcard marks the node
++// the route ends on. The route is stored on that node as exact (it matches only
++// when the request ends there) or wild (it matches when the request ends there or
++// continues past it).
++//
++// min is the lowest registration index of any route in the subtree. match uses
++// it to skip subtrees that cannot beat a route it already holds, which is what
++// lets a depth-first walk return the first-registered match without visiting
++// every candidate: the result is identical to scanning the routes in order.
++type segNode struct {
++	keys  []string
++	kids  []*segNode
++	index map[string]*segNode // mirrors keys/kids once len(keys) > segNodeLinear
++	param *segNode
++	exact *route
++	wild  *route
++	min   int
++}
++
++func newSegNode() *segNode { return &segNode{min: maxRouteOrder} }
++
++func (n *segNode) child(seg string) *segNode {
++	if n.index != nil {
++		return n.index[seg]
++	}
++	for i, k := range n.keys {
++		if k == seg {
++			return n.kids[i]
++		}
++	}
++	return nil
++}
++
++func (n *segNode) staticChild(seg string) *segNode {
++	if c := n.child(seg); c != nil {
++		return c
++	}
++	c := newSegNode()
++	n.keys = append(n.keys, seg)
++	n.kids = append(n.kids, c)
++	switch {
++	case n.index != nil:
++		n.index[seg] = c
++	case len(n.keys) > segNodeLinear:
++		n.index = make(map[string]*segNode, 2*len(n.keys))
++		for i, k := range n.keys {
++			n.index[k] = n.kids[i]
++		}
++	}
++	return c
++}
++
++func (n *segNode) paramChild() *segNode {
++	if n.param == nil {
++		n.param = newSegNode()
++	}
++	return n.param
++}
++
++// insertTrie adds rt to the bucket's trie. Routes arrive in registration order,
++// so rt.order only grows and the first route to reach a node sets its min.
++func (idx *methodIndex) insertTrie(rt *route) {
++	if idx.root == nil {
++		idx.root = newSegNode()
++	}
++	cur := idx.root
++	if rt.order < cur.min {
++		cur.min = rt.order
++	}
++	for i, seg := range rt.segments {
++		if rt.paramIndex[i] {
++			cur = cur.paramChild()
++		} else {
++			cur = cur.staticChild(seg)
++		}
++		if rt.order < cur.min {
++			cur.min = rt.order
++		}
++	}
++	// A later route of the same shape ends on the same node and matches exactly
++	// the requests the earlier one matches, so it could never win: keep the first.
++	if rt.hasWildcard {
++		if cur.wild == nil {
++			cur.wild = rt
++		}
++	} else if cur.exact == nil {
++		cur.exact = rt
++	}
++}
++
++// match walks segs[depth:] below n and returns the matching route with the lowest
++// registration index, or best when nothing below n beats it.
++func (n *segNode) match(segs []string, depth int, best *route, bestIdx int) (*route, int) {
++	if n.min >= bestIdx {
++		return best, bestIdx
++	}
++	// Reaching n means depth request segments matched, which is all a wildcard
++	// anchored here needs: it matches the remaining segments, however many.
++	if w := n.wild; w != nil && w.order < bestIdx {
++		best, bestIdx = w, w.order
++	}
++	if depth == len(segs) {
++		if e := n.exact; e != nil && e.order < bestIdx {
++			best, bestIdx = e, e.order
++		}
++		return best, bestIdx
++	}
++	if c := n.child(segs[depth]); c != nil {
++		best, bestIdx = c.match(segs, depth+1, best, bestIdx)
++	}
++	if n.param != nil {
++		best, bestIdx = n.param.match(segs, depth+1, best, bestIdx)
++	}
++	return best, bestIdx
++}
++
++// scan is the ordered scan: the first route of the bucket with this method that
++// matches. bucketOther mixes methods and is small, so it keeps this.
++func (idx *methodIndex) scan(method Method, segs []string) *route {
++	for _, rt := range idx.routes {
++		if rt.method == method && rt.matchesSegments(segs) {
++			return rt
++		}
++	}
++	return nil
++}
++
++// bindParams builds the params map for the winning route. The map is nil for a
++// route with neither parameters nor a wildcard.
++func bindParams(rt *route, path string, segs []string) map[string]string {
++	if !rt.hasWildcard && rt.paramCount == 0 {
++		return nil
++	}
++	params := acquireParams()
++	for i, rseg := range rt.segments {
++		if rt.paramIndex[i] {
++			params[rseg[1:]] = segs[i]
++		}
++	}
++	if rt.hasWildcard {
++		params[rt.wildcardName] = pathTail(path, segs, len(rt.segments))
++	}
++	return params
++}
++
++// pathTail returns strings.Join(segs[k:], "/") without building a new string:
++// segs are the '/'-separated pieces of path, so the join is a suffix of it.
++func pathTail(path string, segs []string, k int) string {
++	if k >= len(segs) {
++		return ""
++	}
++	off := 0
++	for i := 0; i < k; i++ {
++		off += len(segs[i]) + 1
++	}
++	return path[off:]
++}
+diff -ruN --strip-trailing-cr -x perf a/router_trie_test.go b/router_trie_test.go
+--- a/router_trie_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/router_trie_test.go	2026-10-27 21:10:53.866097600 +0000
+@@ -0,0 +1,205 @@
++package breeze
++
++import (
++	"fmt"
++	"math/rand"
++	"reflect"
++	"strings"
++	"testing"
++)
++
++// lookupScanOracle is the ordered scan Router.lookup used before the segment trie,
++// kept verbatim as an executable specification: the first route in registration
++// order that matches wins.
++func lookupScanOracle(r *Router, req *HTTPRequest) (*route, map[string]string) {
++	path := req.Path
++	if len(path) > 0 && path[0] == '/' {
++		path = path[1:]
++	}
++	if len(path) > 0 && path[len(path)-1] == '/' {
++		path = path[:len(path)-1]
++	}
++	idx := &r.byMethod[methodBucket(req.Method)]
++	var reqSegments []string
++	if path != "" {
++		reqSegments = strings.Split(path, "/")
++	}
++	nReq := len(reqSegments)
++	checkMethod := methodBucket(req.Method) == bucketOther
++	for _, rt := range idx.routes {
++		if checkMethod && rt.method != req.Method {
++			continue
++		}
++		if rt.hasWildcard {
++			if nReq < len(rt.segments) {
++				continue
++			}
++			match := true
++			for i, rseg := range rt.segments {
++				if rt.paramIndex[i] {
++					continue
++				}
++				if rseg != reqSegments[i] {
++					match = false
++					break
++				}
++			}
++			if !match {
++				continue
++			}
++			params := map[string]string{}
++			for i, rseg := range rt.segments {
++				if rt.paramIndex[i] {
++					params[rseg[1:]] = reqSegments[i]
++				}
++			}
++			params[rt.wildcardName] = strings.Join(reqSegments[len(rt.segments):], "/")
++			return rt, params
++		}
++		if len(rt.segments) != nReq {
++			continue
++		}
++		match := true
++		for i, rseg := range rt.segments {
++			if !rt.paramIndex[i] && rseg != reqSegments[i] {
++				match = false
++				break
++			}
++		}
++		if !match {
++			continue
++		}
++		if rt.paramCount > 0 {
++			params := map[string]string{}
++			for i, rseg := range rt.segments {
++				if rt.paramIndex[i] {
++					params[rseg[1:]] = reqSegments[i]
++				}
++			}
++			return rt, params
++		}
++		return rt, nil
++	}
++	return nil, nil
++}
++
++func trieRandPattern(rng *rand.Rand) string {
++	alphabet := []string{"a", "b", "c", "users", "x", ""}
++	segs := make([]string, 0, 6)
++	for i, n := 0, rng.Intn(5); i < n; i++ {
++		if rng.Intn(5) < 3 {
++			segs = append(segs, alphabet[rng.Intn(len(alphabet))])
++		} else {
++			segs = append(segs, fmt.Sprintf(":p%d", rng.Intn(3)))
++		}
++	}
++	if rng.Intn(5) == 0 {
++		if rng.Intn(2) == 0 {
++			segs = append(segs, "*")
++		} else {
++			segs = append(segs, fmt.Sprintf("*w%d", rng.Intn(2)))
++		}
++	}
++	return "/" + strings.Join(segs, "/")
++}
++
++func trieRandPath(rng *rand.Rand) string {
++	pool := []string{"a", "b", "c", "users", "x", "", "zzz", ":p0", "*"}
++	segs := make([]string, rng.Intn(6))
++	for i := range segs {
++		segs[i] = pool[rng.Intn(len(pool))]
++	}
++	p := strings.Join(segs, "/")
++	if rng.Intn(10) != 0 {
++		p = "/" + p
++	}
++	if rng.Intn(5) == 0 {
++		p += "/"
++	}
++	return p
++}
++
++// The segment trie must return exactly what the ordered scan returned: the same
++// route, and the same params, on random route tables full of overlaps (a :param
++// registered before a literal it shadows, duplicate shapes, wildcards that also
++// match zero segments, empty segments, several methods).
++func TestRouterTrieMatchesOrderedScan(t *testing.T) {
++	methods := []Method{GET, GET, GET, POST, PUT, Method("HEAD"), Method("PURGE")}
++	rng := rand.New(rand.NewSource(20261028))
++	checked, hits := 0, 0
++	for table := 0; table < 1500; table++ {
++		r := NewRouter()
++		for i, n := 0, 1+rng.Intn(45); i < n; i++ {
++			r.Handle(methods[rng.Intn(len(methods))], trieRandPattern(rng), trieNoop)
++		}
++		for q := 0; q < 250; q++ {
++			req := &HTTPRequest{Method: methods[rng.Intn(len(methods))], Path: trieRandPath(rng)}
++			gotRt, gotParams, _ := r.lookup(req)
++			wantRt, wantParams := lookupScanOracle(r, req)
++			checked++
++			if gotRt != nil {
++				hits++
++			}
++			if gotRt != wantRt {
++				t.Fatalf("table %d: %s %q: route mismatch: got %v want %v", table, req.Method, req.Path, patternOf(gotRt), patternOf(wantRt))
++			}
++			if (gotParams == nil) != (wantParams == nil) || (gotParams != nil && !reflect.DeepEqual(gotParams, wantParams)) {
++				t.Fatalf("table %d: %s %q (%s): params got %v want %v", table, req.Method, req.Path, patternOf(gotRt), gotParams, wantParams)
++			}
++			if gotParams != nil {
++				releaseParams(gotParams)
++			}
++		}
++	}
++	if hits < checked/10 {
++		t.Fatalf("generator too sparse: only %d of %d lookups matched a route", hits, checked)
++	}
++}
++
++func patternOf(rt *route) string {
++	if rt == nil {
++		return "<none>"
++	}
++	return string(rt.method) + " " + rt.pattern
++}
++
++func TestRouterTrieFirstRegisteredWins(t *testing.T) {
++	r := NewRouter()
++	r.Handle(GET, "/users/:id", trieNoop)   // 0
++	r.Handle(GET, "/users/me", trieNoop)    // 1: shadowed by 0, as before
++	r.Handle(GET, "/files/*path", trieNoop) // 2
++	r.Handle(GET, "/files", trieNoop)       // 3: shadowed, the wildcard matches zero segments
++	r.Handle(GET, "/a/b/c", trieNoop)       // 4
++	r.Handle(GET, "/a/:x/d", trieNoop)      // 5
++	r.Handle(GET, "/", trieNoop)            // 6
++	cases := []struct {
++		path   string
++		want   int
++		params map[string]string
++	}{
++		{"/users/me", 0, map[string]string{"id": "me"}},
++		{"/users/42", 0, map[string]string{"id": "42"}},
++		{"/files", 2, map[string]string{"path": ""}},
++		{"/files/", 2, map[string]string{"path": ""}},
++		{"/files/x/y/z", 2, map[string]string{"path": "x/y/z"}},
++		{"/files/x//y", 2, map[string]string{"path": "x//y"}},
++		{"/a/b/c", 4, nil},
++		{"/a/q/d", 5, map[string]string{"x": "q"}},
++		{"/", 6, nil},
++		{"/nope", -1, nil},
++		{"/users", -1, nil},
++		{"/users/1/2", -1, nil},
++	}
++	for _, c := range cases {
++		rt, params, _ := r.lookup(&HTTPRequest{Method: GET, Path: c.path})
++		switch {
++		case c.want < 0 && rt != nil:
++			t.Errorf("%s: expected no route, got %s", c.path, patternOf(rt))
++		case c.want >= 0 && rt != r.routes[c.want]:
++			t.Errorf("%s: got %s, want %s", c.path, patternOf(rt), patternOf(r.routes[c.want]))
++		}
++		if len(params) != len(c.params) || (len(c.params) > 0 && !reflect.DeepEqual(params, c.params)) {
++			t.Errorf("%s: params %v, want %v", c.path, params, c.params)
++		}
++	}
++}
+diff -ruN --strip-trailing-cr -x perf a/static_union.go b/static_union.go
+--- a/static_union.go	1970-01-01 00:00:00.000000000 +0000
++++ b/static_union.go	2026-10-28 09:21:29.857682365 +0000
+@@ -0,0 +1,81 @@
++package breeze
++
++import (
++	"sync/atomic"
++	"unsafe"
++)
++
++// staticUnion is the merge of two static header blocks (see SetHeaderStatic): the
++// concatenated wire bytes and the combined lookup map. Both inputs are immutable
++// per middleware instance, so the merge is the same for every request and is
++// computed once instead of on each one.
++//
++// The inputs are retained here on purpose: the cache is keyed by their addresses,
++// and holding them keeps those addresses from being recycled for different data.
++type staticUnion struct {
++	a, b   []byte
++	am, bm map[string]string
++
++	block  []byte
++	lookup map[string]string
++}
++
++// maxStaticUnions bounds the cache. A program that builds a new pair of static
++// middlewares per request would otherwise grow it without limit; past the bound
++// the merge is simply not cached, which is the old behaviour.
++const maxStaticUnions = 64
++
++var staticUnions atomic.Pointer[[]*staticUnion] // copy-on-write snapshot
++
++func mapID(m map[string]string) unsafe.Pointer { return *(*unsafe.Pointer)(unsafe.Pointer(&m)) }
++
++func (u *staticUnion) is(a []byte, am map[string]string, b []byte, bm map[string]string) bool {
++	return len(u.a) == len(a) && len(u.b) == len(b) &&
++		unsafe.SliceData(u.a) == unsafe.SliceData(a) && unsafe.SliceData(u.b) == unsafe.SliceData(b) &&
++		mapID(u.am) == mapID(am) && mapID(u.bm) == mapID(bm)
++}
++
++func staticUnionOf(a []byte, am map[string]string, b []byte, bm map[string]string) *staticUnion {
++	if cur := staticUnions.Load(); cur != nil {
++		for _, u := range *cur {
++			if u.is(a, am, b, bm) {
++				return u
++			}
++		}
++	}
++	nb := make([]byte, 0, len(a)+len(b))
++	nb = append(nb, a...)
++	nb = append(nb, b...)
++	nm := make(map[string]string, len(am)+len(bm))
++	for k, v := range am {
++		nm[k] = v
++	}
++	for k, v := range bm {
++		nm[k] = v
++	}
++	u := &staticUnion{a: a, b: b, am: am, bm: bm, block: nb, lookup: nm}
++	for {
++		cur := staticUnions.Load()
++		var list []*staticUnion
++		if cur != nil {
++			list = *cur
++			// Another event loop may have added this very pair while we were
++			// merging (every loop misses on its first request). Use its entry
++			// instead of appending a duplicate that would waste a slot.
++			for _, e := range list {
++				if e.is(a, am, b, bm) {
++					return e
++				}
++			}
++		}
++		if len(list) >= maxStaticUnions {
++			return u
++		}
++		next := make([]*staticUnion, len(list)+1)
++		copy(next, list)
++		next[len(list)] = u
++		if staticUnions.CompareAndSwap(cur, &next) {
++			return u
++		}
++	}
++}
+diff -ruN --strip-trailing-cr -x perf a/static_union_test.go b/static_union_test.go
+--- a/static_union_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/static_union_test.go	2026-10-28 09:21:29.858324620 +0000
+@@ -0,0 +1,101 @@
++package breeze
++
++import (
++	"reflect"
++	"sync"
++	"testing"
++	"unsafe"
++)
++
++func TestStaticUnionCachedSharedAndCorrect(t *testing.T) {
++	a := []byte("A: 1\r\n")
++	am := map[string]string{"A": "1"}
++	b := []byte("B: 2\r\nC: 3\r\n")
++	bm := map[string]string{"B": "2", "C": "3"}
++	merge := func() *Context {
++		c := NewContext(GET, "/")
++		c.SetHeaderStatic(a, am)
++		c.SetHeaderStatic(b, bm)
++		return c
++	}
++	c1, c2 := merge(), merge()
++	if got := string(c1.Res.preBuilt); got != "A: 1\r\nB: 2\r\nC: 3\r\n" {
++		t.Fatalf("merged block %q", got)
++	}
++	if want := (map[string]string{"A": "1", "B": "2", "C": "3"}); !reflect.DeepEqual(c1.Res.preHeaders, want) {
++		t.Fatalf("merged lookup %v", c1.Res.preHeaders)
++	}
++	if unsafe.SliceData(c1.Res.preBuilt) != unsafe.SliceData(c2.Res.preBuilt) {
++		t.Fatal("the merge was recomputed instead of shared")
++	}
++	if !c1.Res.headersShared {
++		t.Fatal("shared union must stay copy-on-write")
++	}
++	// A dynamic header after the union must not write through to the shared state.
++	c1.SetHeader("X-Extra", "1")
++	if _, leaked := c2.Res.preHeaders["X-Extra"]; leaked {
++		t.Fatal("SetHeader leaked into the shared union")
++	}
++	if string(a) != "A: 1\r\n" || len(am) != 1 || len(bm) != 2 {
++		t.Fatal("source blocks were modified")
++	}
++	// Different pairs must not collide.
++	d := []byte("D: 4\r\n")
++	dm := map[string]string{"D": "4"}
++	c3 := NewContext(GET, "/")
++	c3.SetHeaderStatic(a, am)
++	c3.SetHeaderStatic(d, dm)
++	if got := string(c3.Res.preBuilt); got != "A: 1\r\nD: 4\r\n" {
++		t.Fatalf("second pair merged to %q", got)
++	}
++}
++
++func TestStaticUnionNoAllocWhenCached(t *testing.T) {
++	a, am := []byte("A: 1\r\n"), map[string]string{"A": "1"}
++	b, bm := []byte("B: 2\r\n"), map[string]string{"B": "2"}
++	c := NewContext(GET, "/")
++	r := c.ensureResponse()
++	run := func() {
++		r.preBuilt, r.preHeaders = nil, nil
++		c.SetHeaderStatic(a, am)
++		c.SetHeaderStatic(b, bm)
++	}
++	run()
++	if n := testing.AllocsPerRun(200, run); n != 0 {
++		t.Fatalf("merging two static blocks allocates %v times per request once cached", n)
++	}
++}
++
++// Every event loop misses on its first request for a pair: concurrent first use
++// must agree on one shared union and must not fill the cache with duplicates.
++func TestStaticUnionConcurrentFirstUse(t *testing.T) {
++	a, am := []byte("A: 1\r\n"), map[string]string{"A": "1"}
++	b, bm := []byte("B: 2\r\n"), map[string]string{"B": "2"}
++	results := make([]*staticUnion, 32)
++	start := make(chan struct{})
++	var wg sync.WaitGroup
++	for i := range results {
++		wg.Add(1)
++		go func(i int) {
++			defer wg.Done()
++			<-start
++			results[i] = staticUnionOf(a, am, b, bm)
++		}(i)
++	}
++	close(start)
++	wg.Wait()
++	for _, u := range results {
++		if string(u.block) != "A: 1\r\nB: 2\r\n" || len(u.lookup) != 2 {
++			t.Fatalf("wrong union %q %v", u.block, u.lookup)
++		}
++	}
++	n := 0
++	for _, e := range *staticUnions.Load() {
++		if e.is(a, am, b, bm) {
++			n++
++		}
++	}
++	if n != 1 {
++		t.Fatalf("%d cache entries for one pair, want 1", n)
++	}
++}

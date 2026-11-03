@@ -588,6 +588,18 @@ func functionsIn(t *testing.T, file, source string) []sourceFunc {
 	t.Helper()
 
 	var out []sourceFunc
+	// The two ways the closing brace used to be lost, both of which make a body
+	// run on into the next function's: see TestFunctionsInEndsEachBodyAtItsOwnClosingBrace.
+	//
+	// CRLF. The files here are LF in the index, but a Windows checkout with
+	// core.autocrlf=true materialises them as CRLF, and splitting on "\n" then
+	// leaves a trailing \r on every line — including on the function's own
+	// closing brace, which therefore never equals "}". Every body ran to the end
+	// of the file, so every filesystem call in it was attributed to every
+	// function declared after it: 19 innocent functions were reported as reaching
+	// the filesystem unconfined, on Windows only. Only "\r\n" is rewritten — a
+	// lone \r between two lines of text is not a terminator Go's toolchain writes.
+	source = strings.ReplaceAll(source, "\r\n", "\n")
 	lines := strings.Split(source, "\n")
 
 	for i, line := range lines {
@@ -599,15 +611,26 @@ func functionsIn(t *testing.T, file, source string) []sourceFunc {
 			continue
 		}
 
-		// The body runs to the next top-level "}" — the one at column zero, which
-		// gofmt guarantees for a function's closing brace.
 		var body strings.Builder
-		for _, rest := range lines[i+1:] {
-			if rest == "}" {
-				break
+		if decl := strings.TrimSpace(line); strings.HasSuffix(decl, "}") {
+			// One line, one function: the body is what sits between its braces, and
+			// the next "}" at column zero belongs to the function after this one.
+			// Seventeen functions in this package are written this way, and
+			// workspace.go's `remove` is the one whose swallowed body carries an
+			// os.RemoveAll — allow-listed today by luck of its name, not by design.
+			if open := strings.Index(decl, "{"); open >= 0 && open < len(decl)-1 {
+				body.WriteString(decl[open+1 : len(decl)-1])
 			}
-			body.WriteString(rest)
-			body.WriteString("\n")
+		} else {
+			// The body runs to the next top-level "}" — the one at column zero,
+			// which gofmt guarantees for a function's closing brace.
+			for _, rest := range lines[i+1:] {
+				if rest == "}" {
+					break
+				}
+				body.WriteString(rest)
+				body.WriteString("\n")
+			}
 		}
 		out = append(out, sourceFunc{name: name, body: body.String()})
 	}

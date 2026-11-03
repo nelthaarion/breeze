@@ -99,9 +99,17 @@ var toolScopes = map[string]toolScope{
 	//
 	// runGenerator → captureStdout → runInDir. Replaces os.Stdout and chdirs the
 	// whole process while the application is serving requests on it.
-	"breeze_new":      scopeWorkspace,
-	"breeze_generate": scopeWorkspace,
-	"breeze_add":      scopeWorkspace,
+	"breeze_new":           scopeWorkspace,
+	"breeze_generate":      scopeWorkspace,
+	"breeze_add":           scopeWorkspace,
+	"breeze_makemigration": scopeWorkspace,
+
+	// breeze_migrate runs the project's migration runner with `go run` against a
+	// database. It needs a source tree and the Go toolchain like the verification tools,
+	// and unlike them it changes something outside the process, so an application able
+	// to roll back its own schema from inside its own process is the same privilege
+	// escalation as provisioning its siblings.
+	"breeze_migrate": scopeWorkspace,
 
 	// breeze_routes is read-only in intent and still workspace-only in mechanism:
 	// it goes through runGenerator, so it takes the capture lock and chdirs. It also

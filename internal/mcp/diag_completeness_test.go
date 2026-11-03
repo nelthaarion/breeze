@@ -5,7 +5,7 @@ package mcp_test
 //
 // # What this actually asserts
 //
-// `breeze add` offers 23 features. Before Part 3 the diagnostic surface covered
+// `breeze add` offered 23 features. Before Part 3 the diagnostic surface covered
 // five of them, and the gap was invisible: nothing failed, nothing warned, a
 // feature simply had no way to report on itself and the only symptom was an agent
 // unable to answer "is compression working". A count in a comment would not have
@@ -33,6 +33,7 @@ package mcp_test
 //     "tuning" subsystem reporting two booleans would be noise.
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -46,6 +47,7 @@ import (
 	"github.com/nelthaarion/breeze/v2/events"
 	"github.com/nelthaarion/breeze/v2/fleet"
 	"github.com/nelthaarion/breeze/v2/internal/generator"
+	embedded "github.com/nelthaarion/breeze/v2/mcp"
 	"github.com/nelthaarion/breeze/v2/migrate"
 	"github.com/nelthaarion/breeze/v2/observability"
 	"github.com/nelthaarion/breeze/v2/rpc"
@@ -143,6 +145,7 @@ func TestNoProbeIsRegisteredUnderAnUnknownName(t *testing.T) {
 		"auto-mcp":   true, // app.EnableMCP, not `breeze add`
 		"locale":     true, // the middleware; "i18n" is the bundle
 		"server":     true, // core Breeze listener config; registered by New
+		"client":     true, // the framework's HTTP client; registered at init, used by Fleet's exporter
 	}
 
 	for _, name := range diag.Registered() {
@@ -212,4 +215,25 @@ func wireEverySubsystem(t *testing.T) {
 	cfg.Username = "wire"
 	cfg.Password = "wire"
 	dashboard.Install(app, router, cfg)
+
+	// The in-process endpoint registers its own probe as it starts, and starting one
+	// binds a port: the one subsystem here that touches the network, on loopback, for
+	// the length of the test. It is closed again when the test ends. A free port is
+	// asked of the kernel first because the endpoint requires one and a fixed number
+	// would fail whenever something else on the machine holds it.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("find a free port for the mcp endpoint: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	_ = probe.Close()
+
+	server, _, err := embedded.StartInProcess(app, embedded.InProcessConfig{
+		Mode: embedded.ModeAppRuntime,
+		Port: port,
+	})
+	if err != nil {
+		t.Fatalf("start the in-process mcp endpoint: %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
 }

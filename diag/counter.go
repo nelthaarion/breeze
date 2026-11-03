@@ -3,7 +3,7 @@ package diag
 // counter.go — the counter subsystems embed.
 //
 // One type, used by compression, etag, ratelimit, cors, security, i18n, jwt,
-// oauth2 and websocket. A shared type rather than nine hand-rolled ones because
+// oauth2, websocket and the HTTP client. A shared type rather than nine hand-rolled ones because
 // the gate check is the part that must not be got wrong: a subsystem that forgot
 // it would put an unconditional atomic RMW on a response path, and nothing in a
 // test would notice.

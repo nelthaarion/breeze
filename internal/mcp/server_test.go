@@ -201,6 +201,8 @@ func TestToolRegistryCovers(t *testing.T) {
 	want := []string{
 		// generation
 		"breeze_add", "breeze_generate", "breeze_new",
+		// the CLI's makemigration and migrate
+		"breeze_makemigration", "breeze_migrate",
 		// introspection
 		"breeze_features", "breeze_routes",
 		// planning and state

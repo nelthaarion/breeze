@@ -74,6 +74,7 @@ func NewServer(version string) *Server {
 
 	s.registerMethods()
 	registerGeneratorTools(s)
+	registerMigrationTools(s)
 	registerIntrospectionTools(s)
 	registerPlanningTools(s)
 	registerChangeSetTools(s)

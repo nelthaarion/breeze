@@ -99,6 +99,7 @@ func TestWorkspaceToolsAreAbsentInProcess(t *testing.T) {
 
 	for _, name := range []string{
 		"breeze_new", "breeze_generate", "breeze_add",
+		"breeze_makemigration", "breeze_migrate",
 		"provision_service", "provision_fleet", "deprovision_service",
 		"breeze_verify_project", "breeze_plan_project", "breeze_begin_change_set",
 	} {

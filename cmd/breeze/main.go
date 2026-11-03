@@ -189,10 +189,10 @@ Generators:
   job <Name>           background job, registered with the dashboard
   grpc <Name>          gRPC service skeleton
 
-Features (breeze add --list for all 23):
+Features (breeze add --list for all 24):
   events observability recovery logging security cors compression ratelimit
   dashboard i18n jwt oauth2 etag docs static video websocket jsonrpc
-  templates workflow tuning migrator fleet
+  templates workflow tuning migrator fleet mcp
 
 
 Aliases:

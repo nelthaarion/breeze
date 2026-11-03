@@ -229,4 +229,5 @@ func init() {
 	registerMiddlewareFeatures()
 	registerRouteFeatures()
 	registerFleetFeature()
+	registerMCPFeature()
 }

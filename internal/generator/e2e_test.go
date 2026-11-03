@@ -63,6 +63,9 @@ var e2eFeatures = [][]string{
 
 	{"templates", "--spa"},
 	{"tuning", "--inline"},
+	// A non-default port, so the substituted value is what gets compiled. The block
+	// itself is the same for every port; this proves the substitution lands in valid Go.
+	{"mcp", "--port=2100"},
 }
 
 // e2eGenerators covers every generator kind, including the flag combinations

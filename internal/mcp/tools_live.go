@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/nelthaarion/breeze/v2/diag"
 )
@@ -449,10 +450,25 @@ func getRecentErrors(a recentErrorsArgs) toolCallResult {
 	}
 	report.Count = len(report.Errors)
 
-	if report.Scanned == 0 {
-		report.Notes = append(report.Notes, "The service has recorded no requests at all, so this is not "+
-			"evidence that it is error-free. Check that the dashboard middleware is installed and that "+
-			"traffic has reached the service.")
+	// What the dashboard keeps decides what this tool can see, and the caller cannot tell
+	// an empty answer from an unobserved one. The middleware counts every request but
+	// records one in full only while someone has the dashboard open, when it was slower
+	// than slow_request_ms, or when it failed with a 5xx (see shouldCaptureFullRecord).
+	// A 404 or a validation failure served with nobody watching is counted and not kept.
+	// An agent told "no client-side errors" would conclude the service's clients are
+	// behaving, and one told the middleware might be missing would go looking for a fault
+	// that is not there while the real cause is the policy.
+	switch {
+	case report.Scanned == 0:
+		report.Notes = append(report.Notes, "The dashboard holds no request records, so this is not evidence that the "+
+			"service is error-free. It records a request in full only while someone has the dashboard open, when the "+
+			"request was slower than slow_request_ms, or when it failed with a 5xx: a fast success or a 4xx served "+
+			"with nobody watching is counted in the totals and not kept. If traffic should have produced records, "+
+			"check that the dashboard middleware is installed and that the traffic reached this service.")
+	case report.ClientSide == 0:
+		report.Notes = append(report.Notes, "No client-side (4xx) failures were found, which does not rule them out: the "+
+			"dashboard keeps a 4xx only while someone has the dashboard open or when it was slow, and counts the rest "+
+			"without recording them. 5xx failures are always kept.")
 	}
 
 	summary := fmt.Sprintf("%d failed request(s) out of %d scanned: %d server-side, %d client-side",
@@ -472,13 +488,16 @@ type liveLogEntry struct {
 }
 
 type logsReport struct {
-	ServiceURL string         `json:"service_url"`
-	Level      string         `json:"level"`
-	Query      string         `json:"query,omitempty"`
-	TraceID    string         `json:"trace_id,omitempty"`
-	Count      int            `json:"count"`
-	Entries    []liveLogEntry `json:"entries"`
-	Notes      []string       `json:"notes,omitempty"`
+	ServiceURL string `json:"service_url"`
+	Level      string `json:"level"`
+	// Tabs lists the log tabs that were read when Level is "all", so a reader can see
+	// that an empty result covers every one of them and not just the default.
+	Tabs    []string       `json:"tabs,omitempty"`
+	Query   string         `json:"query,omitempty"`
+	TraceID string         `json:"trace_id,omitempty"`
+	Count   int            `json:"count"`
+	Entries []liveLogEntry `json:"entries"`
+	Notes   []string       `json:"notes,omitempty"`
 }
 
 type logsArgs struct {
@@ -494,10 +513,14 @@ func getLogsTool() *tool {
 		name: "breeze_get_logs",
 		description: "Read a running service's logs, optionally filtered by a substring or by trace id. " +
 			"Filtering by trace_id is the way to see every line one request produced, including " +
-			"across a Fleet trace. Levels are app, http, error, panic, and warning. Requires the " +
-			"dashboard feature; this endpoint also accepts the service token.",
+			"across a Fleet trace, so with a trace_id and no level every level is read: a failure is " +
+			"logged under error, beside the app lines of the same request. Logs are per service: to " +
+			"find why a Fleet trace failed, read the service the trace names as the failing hop. " +
+			"Levels are app, http, error, panic, warning and all. Requires the dashboard feature; " +
+			"this endpoint also accepts the service token.",
 		schema: objectSchema(liveProps(map[string]any{
-			"level": stringProp("Log level to read: app (default), http, error, panic, or warning."),
+			"level": stringProp("Log level to read: app, http, error, panic, warning, or all. Defaults to " +
+				"app, or to all when trace_id is given. info and debug mean app; warn means warning."),
 			"query": stringProp("Case-insensitive substring to match against the message."),
 			"trace_id": stringProp("Return only lines carrying this trace id — the lines belonging " +
 				"to one request."),
@@ -516,65 +539,161 @@ func getLogsTool() *tool {
 	}
 }
 
+// logLevelAll reads every tab. It is the default when a trace id is given.
+const logLevelAll = "all"
+
+// logTabs are the dashboard's log tabs. They are separate buffers and a line is stored
+// on exactly one of them, so reading everything one request logged means reading all
+// of them.
+var logTabs = []string{"app", "http", "error", "panic", "warning"}
+
+// canonicalLogLevel maps the names callers use onto the tab that holds them.
+//
+// The dashboard accepts these aliases itself now, but the service being read may be an
+// older build than this server, and an older dashboard answers a name it does not know
+// with an empty tab: the same answer as "nothing was logged". Mapping here means the
+// request that goes out only ever names a tab.
+func canonicalLogLevel(level string) (string, bool) {
+	switch level {
+	case "app", "info", "debug":
+		return "app", true
+	case "http", "error", "panic", "warning":
+		return level, true
+	case "warn":
+		return "warning", true
+	}
+	return "", false
+}
+
 func getLogs(a logsArgs) toolCallResult {
-	level := strings.TrimSpace(a.Level)
-	if level == "" {
-		level = "app"
+	traceID := strings.TrimSpace(a.TraceID)
+	requested := strings.ToLower(strings.TrimSpace(a.Level))
+
+	// A trace id is how one request's lines are found, and the thing a caller holding
+	// one does not know is which tab they were written to: the failure is under error
+	// and the work that led to it under app. Defaulting to app answered "no lines"
+	// for exactly the request whose lines were wanted.
+	var tabs []string
+	switch requested {
+	case "":
+		if traceID != "" {
+			requested, tabs = logLevelAll, logTabs
+		} else {
+			requested, tabs = "app", []string{"app"}
+		}
+	case logLevelAll:
+		tabs = logTabs
+	default:
+		tab, ok := canonicalLogLevel(requested)
+		if !ok {
+			// Refused rather than passed on. The service answers an unknown level with an
+			// empty list, and an empty list is what "nothing was logged" looks like.
+			return errorResult(fmt.Sprintf("unknown level %q: use app, http, error, panic, warning or all",
+				strings.TrimSpace(a.Level)))
+		}
+		requested, tabs = tab, []string{tab}
+	}
+
+	limit := a.Limit
+	if limit <= 0 {
+		limit = 500 // the dashboard's own default
 	}
 
 	// Filtering is pushed to the service rather than done here: the ring buffer
 	// holds a bounded number of lines, so filtering locally would first discard
 	// everything past the limit and then search the remainder, which silently
 	// misses matches the service could have found.
-	query := url.Values{}
-	query.Set("level", level)
-	if a.Limit > 0 {
-		query.Set("limit", fmt.Sprint(a.Limit))
-	}
-	if q := strings.TrimSpace(a.Query); q != "" {
-		query.Set("q", q)
-	}
-	if id := strings.TrimSpace(a.TraceID); id != "" {
-		query.Set("trace_id", id)
-	}
-
-	req := a.request("/logs", "dashboard")
-	req.path += "?" + query.Encode()
-
 	var entries []liveLogEntry
-	if err := fetchLiveJSON(req, &entries); err != nil {
-		return liveResultError("reading logs", err)
+	for _, tab := range tabs {
+		query := url.Values{}
+		query.Set("level", tab)
+		query.Set("limit", fmt.Sprint(limit))
+		if q := strings.TrimSpace(a.Query); q != "" {
+			query.Set("q", q)
+		}
+		if traceID != "" {
+			query.Set("trace_id", traceID)
+		}
+
+		req := a.request("/logs", "dashboard")
+		req.path += "?" + query.Encode()
+
+		var tabEntries []liveLogEntry
+		if err := fetchLiveJSON(req, &tabEntries); err != nil {
+			return liveResultError("reading logs", err)
+		}
+		entries = append(entries, tabEntries...)
+	}
+
+	if len(tabs) > 1 {
+		entries = newestLogEntries(entries, limit)
 	}
 
 	report := logsReport{
 		ServiceURL: a.ServiceURL,
-		Level:      level,
+		Level:      requested,
 		Query:      strings.TrimSpace(a.Query),
-		TraceID:    strings.TrimSpace(a.TraceID),
+		TraceID:    traceID,
 		Count:      len(entries),
 		Entries:    entries,
+	}
+	if len(tabs) > 1 {
+		report.Tabs = tabs
 	}
 
 	// An empty result has two very different causes and the caller cannot tell
 	// them apart from an empty array.
 	if len(entries) == 0 {
 		switch {
+		case report.TraceID != "" && len(tabs) > 1:
+			report.Notes = append(report.Notes, "No line at any level carries this trace id. Logs are per service, "+
+				"so the id may belong to another service in the trace: read the one the trace names as failing, "+
+				"or read the trace with breeze_get_trace. Older lines may also have been evicted.")
 		case report.TraceID != "":
-			report.Notes = append(report.Notes, "No lines carry this trace id at level "+level+
+			report.Notes = append(report.Notes, "No lines carry this trace id at level "+requested+
 				". The id may belong to another service in the trace, or the work may have logged "+
-				"at a different level — try level=error, or read the trace with breeze_get_trace.")
+				"at a different level  try level=all, or read the trace with breeze_get_trace.")
 		case report.Query != "":
-			report.Notes = append(report.Notes, "Nothing at level "+level+" matched this query. "+
+			report.Notes = append(report.Notes, "Nothing at level "+requested+" matched this query. "+
 				"The buffer holds only recent lines, so an older match will have been evicted.")
 		default:
-			report.Notes = append(report.Notes, "No lines at level "+level+
+			report.Notes = append(report.Notes, "No lines at level "+requested+
 				". Levels are separate buffers: application logs are under app, request logs under http, "+
-				"and failures under error or panic.")
+				"and failures under error or panic. level=all reads every one.")
 		}
 	}
 
-	summary := fmt.Sprintf("%d log line(s) at level %s", report.Count, level)
+	summary := fmt.Sprintf("%d log line(s) at level %s", report.Count, requested)
 	return structuredResult(summary, report)
+}
+
+// newestLogEntries orders lines by when they were logged and keeps the newest limit of
+// them. Lines from different tabs have no shared order until they are sorted: each
+// tab arrives oldest first on its own.
+//
+// Times are compared as times. They are RFC 3339 strings with trailing zeros trimmed, so
+// 12:00:01.98Z sorts after 12:00:01.981Z as text and before it as time, which is the
+// difference between a failure appearing after the work that caused it and before.
+func newestLogEntries(entries []liveLogEntry, limit int) []liveLogEntry {
+	times := make([]time.Time, len(entries))
+	for i, e := range entries {
+		times[i], _ = time.Parse(time.RFC3339Nano, e.Time) // an unparseable time sorts first
+	}
+
+	order := make([]int, len(entries))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return times[order[a]].Before(times[order[b]]) })
+
+	sorted := make([]liveLogEntry, len(entries))
+	for i, idx := range order {
+		sorted[i] = entries[idx]
+	}
+	if limit > 0 && len(sorted) > limit {
+		sorted = sorted[len(sorted)-limit:]
+	}
+	return sorted
 }
 
 // ─── query_openapi ───────────────────────────────────────────────────────────

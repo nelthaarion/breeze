@@ -449,6 +449,7 @@ func (c *Client) lazyStart() error {
 		return fmt.Errorf("client: start event loop: %w", err)
 	}
 	atomic.StoreInt32(&c.started, 1)
+	anyStarted.Store(true)
 	return nil
 }
 
@@ -489,6 +490,7 @@ func (c *Client) getConn(addr, hostname string, secure bool) (gnet.Conn, *connCo
 		case <-state.respCh:
 		default:
 		}
+		connsCounter.Hit()
 		return conn, state, true, nil
 	default:
 	}
@@ -497,8 +499,20 @@ func (c *Client) getConn(addr, hostname string, secure bool) (gnet.Conn, *connCo
 	return conn, state, false, err
 }
 
-// dial opens a new connection to addr, wrapping it in TLS when secure.
+// dial opens a new connection to addr and counts how that went. The work is dialNew's;
+// this is a wrapper so the counting does not have to be repeated at each of its returns.
 func (c *Client) dial(addr, hostname string, secure bool) (gnet.Conn, *connContext, error) {
+	conn, state, err := c.dialNew(addr, hostname, secure)
+	if err != nil {
+		connsCounter.Error()
+		return nil, nil, err
+	}
+	connsCounter.Miss()
+	return conn, state, nil
+}
+
+// dialNew opens a new connection to addr, wrapping it in TLS when secure.
+func (c *Client) dialNew(addr, hostname string, secure bool) (gnet.Conn, *connContext, error) {
 	state := &connContext{respCh: make(chan connResult, 1)}
 
 	if secure {
@@ -544,7 +558,7 @@ func (c *Client) putConn(addr string, conn gnet.Conn) {
 
 // Do performs the request and returns the response. The response body is
 // fully buffered; the connection is returned to the pool for reuse.
-func (c *Client) Do(req *ClientRequest) (*Response, error) {
+func (c *Client) Do(req *ClientRequest) (resp *Response, err error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -584,6 +598,11 @@ func (c *Client) Do(req *ClientRequest) (*Response, error) {
 		}
 	}
 	addr := net.JoinHostPort(host, port)
+
+	// From here the request reaches the network, so how it ends is what the outbound
+	// counters describe. Everything above is a request that was never sent. The results
+	// are named so this sees the outcome of each of the returns below.
+	defer func() { countOutcome(resp, err) }()
 
 	conn, state, fromPool, err := c.getConn(addr, host, secure)
 	if err != nil {
@@ -631,6 +650,7 @@ func (c *Client) Do(req *ClientRequest) (*Response, error) {
 		conn.Close()
 		return nil, fmt.Errorf("client: %w", ctx.Err())
 	case <-timer.C:
+		timeoutsCounter.Hit()
 		conn.Close()
 		return nil, fmt.Errorf("client: timeout waiting for response from %s", addr)
 	}

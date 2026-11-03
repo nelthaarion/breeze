@@ -344,6 +344,8 @@ var pathTakingTools = []struct {
 	{tool: "breeze_diff_config", arg: "existing_path"},
 	{tool: "breeze_new", arg: "dir", extra: map[string]any{"name": "app"}},
 	{tool: "breeze_add", arg: "dir", extra: map[string]any{"feature": "jwt"}},
+	{tool: "breeze_makemigration", arg: "dir", extra: map[string]any{"name": "AddUsers"}},
+	{tool: "breeze_migrate", arg: "dir", extra: map[string]any{"action": "status"}},
 	{tool: "breeze_generate", arg: "dir", extra: map[string]any{
 		"kind": "model", "name": "User", "fields": []string{"email:string"}}},
 }

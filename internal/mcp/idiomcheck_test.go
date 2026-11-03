@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nelthaarion/breeze/v2/internal/generator"
 )
 
 // writeGo writes one fixture file and returns its source, so a caller can find
@@ -224,6 +226,153 @@ func setupObservability(router *breeze.Router, c *dashboard.Collector, tr *fleet
 
 	if found := findingsFor(checkFixture(t, root), "fleet-before-dashboard"); len(found) != 0 {
 		t.Errorf("the correct order was reported as a violation: %+v", found)
+	}
+}
+
+// TestCheckIdiomsTrustsTheDispatcherOverTheTextOrderOfSetupFunctions is the shape
+// the generator writes. `breeze add` appends each feature's setup function below
+// the last one in the order it was added, and Fleet depends on the dashboard, so
+// setupFleet is always written below setupDashboard. The order that matters is
+// the one the dispatcher calls them in, which is priority order and runs Fleet
+// first. Judging the text instead reported every project that had both features
+// as broken, and told an agent to fix an order that was already right.
+func TestCheckIdiomsTrustsTheDispatcherOverTheTextOrderOfSetupFunctions(t *testing.T) {
+	root := t.TempDir()
+
+	writeGo(t, root, "features.go", `package main
+
+import (
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/v2/fleet"
+)
+
+func registerFeatures(router *breeze.Router, c *dashboard.Collector, tr *fleet.Tracer) {
+	setupFleet(router, tr)
+	setupDashboard(router, c)
+}
+
+func setupDashboard(router *breeze.Router, c *dashboard.Collector) {
+	router.Use(dashboard.Middleware(c))
+}
+
+func setupFleet(router *breeze.Router, tr *fleet.Tracer) {
+	router.Use(fleet.Middleware(tr))
+}
+`)
+
+	if found := findingsFor(checkFixture(t, root), "fleet-before-dashboard"); len(found) != 0 {
+		t.Errorf("Fleet is registered first by the dispatcher, but the check judged the text order of the setup functions: %+v", found)
+	}
+}
+
+// TestCheckIdiomsFindsTheDispatcherCallingTheDashboardFirst is the other half of
+// the one above. The text puts Fleet's function first, which a check that only
+// looked at position would accept; the dispatcher runs the dashboard first, which
+// is the failure the rule exists for. Trusting the dispatcher has to cut both
+// ways, or the check has traded a false positive for a false negative.
+func TestCheckIdiomsFindsTheDispatcherCallingTheDashboardFirst(t *testing.T) {
+	root := t.TempDir()
+
+	source := writeGo(t, root, "features.go", `package main
+
+import (
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/v2/fleet"
+)
+
+func setupFleet(router *breeze.Router, tr *fleet.Tracer) {
+	router.Use(fleet.Middleware(tr)) // want:fleet-after-dashboard
+}
+
+func setupDashboard(router *breeze.Router, c *dashboard.Collector) {
+	router.Use(dashboard.Middleware(c))
+}
+
+func registerFeatures(router *breeze.Router, c *dashboard.Collector, tr *fleet.Tracer) {
+	setupDashboard(router, c)
+	setupFleet(router, tr)
+}
+`)
+
+	found := findingsFor(checkFixture(t, root), "fleet-before-dashboard")
+	if len(found) != 1 {
+		t.Fatalf("expected exactly one ordering finding, got %d: %+v", len(found), found)
+	}
+	if want := lineOf(t, source, "want:fleet-after-dashboard"); found[0].Line != want {
+		t.Errorf("the finding is reported on line %d; the misplaced Use call is on line %d", found[0].Line, want)
+	}
+}
+
+// TestCheckIdiomsDoesNotJudgeSetupFunctionsNothingOrders pins the limit the
+// doc comment promises. Two functions that nothing in the file calls have no
+// order a reader of this file can know, and reporting one would be a guess.
+func TestCheckIdiomsDoesNotJudgeSetupFunctionsNothingOrders(t *testing.T) {
+	root := t.TempDir()
+
+	writeGo(t, root, "features.go", `package main
+
+import (
+	"github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/dashboard"
+	"github.com/nelthaarion/breeze/v2/fleet"
+)
+
+func setupDashboard(router *breeze.Router, c *dashboard.Collector) {
+	router.Use(dashboard.Middleware(c))
+}
+
+func setupFleet(router *breeze.Router, tr *fleet.Tracer) {
+	router.Use(fleet.Middleware(tr))
+}
+`)
+
+	if found := findingsFor(checkFixture(t, root), "fleet-before-dashboard"); len(found) != 0 {
+		t.Errorf("an order that is decided in another file was reported from this one: %+v", found)
+	}
+}
+
+// TestCheckIdiomsAcceptsWhatBreezeAddWritesForDashboardAndFleet runs the real
+// generator instead of a fixture that imitates it. The fixtures above prove the
+// check understands the shape; this proves the shape is still the one the
+// generator writes, so a change to the dispatcher's layout fails here and not in
+// an agent's verify_project report.
+func TestCheckIdiomsAcceptsWhatBreezeAddWritesForDashboardAndFleet(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/idiomcheck\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	// Dashboard first: fleet depends on it, so this is the only order a project
+	// can have been built in.
+	for _, args := range [][]string{{"dashboard", "--no-auth"}, {"fleet", "--service=shop"}} {
+		if err := generator.Add(args); err != nil {
+			t.Fatalf("breeze add %s: %v", strings.Join(args, " "), err)
+		}
+	}
+
+	generated, err := os.ReadFile(filepath.Join(root, "features_generated.go"))
+	if err != nil {
+		t.Fatalf("reading what breeze add wrote: %v", err)
+	}
+	source := string(generated)
+
+	// The premise. If the generator ever writes Fleet's block above the
+	// dashboard's, this test would pass for a reason that has nothing to do with
+	// the fix.
+	dashboardAt := strings.Index(source, "dashboard.Middleware(")
+	fleetAt := strings.Index(source, "fleet.Middleware(")
+	if dashboardAt < 0 || fleetAt < 0 {
+		t.Fatalf("features_generated.go does not register both middlewares (dashboard at %d, fleet at %d)", dashboardAt, fleetAt)
+	}
+	if dashboardAt > fleetAt {
+		t.Fatalf("the generator now writes Fleet's block above the dashboard's, so this test no longer covers the text-order case")
+	}
+
+	if found := findingsFor(checkFixture(t, root), "fleet-before-dashboard"); len(found) != 0 {
+		t.Errorf("the generator's own output was reported as misordered: %+v", found)
 	}
 }
 

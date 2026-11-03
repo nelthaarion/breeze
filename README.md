@@ -214,7 +214,7 @@ breeze generate resource User \
 
 breeze add dashboard --allow-writes
 breeze add events --async
-breeze add --list                      # all 23 features, in wiring order
+breeze add --list                      # all 24 features, in wiring order
 
 breeze routes                          # list routes without booting the app
 breeze migrate up | down [n] | status

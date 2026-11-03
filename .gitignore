@@ -12,6 +12,7 @@
 *.bak
 *.exe
 *.mp4
+*.patch
 # Coverage artifacts
 *.out
 coverage.html

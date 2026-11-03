@@ -110,6 +110,7 @@ can ask for `?subsystem=ratelimit` without a translation table.
 | `migrate` | the migration runner |
 | `mcp` | `mcp.StartInProcess` — the embedded endpoint |
 | `oauth2` | `middlewares/oauth2` |
+| `client` | the `client` package, registered from `init`; counts are aggregated across every client in the process, so a service that builds one per request cannot leak through it |
 | `compression`, `etag`, `ratelimit`, `cors`, `security`, `jwt`, `locale`, `logging`, `recovery` | each middleware constructor |
 
 `video` registers twice — once under the shared key and once under

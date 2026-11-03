@@ -18,9 +18,10 @@ package mcp
 // later cannot default into a category or go unclassified.
 var toolCapabilities = map[string]Capability{
 	// ── generation: writes project files ─────────────────────────────────────
-	"breeze_new":      CapGeneration,
-	"breeze_generate": CapGeneration,
-	"breeze_add":      CapGeneration,
+	"breeze_new":           CapGeneration,
+	"breeze_generate":      CapGeneration,
+	"breeze_add":           CapGeneration,
+	"breeze_makemigration": CapGeneration,
 
 	// ── introspection: what exists, read-only ────────────────────────────────
 	"breeze_features": CapIntrospection,
@@ -78,6 +79,14 @@ var toolCapabilities = map[string]Capability{
 	"list_provisioned_services": CapProvisioning,
 	"deprovision_service":       CapProvisioning,
 	"provision_fleet":           CapProvisioning,
+
+	// breeze_migrate changes a live database by running the project's own code, which
+	// no other tool does. It could be argued into verification (it runs project code)
+	// or generation (it is a CLI command), and the rule above is that the more
+	// privileged category wins: a token that was minted to run tests or write files
+	// must not be able to roll a schema back. Provisioning is the category operators
+	// already withhold, for the same reason.
+	"breeze_migrate": CapProvisioning,
 }
 
 // capabilityOf reports a tool's category, and whether it has one.

@@ -109,6 +109,25 @@ func defaultServiceName(modulePath string) string {
 	return last
 }
 
+// fleetLogForwarder is the logger the block carries when a dashboard is present.
+// buildFleetOutput explains why it is a function and not DashboardCollector.PushLog.
+const fleetLogForwarder = `
+
+// fleetLog forwards the tracer's own diagnostics to the dashboard's log panel.
+//
+// DashboardCollector is looked up when a line is logged, not when the tracer is
+// built. setupFleet runs before setupDashboard, because Fleet's middleware has to
+// be registered first, so the collector does not exist yet when the tracer is
+// constructed: handing the tracer DashboardCollector.PushLog would bind it to nil
+// for the life of the process, and the first line it logged would dereference
+// that. A line logged before the dashboard is installed has nowhere to go and is
+// dropped.
+func fleetLog(level, message, source string) {
+	if c := DashboardCollector; c != nil {
+		c.PushLog(level, message, source)
+	}
+}`
+
 // buildFleetOutput emits the feature block for a resolved config.
 //
 // It is separate from Build so tests can drive it from a FleetConfig directly,
@@ -133,15 +152,28 @@ func buildFleetOutput(cfg FleetConfig, ctx featureCtx, gzip bool) (featureOutput
 	// trace in the aggregator's merged log panel.
 	//
 	// dashboard.Collector.PushLog has exactly the signature TracerConfig.Logger
-	// wants â€” func(level, message, source string) â€” so with a dashboard block
-	// present it is wired straight through, as cmd/fleet-example/gateway does.
-	// Without one there is nowhere for those lines to go, so the field is left
-	// nil: the tracer then skips logging rather than writing somewhere the
-	// developer will never look.
+	// wants — func(level, message, source string) — so with a dashboard block
+	// present the tracer forwards to it, as cmd/fleet-example/gateway does. Without
+	// one there is nowhere for those lines to go, so the field is left nil: the
+	// tracer then skips logging rather than writing somewhere the developer will
+	// never look.
+	//
+	// It forwards through fleetLog rather than being handed the method value
+	// DashboardCollector.PushLog, and that is not a matter of style. setupFleet is
+	// dispatched before setupDashboard, because Fleet's middleware has to be
+	// registered first and the dispatcher orders by priority, so the collector does
+	// not exist yet when the tracer is built. A method value takes its receiver when
+	// it is evaluated: this one was bound to nil for the life of the process, and the
+	// first line the tracer logged — a failed span export is enough — dereferenced
+	// it in a background goroutine and ended the service. fleetLog looks the
+	// collector up when a line is logged instead. TestNoSetupFunctionUsesAHandle...
+	// is the check that keeps the next handle from being read too early.
 	logger := "nil"
 	loggerNote := ""
+	forwarder := ""
 	if ctx.HasDashboard {
-		logger = "DashboardCollector.PushLog"
+		logger = "fleetLog"
+		forwarder = fleetLogForwarder
 	} else {
 		loggerNote = "No dashboard block, so FleetTracer.Logger is nil and this service's logs will not appear under its traces. Run `breeze add dashboard`, then re-run `breeze add fleet` to wire them up."
 	}
@@ -191,6 +223,7 @@ func fleetEnv(key, fallback string) string {
 		cfg.AggregatorURL,
 		transportExpr,
 	)
+	body.WriteString(forwarder)
 
 	notes := []string{
 		"Set FLEET_INGEST_TOKEN, FLEET_WRITE_URL and FLEET_SERVICE_NAME in the environment rather than editing the generated defaults.",

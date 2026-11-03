@@ -91,6 +91,7 @@ func TestAppRuntimeRegistryExcludesMutatingTools(t *testing.T) {
 	// cannot silently make this test stop checking the thing it is named for.
 	forbidden := []string{
 		"breeze_new", "breeze_generate", "breeze_add",
+		"breeze_makemigration", "breeze_migrate",
 		"provision_service", "provision_fleet", "deprovision_service",
 		"list_provisioned_services",
 		"breeze_plan_project", "breeze_diff_config",

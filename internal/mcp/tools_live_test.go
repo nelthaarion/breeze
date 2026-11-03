@@ -28,6 +28,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"strconv"
 	"strings"
@@ -339,6 +341,89 @@ func TestGetRoutesReportsLiveTrafficFromARunningService(t *testing.T) {
 	}
 }
 
+// requestLogService serves exactly the request records it is given at the dashboard's
+// requests endpoint, and nothing else.
+//
+// The shared fixture cannot be used for the two tests below. It is one service for the
+// whole package, so its request log holds whatever every other test left in it, and a
+// test about an empty log or a log with no 4xx in it would pass or fail on the order
+// the tests happened to run in.
+func requestLogService(t *testing.T, records []dashboard.RequestRecord) string {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/dashboard/api/requests" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(records)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// TestGetRecentErrorsEmptyResultExplainsWhatTheDashboardKeeps: an empty answer is not
+// an unobserved one. The dashboard records a request in full only while it is watched,
+// when it is slow, or when it fails with a 5xx, so "no records" has a cause other than
+// the one the tool used to name (a missing middleware), and naming the wrong one sends
+// the caller after a fault that is not there.
+func TestGetRecentErrorsEmptyResultExplainsWhatTheDashboardKeeps(t *testing.T) {
+	url := requestLogService(t, nil)
+
+	got, summary, isErr := callLiveTool(t, "breeze_get_recent_errors", creds(url))
+	if isErr {
+		t.Fatalf("breeze_get_recent_errors failed: %s", summary)
+	}
+	notes, _ := got["notes"].([]any)
+	if len(notes) != 1 {
+		t.Fatalf("an empty result carries %d notes, want one: %v", len(notes), notes)
+	}
+	note := notes[0].(string)
+	for _, want := range []string{"not evidence", "5xx", "nobody watching", "dashboard middleware"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the note does not mention %q: %s", want, note)
+		}
+	}
+}
+
+// TestGetRecentErrorsSaysAMissing4xxIsNotRuledOut: a 4xx is only kept while the
+// dashboard is watched, so a report with server errors and no client errors must not
+// be read as "the clients are behaving".
+func TestGetRecentErrorsSaysAMissing4xxIsNotRuledOut(t *testing.T) {
+	record := func(status int, path string) dashboard.RequestRecord {
+		return dashboard.RequestRecord{ID: path, Time: time.Now(), Method: "GET", Path: path, Route: path, Status: status}
+	}
+	hasNote := func(got map[string]any) bool {
+		notes, _ := got["notes"].([]any)
+		for _, n := range notes {
+			if strings.Contains(n.(string), "4xx") {
+				return true
+			}
+		}
+		return false
+	}
+
+	onlyServerErrors := requestLogService(t, []dashboard.RequestRecord{record(500, "/boom")})
+	got, summary, isErr := callLiveTool(t, "breeze_get_recent_errors", creds(onlyServerErrors))
+	if isErr {
+		t.Fatalf("breeze_get_recent_errors failed: %s", summary)
+	}
+	if !hasNote(got) {
+		t.Errorf("server errors with no client errors carry no caveat about 4xx: %v", got["notes"])
+	}
+
+	// With a 4xx in the list the caveat has nothing to say.
+	withClientError := requestLogService(t, []dashboard.RequestRecord{record(500, "/boom"), record(404, "/missing")})
+	got, summary, isErr = callLiveTool(t, "breeze_get_recent_errors", creds(withClientError))
+	if isErr {
+		t.Fatalf("breeze_get_recent_errors failed: %s", summary)
+	}
+	if hasNote(got) {
+		t.Errorf("a result that does contain a 4xx still says 4xx are not ruled out: %v", got["notes"])
+	}
+}
+
 func TestGetRecentErrorsFindsTheDeliberateFailureAndGroupsIt(t *testing.T) {
 	f := startFixture(t)
 	driveTraffic(t, f.url)
@@ -493,7 +578,10 @@ func TestGetLogsReadsWhatTheServiceLoggedAndFiltersByTraceID(t *testing.T) {
 		t.Fatalf("the query matched %d lines, want exactly 1: %v", len(entries), entries)
 	}
 
-	// Trace filter — the reason this tool takes a trace id at all.
+	// Trace filter — the reason this tool takes a trace id at all. With no level it
+	// reads every tab, because the failing line is under error and the work that led
+	// to it is under app. It used to read app only, and answered "no lines" for the
+	// request whose lines were wanted.
 	args = creds(f.url)
 	args["trace_id"] = traceID
 	got, summary, isErr = callLiveTool(t, "breeze_get_logs", args)
@@ -501,12 +589,34 @@ func TestGetLogsReadsWhatTheServiceLoggedAndFiltersByTraceID(t *testing.T) {
 		t.Fatalf("trace-filtered breeze_get_logs failed: %s", summary)
 	}
 	entries, _ = got["entries"].([]any)
-	if len(entries) != 1 {
-		t.Fatalf("the app-level trace filter matched %d lines, want 1: %v", len(entries), entries)
+	if len(entries) != 2 {
+		t.Fatalf("the trace filter matched %d lines, want the app line and the error line: %v", len(entries), entries)
 	}
 	row, _ := entries[0].(map[string]any)
-	if id, _ := row["trace_id"].(string); id != traceID {
-		t.Errorf("trace_id = %q, want %q", id, traceID)
+	if msg, _ := row["message"].(string); !strings.Contains(msg, "charging card") {
+		t.Errorf("first line = %q, want the work that led to the failure", msg)
+	}
+	row, _ = entries[1].(map[string]any)
+	if msg, _ := row["message"].(string); !strings.Contains(msg, "refused the charge") {
+		t.Errorf("second line = %q, want the failure, after the work that caused it", msg)
+	}
+	for _, e := range entries {
+		if id, _ := e.(map[string]any)["trace_id"].(string); id != traceID {
+			t.Errorf("trace_id = %q, want %q", id, traceID)
+		}
+	}
+
+	// An explicit level still reads one tab.
+	args = creds(f.url)
+	args["trace_id"] = traceID
+	args["level"] = "app"
+	got, summary, isErr = callLiveTool(t, "breeze_get_logs", args)
+	if isErr {
+		t.Fatalf("app-level breeze_get_logs failed: %s", summary)
+	}
+	entries, _ = got["entries"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("level=app matched %d lines, want only the app line: %v", len(entries), entries)
 	}
 
 	// The error level is a separate buffer, and the trace's failing line is in it.
@@ -524,6 +634,131 @@ func TestGetLogsReadsWhatTheServiceLoggedAndFiltersByTraceID(t *testing.T) {
 	row, _ = entries[0].(map[string]any)
 	if msg, _ := row["message"].(string); !strings.Contains(msg, "refused the charge") {
 		t.Errorf("message = %q, want the gateway failure", msg)
+	}
+}
+
+// TestGetLogsAllLevelsMergesTabsInTimeOrder: the tabs are separate buffers, each
+// oldest first on its own, so reading several has no order until the lines are sorted.
+// The times below are chosen to catch sorting them as text: RFC 3339 trims trailing
+// zeros, so ".98" is earlier than ".981" and sorts after it as a string.
+func TestGetLogsAllLevelsMergesTabsInTimeOrder(t *testing.T) {
+	f := startFixture(t)
+
+	base := time.Date(2026, 11, 1, 12, 0, 1, 0, time.UTC)
+	rec := func(tab, msg string, at time.Time) {
+		f.coll.RecordLog(tab, dashboard.LogEntry{Time: at, Message: msg, Source: "test"})
+	}
+	// Recorded out of order on purpose.
+	rec("error", "mergecheck third", base.Add(981*time.Millisecond))
+	rec("app", "mergecheck second", base.Add(980*time.Millisecond))
+	rec("warning", "mergecheck fourth", base.Add(time.Second))
+	rec("app", "mergecheck first", base.Add(500*time.Millisecond))
+
+	args := creds(f.url)
+	args["level"] = "all"
+	args["query"] = "mergecheck"
+	got, summary, isErr := callLiveTool(t, "breeze_get_logs", args)
+	if isErr {
+		t.Fatalf("breeze_get_logs level=all failed: %s", summary)
+	}
+
+	var order []string
+	for _, e := range got["entries"].([]any) {
+		msg, _ := e.(map[string]any)["message"].(string)
+		order = append(order, strings.TrimPrefix(msg, "mergecheck "))
+	}
+	if want := "first,second,third,fourth"; strings.Join(order, ",") != want {
+		t.Errorf("merged order = %v, want %s", order, want)
+	}
+	if got["level"] != "all" {
+		t.Errorf("level = %v, want all", got["level"])
+	}
+	if tabs, _ := got["tabs"].([]any); len(tabs) != 5 {
+		t.Errorf("tabs = %v, want all five so a reader can see what was searched", got["tabs"])
+	}
+}
+
+func TestGetLogsAllLevelsKeepsTheNewestLimit(t *testing.T) {
+	f := startFixture(t)
+
+	base := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	for i, tab := range []string{"app", "error", "warning", "http"} {
+		f.coll.RecordLog(tab, dashboard.LogEntry{
+			Time: base.Add(time.Duration(i) * time.Second), Message: "limitcheck " + tab,
+		})
+	}
+
+	args := creds(f.url)
+	args["level"] = "all"
+	args["query"] = "limitcheck"
+	args["limit"] = 2
+	got, summary, isErr := callLiveTool(t, "breeze_get_logs", args)
+	if isErr {
+		t.Fatalf("breeze_get_logs failed: %s", summary)
+	}
+
+	var msgs []string
+	for _, e := range got["entries"].([]any) {
+		msgs = append(msgs, e.(map[string]any)["message"].(string))
+	}
+	if want := "limitcheck warning,limitcheck http"; strings.Join(msgs, ",") != want {
+		t.Errorf("limit=2 kept %v, want the two newest lines (%s)", msgs, want)
+	}
+}
+
+// TestGetLogsLevelNamesAndRefusals: warn and info are what callers write, and the tool
+// must not turn them into an empty answer. A level that means nothing is refused for
+// the same reason: the service would answer it with an empty tab, which reads as
+// "nothing was logged".
+func TestGetLogsLevelNamesAndRefusals(t *testing.T) {
+	f := startFixture(t)
+
+	f.coll.RecordLog("warning", dashboard.LogEntry{Time: time.Now(), Message: "aliascheck warning line"})
+	f.coll.RecordLog("app", dashboard.LogEntry{Time: time.Now(), Message: "aliascheck app line"})
+
+	for level, want := range map[string]string{"warn": "aliascheck warning line", "info": "aliascheck app line", "WARNING": "aliascheck warning line"} {
+		args := creds(f.url)
+		args["level"] = level
+		args["query"] = "aliascheck"
+		got, summary, isErr := callLiveTool(t, "breeze_get_logs", args)
+		if isErr {
+			t.Errorf("level=%s failed: %s", level, summary)
+			continue
+		}
+		entries, _ := got["entries"].([]any)
+		if len(entries) != 1 || entries[0].(map[string]any)["message"] != want {
+			t.Errorf("level=%s returned %v, want just %q", level, entries, want)
+		}
+	}
+
+	args := creds(f.url)
+	args["level"] = "everything"
+	_, summary, isErr := callLiveTool(t, "breeze_get_logs", args)
+	if !isErr {
+		t.Fatal("an unknown level was accepted and answered, so a typo reads as an empty log")
+	}
+	for _, want := range []string{"unknown level", "everything", "all"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("the refusal %q does not mention %q", summary, want)
+		}
+	}
+}
+
+func TestGetLogsAnEmptyTraceLookupSaysItSearchedEveryLevel(t *testing.T) {
+	f := startFixture(t)
+
+	args := creds(f.url)
+	args["trace_id"] = "no-such-trace-anywhere"
+	got, summary, isErr := callLiveTool(t, "breeze_get_logs", args)
+	if isErr {
+		t.Fatalf("breeze_get_logs failed: %s", summary)
+	}
+	if got["level"] != "all" {
+		t.Errorf("level = %v, want all", got["level"])
+	}
+	notes, _ := got["notes"].([]any)
+	if len(notes) != 1 || !strings.Contains(notes[0].(string), "any level") {
+		t.Errorf("an empty search of every tab does not say so: %v", notes)
 	}
 }
 

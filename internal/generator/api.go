@@ -45,6 +45,13 @@ func Migrate(args []string) error { return runMigrate(args) }
 // MakeMigration creates an up/down migration pair.
 func MakeMigration(args []string) error { return runMakeMigration(args) }
 
+// ValidatePathFlag reports whether value names a location inside the project:
+// relative, not a volume, and not escaping the project root. It is the check the
+// generators apply to their own path flags, exported so a caller that forwards a
+// path to something other than a generator holds it to the same rule instead of
+// keeping a second copy of it.
+func ValidatePathFlag(flag, value string) error { return validatePathFlag(flag, value) }
+
 // ─── Help and version ────────────────────────────────────────────────────────
 
 // PrintVersion writes the CLI's breeze version, Go toolchain and platform.

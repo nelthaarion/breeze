@@ -46,6 +46,165 @@ claiming to be the next release. They are now `###` subsections under this one
 heading, in reverse chronological order, which is what a reader collapsing the file
 to `##` needs in order to see one unreleased block and eight releases.
 
+### `breeze_migrate` and `breeze_makemigration`: the last two CLI commands, as tools
+
+`breeze migrate` and `breeze makemigration` were the only commands in the CLI with no
+MCP tool. An agent could scaffold a project, generate a model, wire in twenty-three
+features and verify the result, and then had to leave MCP to change the schema it had
+just described. The server now registers 42 tools.
+
+- **`breeze_makemigration`** creates the numbered `NNNN_name.up.sql` / `.down.sql` pair.
+  It is a generator call like `breeze_generate`, classified `generation`, and
+  `migrations_dir` is held to the generator's own rule: relative, inside the project.
+- **`breeze_migrate`** runs `status`, `up` or `down [steps]` through the project's own
+  `cmd/migrate` runner. It is classified `provisioning`, not `generation` or
+  `verification`: it changes a live database by running project code, nothing else
+  does, and the capability rule is that the more privileged category wins. A token
+  minted to run tests or write files cannot roll a schema back.
+- **It does not call `generator.Migrate`.** That function ends in `os.Exit` with the
+  runner's status, which is right for a CLI and wrong inside a server: the first failed
+  migration would have ended the MCP process. The tool runs the same `go run
+  ./cmd/migrate` itself and returns the failure as a result. The status it reports is
+  `go run`'s; the runner's own is the `exit status N` line `go run` prints, which stays
+  in the output.
+- **No connection string is accepted as an argument**, and the runner's output is
+  scrubbed of `BREEZE_DATABASE_URL` before it is returned, because a driver error is
+  exactly the message that echoes it. Whoever starts the server decides which database
+  an agent can reach; the agent chooses only what to do to it. There is no default
+  action either: the CLI's bare `breeze migrate` means `up`, and an omitted argument
+  should not apply migrations.
+- Both are workspace-scoped, so they are never registered in `app-runtime` mode or
+  served by an in-process endpoint. The in-process endpoint stays read-only.
+- `generator.ValidatePathFlag` is exported so a path forwarded to the runner is held
+  to the same check as the generators' own path flags instead of a second copy of it.
+
+### `breeze_verify_project` reported every dashboard + fleet project as misordered
+
+`fleet-before-dashboard` compared the *text* position of the two `router.Use` calls in
+a file. `breeze add` appends each feature's `setupX` function below the last in the
+order it was added, and Fleet depends on the dashboard, so `setupFleet` is always
+written below `setupDashboard`. The dispatcher in the same file calls them in priority
+order, Fleet first, so the runtime order was right and the report was wrong:
+`ok: false`, one error, on a project nothing was wrong with.
+
+The check now decides from what the file says. Two calls in one function run in the
+order they are written; two calls in different functions run in the order a function in
+the same file calls them; when the file does not say, nothing is reported. That also
+closed a false negative the old check had the other way round (dashboard's function
+written second but called first). Regression tests include one that runs the real
+`breeze add dashboard` and `breeze add fleet` and checks the output.
+
+### A generated service with the dashboard and Fleet exited on its first traced request
+
+`breeze add dashboard` then `breeze add fleet` produced a service that crashed with a
+nil-pointer panic as soon as the tracer logged anything, and a failed span export
+to an aggregator that is not up yet is enough. `setupFleet` is dispatched before
+`setupDashboard`, because Fleet's middleware has to be registered first, so the
+dashboard's collector did not exist when the tracer was built, and the block wrote
+`Logger: DashboardCollector.PushLog`. A method value takes its receiver when it is
+evaluated: it was bound to nil for the life of the process, and the first logged line
+dereferenced it in a background goroutine. The end-to-end scaffold test compiled the
+result and was satisfied.
+
+The block now forwards through a `fleetLog` function that looks `DashboardCollector`
+up when a line is logged. A line logged before the dashboard is installed has nowhere
+to go and is dropped. Existing projects pick the fix up with `breeze add fleet --force`.
+
+`TestNoSetupFunctionUsesAHandleAssignedByOneDispatchedAfterIt` reads the whole
+generated file, takes the dispatch order from `RegisterGeneratedFeatures`, and fails
+when a setup function uses, at setup time, a package-level handle that only a
+later-dispatched function assigns. It is structural rather than a search for the one
+line, and across every feature and generator it finds nothing else.
+
+### The dashboard dropped every log line that was not at one of its five tab names
+
+`Collector.RecordLog` matched `app`, `http`, `error`, `panic` and `warning` exactly and
+discarded anything else without a sound. The rest of the framework does not speak only
+those five: Fleet's tracer logs at `warn`, and the fleet example logs at `info`, so the
+tracer's own account of why spans were not being exported, and the example's
+application lines, never reached the dashboard they were wired into. Only `error`
+lines survived, which is why the merged log panel showed the failure and none of the
+work that led to it.
+
+`info` and `debug` are now filed under `app` and `warn` under `warning`, entries carry
+the name of the tab they are on (what `LogEntry.Level` documents), and a level nobody
+anticipated goes to `app` rather than nowhere. Reading follows the same names and still
+answers an unknown level with nothing, because a typo answered with the app tab would
+look like an answer.
+
+### `breeze_get_logs`: a trace id now reads every level, and `all` exists
+
+Behaviour change. The tool's description says filtering by `trace_id` is the way to see
+every line one request produced, but the level defaulted to `app` even then, and the
+failure of a request is on the `error` tab: an agent that asked for the lines of a
+failing trace was told there were none. With a `trace_id` and no `level` every tab is
+read and the lines are merged in the order they were logged. `level=all` asks for the
+same without a trace id; an explicit level still reads one tab. `warn`, `info` and
+`debug` map to their tabs, and an unknown level is refused instead of being sent on,
+because the service answers one with an empty list, which reads as "nothing was logged".
+Merging compares times as times: RFC 3339 trims trailing zeros, so `.98` sorts after
+`.981` as text.
+
+### `breeze add mcp`: the in-process MCP endpoint, as the twenty-fourth feature
+
+Until now the only way to turn the in-process endpoint on was to read
+`cmd/fleet-example/gateway` and copy its `startControlPlane` into `main`. That is a fair
+thing to ask of someone embedding it and an unreasonable one of an agent that has just
+built a service through this generator and has no other way to make it observable. The
+feature writes `setupMcp`, dispatched after every other feature so each subsystem it
+reports on has already registered, and `breeze_add` can add it like any other.
+
+What the block wires is narrow on purpose, and each narrowing is a decision the
+framework had already made:
+
+- **Always `ModeAppRuntime`**, so the tools that generate code, run migrations or drive
+  Docker are not registered at all in the generated service, and there is no flag to
+  change that. To let an agent act on a service, expose the action as a route and mark
+  it for Auto-MCP; the endpoint stays a window.
+- **Configured from the environment**, so one build is correct everywhere:
+  `BREEZE_MCP_PORT` (default 2000 from `--port`; `0` switches it off),
+  `BREEZE_MCP_HOST`, `BREEZE_MCP_TOKEN`, `BREEZE_MCP_SCOPE`.
+- **A scope that does not parse stops the process** instead of being treated as
+  unscoped: a typo must not widen the token it was meant to narrow.
+- **The token is printed only when it was generated.** One that came from the
+  environment is already known to whoever set it.
+- The binary grows, because the `mcp` package links the generator and the verification
+  tools whether or not an agent ever calls them. Measured on a service with eight other
+  features (events, observability, dashboard, fleet, workflow, ratelimit, compression,
+  websocket): 22.9 MB without it, 28.2 MB with it, about 5 MB. The command says so.
+
+### The HTTP client has a diagnostic probe
+
+`client` was the one subsystem of the framework's own a service uses to reach its fleet
+that could not be asked how it was doing. Fleet's exporter posts spans through it and a
+gateway calls its upstreams through it, so when a dependency is down it has seen that
+first-hand, and the only record was a log line the caller happened to write. The
+`client` probe reports responses, failures, timeouts, dial failures, connection reuse,
+5xx responses and the most recent failure's message.
+
+- Counted like every other probe: with counting off, the default, each counter is one
+  atomic load, and the report says the counts were not measured instead of presenting
+  zeroes that read as an idle client. Aggregated across every client in the process, so a
+  service that builds one per request cannot leak through a registry.
+- **Degraded only when nothing has ever succeeded.** Cumulative counts cannot say a
+  flaky dependency is unhealthy, so the status does not claim it. A 5xx is reported as
+  the far end failing, which is a different problem from it being unreachable.
+- Only requests that reached the network are counted. A request rejected before it was
+  sent is a bug in the caller, and its error quotes the URL, which can carry credentials a
+  diagnostics endpoint must never serve; that case is tested.
+- `Client.Do` now has named results so one deferred call sees the outcome of each of its
+  returns. No signature change.
+
+### `breeze_get_recent_errors` says what the dashboard keeps
+
+The dashboard counts every request but records one in full only while someone has the
+dashboard open, when it was slower than `slow_request_ms`, or when it failed with a 5xx.
+A 404 or a validation failure served with nobody watching is counted and not kept. The
+tool told an empty result to check that the middleware was installed and that traffic had
+arrived, which sent the reader after a fault that was not there, and a result with server
+errors and no client errors read as "the clients are behaving". Both notes now state the
+policy. The dashboard's behaviour is unchanged: the fast path is the point.
+
 ### Graceful shutdown: `Breeze.Stop`
 
 #### Added

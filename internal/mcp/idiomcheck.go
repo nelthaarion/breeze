@@ -439,57 +439,132 @@ func pathLocalName(imports map[string]string, want string) (string, bool) {
 // attributed to whatever span happened to be open, which is not a crash but a
 // quietly wrong timeline — the failure this rule exists to prevent.
 //
-// Only the two calls' relative position within one file is judged. Across files
-// the order is decided by the order the setup functions are called, which is
-// generated, and second-guessing that from syntax would produce findings that
-// are wrong as often as right.
+// Which call runs first is decided only from what the file itself says. Two
+// calls in one function run in the order they are written. Two calls in
+// different functions run in the order some function in the same file calls
+// those two, and that is exactly the shape the generator writes: `breeze add`
+// appends each feature's setupX function to the end of the file in the order it
+// was added, and one dispatcher calls them in priority order. Fleet depends on
+// the dashboard, so setupFleet is always written below setupDashboard and is
+// always called above it; judging the text would report every project that has
+// both. When the file does not say, nothing is reported: across files the order
+// is decided by a call this check cannot see, and second-guessing it from
+// syntax would produce findings that are wrong as often as right.
 func checkFleetBeforeDashboard(fset *token.FileSet, file *ast.File, imports map[string]string, rel string, report *idiomReport) {
 	type useCall struct {
 		pos  token.Pos
 		path string
+		fn   string // enclosing top-level function; empty at package level
 	}
 	var calls []useCall
 
-	ast.Inspect(file, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		// The outer call has to be a .Use(...) — on a Router, but the receiver's
-		// type is not knowable without types, so the member name is what is
-		// matched and the argument is what decides.
-		sel, isSel := call.Fun.(*ast.SelectorExpr)
-		if !isSel || sel.Sel.Name != "Use" {
-			return true
+	for _, decl := range file.Decls {
+		enclosing := ""
+		if fn, isFunc := decl.(*ast.FuncDecl); isFunc {
+			enclosing = fn.Name.Name
 		}
 
-		for _, arg := range call.Args {
-			inner, isCall := arg.(*ast.CallExpr)
-			if !isCall {
+		ast.Inspect(decl, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			// The outer call has to be a .Use(...) on a Router, but the receiver's
+			// type is not knowable without types, so the member name is what is
+			// matched and the argument is what decides.
+			sel, isSel := call.Fun.(*ast.SelectorExpr)
+			if !isSel || sel.Sel.Name != "Use" {
+				return true
+			}
+
+			for _, arg := range call.Args {
+				inner, isCall := arg.(*ast.CallExpr)
+				if !isCall {
+					continue
+				}
+				path, member, ok := selectorPath(imports, inner.Fun)
+				if !ok || member != "Middleware" {
+					continue
+				}
+				if path == fleetPath || path == dashboardPath {
+					calls = append(calls, useCall{pos: call.Pos(), path: path, fn: enclosing})
+				}
+			}
+			return true
+		})
+	}
+
+	// dispatchOrder reports whether some function in this file calls first before
+	// it calls second, and whether any function calls both at all.
+	dispatchOrder := func(first, second string) (before, known bool) {
+		for _, decl := range file.Decls {
+			fn, isFunc := decl.(*ast.FuncDecl)
+			if !isFunc || fn.Body == nil {
 				continue
 			}
-			path, member, ok := selectorPath(imports, inner.Fun)
-			if !ok || member != "Middleware" {
-				continue
-			}
-			if path == fleetPath || path == dashboardPath {
-				calls = append(calls, useCall{pos: call.Pos(), path: path})
+
+			firstAt, secondAt := token.NoPos, token.NoPos
+			ast.Inspect(fn.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				switch name := calledName(call.Fun); {
+				case name == first && firstAt == token.NoPos:
+					firstAt = call.Pos()
+				case name == second && secondAt == token.NoPos:
+					secondAt = call.Pos()
+				}
+				return true
+			})
+
+			if firstAt != token.NoPos && secondAt != token.NoPos {
+				return firstAt < secondAt, true
 			}
 		}
-		return true
-	})
+		return false, false
+	}
 
-	firstDashboard := token.NoPos
-	for _, c := range calls {
-		switch {
-		case c.path == dashboardPath && firstDashboard == token.NoPos:
-			firstDashboard = c.pos
-		case c.path == fleetPath && firstDashboard != token.NoPos:
-			report.add(fset, c.pos, rel, "fleet-before-dashboard",
-				"fleet.Middleware is registered after dashboard.Middleware in this file; the dashboard reads the trace context Fleet establishes, so this order attributes dashboard requests to the wrong span")
-			return
+	// runsBefore reports whether a's registration runs before b's, and whether
+	// the file says so.
+	runsBefore := func(a, b useCall) (before, known bool) {
+		if a.fn == b.fn {
+			return a.pos < b.pos, true
+		}
+		if a.fn == "" || b.fn == "" {
+			return false, false
+		}
+		return dispatchOrder(a.fn, b.fn)
+	}
+
+	for _, dash := range calls {
+		if dash.path != dashboardPath {
+			continue
+		}
+		for _, fl := range calls {
+			if fl.path != fleetPath {
+				continue
+			}
+			if before, known := runsBefore(dash, fl); known && before {
+				report.add(fset, fl.pos, rel, "fleet-before-dashboard",
+					"fleet.Middleware is registered after dashboard.Middleware in this file; the dashboard reads the trace context Fleet establishes, so this order attributes dashboard requests to the wrong span")
+				return
+			}
 		}
 	}
+}
+
+// calledName is the bare name a call invokes: setupFleet for setupFleet(...) and
+// for x.setupFleet(...). Matching by name is as far as syntax goes without
+// types, and for a generated dispatcher it is enough.
+func calledName(fun ast.Expr) string {
+	switch f := fun.(type) {
+	case *ast.Ident:
+		return f.Name
+	case *ast.SelectorExpr:
+		return f.Sel.Name
+	}
+	return ""
 }
 
 // ─── scalar-is-the-viewer ────────────────────────────────────────────────────

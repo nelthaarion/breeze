@@ -115,14 +115,14 @@ Every tool belongs to exactly one of eight categories:
 
 | Category | What it does |
 |---|---|
-| `generation` | writes project files — `breeze_new`, `breeze_generate`, `breeze_add` |
+| `generation` | writes project files — `breeze_new`, `breeze_generate`, `breeze_add`, `breeze_makemigration` |
 | `introspection` | reads what exists in a project |
 | `planning` | previews changes, holds change sets open |
 | `knowledge` | maintains and searches `llms.txt`, suggests next steps |
 | `verification` | runs the Go toolchain — and therefore project code |
 | `runtime` | reads live state from a running service over HTTP — routes, errors, logs, performance, and `breeze_diagnose_service`, which returns every subsystem's own diagnostic report |
 | `fleet` | reads a Fleet Aggregator: traces, topology, contract violations |
-| `provisioning` | drives Docker: builds images, starts and removes containers |
+| `provisioning` | drives Docker: builds images, starts and removes containers. Also `breeze_migrate`, which applies database migrations: it changes live infrastructure the same way, so it is withheld the same way |
 
 A token minted for a CI job that only reads traces needs one of them:
 
@@ -597,6 +597,13 @@ Two related omissions, for the same reason:
 
 A generated application can serve an MCP control endpoint from its own process,
 beside its own traffic — no separate `breeze-mcp`:
+
+The generator wires it for you: `breeze add mcp` (or `breeze_add` with `feature: mcp`)
+writes a `setupMcp` that starts the endpoint in `app-runtime` mode, read-only, and takes
+everything operational from the environment: `BREEZE_MCP_PORT` (default 2000; `0` switches
+it off), `BREEZE_MCP_HOST`, `BREEZE_MCP_TOKEN`, `BREEZE_MCP_SCOPE`. It adds about 5 MB to
+a service's binary, because the package links the generator and the verification tools.
+What follows is what that block does, for anyone embedding the endpoint by hand.
 
 ```go
 app := breeze.New(router, pool)

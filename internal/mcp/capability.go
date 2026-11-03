@@ -66,7 +66,8 @@ const (
 	CapFleet Capability = "fleet"
 
 	// CapProvisioning drives Docker: builds images, starts and removes containers.
-	// The most consequential category, and the one most worth withholding.
+	// It also applies database migrations, which changes live infrastructure the same
+	// way. The most consequential category, and the one most worth withholding.
 	CapProvisioning Capability = "provisioning"
 )
 

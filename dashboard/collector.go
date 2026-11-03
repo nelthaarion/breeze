@@ -451,13 +451,47 @@ func (c *Collector) RecordTimeline(t Timeline) {
 	c.timelines.Push(t)
 }
 
-// RecordLog appends a log entry to the appropriate tab.
+// logTab is the tab a level belongs on, and whether the level is one this package
+// recognises.
+//
+// The dashboard shows five tabs: app, http, error, panic and warning. The rest of the
+// framework does not speak only those five: fleet's tracer reports at "warn" and the
+// fleet example logs at "info". A switch that matched the five names exactly dropped
+// every other line without a sound, which is how the tracer's own account of why spans
+// were not being exported never reached the dashboard it was wired into. So the names
+// the repository really passes are mapped onto their tab.
+//
+// A level that is none of them is not recognised, and the two callers treat that
+// differently on purpose. Writing files the line under app: the caller took the
+// trouble to send it, and a missing line cannot be told apart from one that was never
+// sent. Reading returns nothing for it, because a typo answered with the app tab would
+// look like an answer.
+func logTab(level string) (tab string, known bool) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "app", "info", "debug":
+		return "app", true
+	case "http":
+		return "http", true
+	case "error":
+		return "error", true
+	case "panic":
+		return "panic", true
+	case "warning", "warn":
+		return "warning", true
+	}
+	return "app", false
+}
+
+// RecordLog appends a log entry to the appropriate tab. A level this package does not
+// recognise is filed under app rather than dropped; see logTab. The stored entry
+// carries the tab's name, which is what LogEntry.Level documents.
 func (c *Collector) RecordLog(level string, e LogEntry) {
 	if !c.cfg.Enabled {
 		return
 	}
-	e.Level = level
-	switch level {
+	tab, _ := logTab(level)
+	e.Level = tab
+	switch tab {
 	case "app":
 		c.logsApp.Push(e)
 	case "http":
@@ -514,8 +548,13 @@ func (c *Collector) Timelines(n int) []Timeline {
 
 // Logs returns the requested log tab snapshot.
 func (c *Collector) Logs(level string, n int) []LogEntry {
+	tab, known := logTab(level)
+	if !known {
+		return nil
+	}
+
 	var buf *ringBuffer[LogEntry]
-	switch level {
+	switch tab {
 	case "app":
 		buf = c.logsApp
 	case "http":

@@ -29,7 +29,7 @@ func TestListenPortIsZeroBeforeRun(t *testing.T) {
 func TestListenPortReportsWhatRunWasGiven(t *testing.T) {
 	app := New(NewRouter(), NewEventLoopWorkerPool(1))
 
-	// What Run does before handing off to gnet. Calling Run itself would block
+	// What Run does before handing off to gnetplus. Calling Run itself would block
 	// and bind; this is the whole of the recording step.
 	app.listenPort.Store(8443)
 

@@ -17,12 +17,12 @@ import (
 
 	jwtlib "github.com/golang-jwt/jwt/v5"
 	"github.com/nelthaarion/breeze/v2"
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // addrConn is a connection that only knows its peer address.
 type addrConn struct {
-	gnet.Conn
+	gnetplus.Conn
 	addr net.Addr
 }
 

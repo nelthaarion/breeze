@@ -8,12 +8,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // sink is where a response's bytes go.
 //
-// The handler writes through this interface rather than to gnet.Conn
+// The handler writes through this interface rather than to gnetplus.Conn
 // directly for one reason: a test must be able to read back the exact
 // bytes that would have hit the wire. Without it, verifying that a 206
 // carries the right Content-Range, or that a stream is chunked at the
@@ -27,7 +27,7 @@ type sink interface {
 
 // connSink writes to a gnet connection.
 type connSink struct {
-	conn gnet.Conn
+	conn gnetplus.Conn
 
 	// bufs supplies the hand-off buffers described in write. It is the
 	// mount's pool, so the buffers are already the right size.
@@ -75,7 +75,7 @@ func (s *connSink) write(p []byte) error {
 	}
 	copy(out, p)
 
-	if err := s.conn.AsyncWrite(out, func(gnet.Conn, error) error {
+	if err := s.conn.AsyncWrite(out, func(gnetplus.Conn, error) error {
 		done()
 		return nil
 	}); err != nil {

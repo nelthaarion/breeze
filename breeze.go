@@ -13,11 +13,11 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 type Breeze struct {
-	*gnet.BuiltinEventEngine
+	*gnetplus.BuiltinEventEngine
 	Router *Router
 	Pool   *WorkerPool
 
@@ -64,7 +64,7 @@ type Breeze struct {
 	// EnableMCP. Declared in mcp_server.go, beside the code that uses it.
 	mcpFields
 
-	// Graceful-shutdown state — the captured gnet.Engine and the bookkeeping
+	// Graceful-shutdown state — the captured gnetplus.Engine and the bookkeeping
 	// Stop coordinates on. Declared in shutdown.go, beside the code that uses
 	// it.
 	shutdownFields
@@ -111,7 +111,7 @@ const defaultMaxRequestBody = 8 << 20
 
 func New(router *Router, pool *WorkerPool) *Breeze {
 	s := &Breeze{
-		BuiltinEventEngine: &gnet.BuiltinEventEngine{},
+		BuiltinEventEngine: &gnetplus.BuiltinEventEngine{},
 		Router:             router,
 		Pool:               pool,
 		inlineExec:         true,
@@ -229,7 +229,7 @@ func (s *Breeze) SetZeroCopyHeaders(enabled bool) {
 // So WebSocket connections carry no HTTP overhead after the upgrade, and HTTP
 // connections carry no WebSocket overhead at all — not even a map probe, until
 // the first upgrade actually happens.
-func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
+func (s *Breeze) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 	// ── WebSocket fast path ──────────────────────────────────────────────
 	// Gated on the counter rather than going straight to the map. wsConns is a
 	// sync.Map keyed by interface{}, so Load(fd) boxes the descriptor, and the
@@ -262,15 +262,15 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 	if st.busy.Load() {
 		if len(data) > 0 {
 			if len(st.buf)+len(data) > s.heldBytesLimit() {
-				return gnet.Close // pipelining far past anything legitimate
+				return gnetplus.Close // pipelining far past anything legitimate
 			}
 			st.buf = append(st.buf, data...)
 		}
-		return gnet.None
+		return gnetplus.None
 	}
 	existing := st.buf
 	if len(data) == 0 && len(existing) == 0 {
-		return gnet.None
+		return gnetplus.None
 	}
 
 	// data is a view into gnet's internal inbound buffer, which gnet may
@@ -460,9 +460,9 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 		st.buf = nil
 		st.partialSince.Store(0)
 		if closeConn {
-			return gnet.Close
+			return gnetplus.Close
 		}
-		return gnet.None
+		return gnetplus.None
 	}
 
 	// The leftover has to outlive this call, so it must be Go memory — either
@@ -490,7 +490,7 @@ func (s *Breeze) OnTraffic(c gnet.Conn) gnet.Action {
 		st.partialHdr.Store(!bytes.Contains(buf, headerEnd))
 	}
 
-	return gnet.None
+	return gnetplus.None
 }
 
 var headerEnd = []byte("\r\n\r\n")
@@ -509,7 +509,7 @@ func (s *Breeze) heldBytesLimit() int {
 // OnTraffic event. It lives on the event-loop goroutine's stack and is never
 // shared, so it needs no locking.
 type inlineBatch struct {
-	c   gnet.Conn
+	c   gnetplus.Conn
 	buf *[]byte
 }
 
@@ -547,7 +547,7 @@ func (b *inlineBatch) flush() {
 // A request that asks for anything other than keep-alive flushes the batch and
 // takes the original single-response path, because withConnectionHeader
 // rewrites a whole wire buffer and must only ever see one response.
-func (s *Breeze) runInlineBatched(c gnet.Conn, ctx *Context, mode uint8, batch *inlineBatch) {
+func (s *Breeze) runInlineBatched(c gnetplus.Conn, ctx *Context, mode uint8, batch *inlineBatch) {
 	defer releaseContext(ctx)
 	defer func() {
 		if r := recover(); r != nil {
@@ -589,7 +589,7 @@ func (s *Breeze) runInlineBatched(c gnet.Conn, ctx *Context, mode uint8, batch *
 // written it or having copied the remainder into the connection's outbound
 // buffer. AsyncWrite makes no such promise, so the pooled path below uses
 // freshly allocated bytes instead.
-func (s *Breeze) runInline(c gnet.Conn, ctx *Context, mode uint8) {
+func (s *Breeze) runInline(c gnetplus.Conn, ctx *Context, mode uint8) {
 	// Registered first so it runs last — after the recover below has had its
 	// chance to write a response from ctx.Res.
 	defer releaseContext(ctx)
@@ -621,7 +621,7 @@ func (s *Breeze) runInline(c gnet.Conn, ctx *Context, mode uint8) {
 // dispatch hands ctx's chain to the worker pool (or a bare goroutine when no
 // pool is configured) and answers with AsyncWrite, which is the only safe way
 // to write to a connection from off its event loop.
-func (s *Breeze) dispatch(c gnet.Conn, ctx *Context, st *connState, mode uint8) {
+func (s *Breeze) dispatch(c gnetplus.Conn, ctx *Context, st *connState, mode uint8) {
 	// Counted here, on the event-loop goroutine, rather than inside exec: a
 	// task that has been submitted but not yet picked up by a worker is still
 	// a request the server accepted and owes an answer, and a Stop that ran
@@ -647,7 +647,7 @@ func (s *Breeze) dispatch(c gnet.Conn, ctx *Context, st *connState, mode uint8) 
 			}
 			answered = true
 			wire = withConnectionHeader(wire, mode)
-			done := func(gc gnet.Conn, _ error) error {
+			done := func(gc gnetplus.Conn, _ error) error {
 				st.busy.Store(false)
 				if mode == connModeClose {
 					_ = gc.Close()
@@ -728,7 +728,7 @@ func (s *Breeze) dispatch(c gnet.Conn, ctx *Context, st *connState, mode uint8) 
 // OnClose cleans up all per-connection state when a connection closes.
 // For WebSocket connections that closed unexpectedly (no Close frame received),
 // we still call OnClose so the application can clean up its own state.
-func (s *Breeze) OnClose(c gnet.Conn, err error) gnet.Action {
+func (s *Breeze) OnClose(c gnetplus.Conn, err error) gnetplus.Action {
 	fd := c.Fd()
 	s.conns.Delete(fd)
 
@@ -741,13 +741,13 @@ func (s *Breeze) OnClose(c gnet.Conn, err error) gnet.Action {
 		s.cleanupWS(fd, state.wc, state, 1006, "abnormal closure")
 	}
 
-	return gnet.None
+	return gnetplus.None
 }
 
 // Run binds the port and serves until the server is stopped.
 //
 // It blocks, as it always has. What changed is that it now returns rather than
-// blocking forever: Stop tears the engine down and gnet.Run returns, so
+// blocking forever: Stop tears the engine down and gnetplus.Run returns, so
 //
 //	go func() { _ = app.Run(port, true) }()
 //	// ...
@@ -778,16 +778,16 @@ func (s *Breeze) RunOn(host string, port int, multiCore bool) error {
 	noYield := s.noPollYield()
 	s.yieldOnDispatch.Store(noYield)
 	serve := func(addr string) error {
-		return gnet.Run(
+		return gnetplus.Run(
 			s,
 			addr,
-			gnet.WithTCPNoDelay(gnet.TCPNoDelay),
-			gnet.WithMulticore(multiCore),
-			gnet.WithLoadBalancing(gnet.RoundRobin),
-			gnet.WithReadBufferCap(64<<10),
-			gnet.WithWriteBufferCap(64<<10),
-			gnet.WithTicker(true),
-			gnet.WithNoPollYield(noYield),
+			gnetplus.WithTCPNoDelay(gnetplus.TCPNoDelay),
+			gnetplus.WithMulticore(multiCore),
+			gnetplus.WithLoadBalancing(gnetplus.RoundRobin),
+			gnetplus.WithReadBufferCap(64<<10),
+			gnetplus.WithWriteBufferCap(64<<10),
+			gnetplus.WithTicker(true),
+			gnetplus.WithNoPollYield(noYield),
 		)
 	}
 	err := serve("tcp://" + net.JoinHostPort(host, strconv.Itoa(port)))

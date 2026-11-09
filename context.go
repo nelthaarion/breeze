@@ -5,7 +5,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/nelthaarion/breeze/v2/binding"
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // Pre-built common response headers. These are reused across all responses
@@ -28,7 +28,7 @@ var (
 )
 
 type Context struct {
-	Conn        gnet.Conn
+	Conn        gnetplus.Conn
 	Req         *HTTPRequest
 	Res         *HTTPResponse
 	params      map[string]string

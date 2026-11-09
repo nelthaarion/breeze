@@ -118,7 +118,7 @@ The old cost is linear in the number of routes, the new one is flat (depth of th
 
 ## 4. `SetPollYield`: why it is opt‑in
 
-Breeze never passes `gnet.WithNoPollYield` to the gnet fork, although inline execution is the default and the fork's own documentation recommends it for servers that handle traffic inline. I first made it automatic, then measured it, and the picture is mixed, so the default stays exactly as before and skipping the yield is an explicit choice: `app.SetPollYield(breeze.PollYieldAuto)` (skip it only when inline execution is on, no route is registered with `HandleBlocking`, and GOMAXPROCS > 1) or `PollYieldNever`. When the yield is skipped, a loop that does hand a request to a worker yields right after the hand‑off, so workers are not starved.
+Breeze never passes `gnetplus.WithNoPollYield` to the gnet fork, although inline execution is the default and the fork's own documentation recommends it for servers that handle traffic inline. I first made it automatic, then measured it, and the picture is mixed, so the default stays exactly as before and skipping the yield is an explicit choice: `app.SetPollYield(breeze.PollYieldAuto)` (skip it only when inline execution is on, no route is registered with `HandleBlocking`, and GOMAXPROCS > 1) or `PollYieldNever`. When the yield is skipped, a loop that does hand a request to a worker yields right after the hand‑off, so workers are not starved.
 
 Effect of skipping the yield, same binary, same session (RPS change / CPU‑per‑request change):
 

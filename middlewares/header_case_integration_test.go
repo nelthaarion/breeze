@@ -37,7 +37,7 @@ import (
 
 // parseRequest is a helper that parses a raw HTTP request and returns a
 // ready-to-use Context. It mirrors what OnTraffic does after receiving bytes
-// from gnet. Fails the test if parsing fails.
+// from gnetplus. Fails the test if parsing fails.
 //
 // We use breeze.NewContext to get a Context with the right internal state
 // (index = -1, non-nil Req.Header), then replace its Req with the parsed

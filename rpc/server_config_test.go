@@ -3,7 +3,7 @@ package rpc
 import (
 	"testing"
 
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 func TestServerListenerConfiguration(t *testing.T) {
@@ -52,7 +52,7 @@ func TestServerMaxRequestBodyRejectsCompleteMessage(t *testing.T) {
 	c := &fakeConn{}
 
 	message := `{"jsonrpc":"2.0","method":"echo","id":1}`
-	if action := feed(s, c, message); action != gnet.Close {
+	if action := feed(s, c, message); action != gnetplus.Close {
 		t.Fatalf("action = %v, want Close", action)
 	}
 	if calls != 0 {
@@ -67,7 +67,7 @@ func TestServerMaxRequestBodyAllowsExactLimit(t *testing.T) {
 	s.SetMaxRequestBody(int64(len(message)))
 	c := &fakeConn{}
 
-	if action := feed(s, c, message); action != gnet.None {
+	if action := feed(s, c, message); action != gnetplus.None {
 		t.Fatalf("action = %v, want None", action)
 	}
 	if got := assertResult(t, decode(t, c.written.Bytes())); got != float64(1) {

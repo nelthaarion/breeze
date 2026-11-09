@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 type bodyLimitConn struct {
-	gnet.Conn
+	gnetplus.Conn
 	inbound []byte
 	written bytes.Buffer
 	ctx     any
@@ -55,7 +55,7 @@ func TestRequestBodyLimitDeclaredLength(t *testing.T) {
 	})
 
 	c := &bodyLimitConn{inbound: []byte("POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 5\r\n\r\nhello")}
-	if action := app.OnTraffic(c); action != gnet.Close {
+	if action := app.OnTraffic(c); action != gnetplus.Close {
 		t.Fatalf("action = %v, want Close", action)
 	}
 	if called {
@@ -80,7 +80,7 @@ func TestRequestBodyLimitExactLengthPasses(t *testing.T) {
 	})
 
 	c := &bodyLimitConn{inbound: []byte("POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 5\r\n\r\nhello")}
-	if action := app.OnTraffic(c); action != gnet.None {
+	if action := app.OnTraffic(c); action != gnetplus.None {
 		t.Fatalf("action = %v, want None", action)
 	}
 	if !called {

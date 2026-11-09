@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // ─── WebSocket constants ──────────────────────────────────────────────────────
@@ -328,17 +328,17 @@ func buildWSFrameMasked(opcode byte, payload []byte) []byte {
 
 // wsRawConn is the transport surface WSConn needs.
 //
-// Both directions supply one. Inbound it is a gnet.Conn, which already has these
+// Both directions supply one. Inbound it is a gnetplus.Conn, which already has these
 // three methods; outbound it is the adapter below over a dialed net.Conn. That is
 // what lets a dialed connection be a *WSConn rather than a parallel type, so
 // WSHub, WSHandler and every application helper work on a connection this process
 // accepted and one it dialled without knowing which is which.
 //
-// Deliberately three methods and not gnet.Conn's forty: everything else on that
+// Deliberately three methods and not gnetplus.Conn's forty: everything else on that
 // interface is inbound-only (Next, Peek, Fd, InboundBuffered), and requiring them
 // would mean the adapter faking a read path the client half does not use.
 type wsRawConn interface {
-	AsyncWrite(buf []byte, callback gnet.AsyncCallback) error
+	AsyncWrite(buf []byte, callback gnetplus.AsyncCallback) error
 	Close() error
 	RemoteAddr() net.Addr
 }
@@ -349,7 +349,7 @@ type wsRawConn interface {
 // exposed to user handlers.
 //
 // One type serves both directions. An inbound connection is created by the
-// upgrade handler over the gnet.Conn the request arrived on; an outbound one is
+// upgrade handler over the gnetplus.Conn the request arrived on; an outbound one is
 // created by [DialWS] over a dialled socket. The difference is confined to two
 // fields — the transport underneath and whether sends are masked — because RFC
 // 6455 §5.3 requires a client to mask every frame it sends and forbids a server

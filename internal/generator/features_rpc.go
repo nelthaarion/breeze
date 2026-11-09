@@ -9,7 +9,7 @@ package generator
 // worth stating, because both are invisible at the call site and both produce a
 // silently broken project when got wrong.
 //
-// Server.Run blocks. It calls gnet.Run on its own listener, since JSON-RPC is a
+// Server.Run blocks. It calls gnetplus.Run on its own listener, since JSON-RPC is a
 // peer of the HTTP layer rather than something mounted inside it. Calling it
 // from the dispatcher would mean app.Run is never reached: the process would
 // serve JSON-RPC perfectly and never open the HTTP port. So the generated setup

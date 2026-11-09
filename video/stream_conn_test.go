@@ -6,27 +6,27 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
-// queuedConn models the part of gnet.Conn that matters here: AsyncWrite
+// queuedConn models the part of gnetplus.Conn that matters here: AsyncWrite
 // queues a slice and returns, flushing later.
 //
 // The embedded interface supplies the rest of the (large) method set. It is
 // nil, so calling anything else panics — which is the point: this fake must
 // stay honest about what the streaming path actually touches.
 type queuedConn struct {
-	gnet.Conn
+	gnetplus.Conn
 
 	queued [][]byte
-	acks   []gnet.AsyncCallback
+	acks   []gnetplus.AsyncCallback
 }
 
 // AsyncWrite retains p without copying, exactly as a queue would, and
 // defers the completion callback. Retaining is what exposes the bug: if the
 // caller hands over a buffer it intends to reuse, the queued bytes change
 // underneath the queue.
-func (c *queuedConn) AsyncWrite(p []byte, cb gnet.AsyncCallback) error {
+func (c *queuedConn) AsyncWrite(p []byte, cb gnetplus.AsyncCallback) error {
 	c.queued = append(c.queued, p)
 	c.acks = append(c.acks, cb)
 	return nil

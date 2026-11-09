@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // server.go — the gnet event handler.
@@ -49,11 +49,11 @@ type connState struct {
 
 // Server is a JSON-RPC 2.0 server on gnet's event loop.
 //
-// It embeds gnet.BuiltinEventEngine and overrides OnTraffic and OnClose, the
+// It embeds gnetplus.BuiltinEventEngine and overrides OnTraffic and OnClose, the
 // same two callbacks Breeze overrides. Everything else keeps the builtin
 // no-op behaviour.
 type Server struct {
-	*gnet.BuiltinEventEngine
+	*gnetplus.BuiltinEventEngine
 
 	reg  *Registry
 	pool Pool
@@ -93,7 +93,7 @@ func NewServer(reg *Registry) *Server {
 		reg = NewRegistry()
 	}
 	s := &Server{
-		BuiltinEventEngine: &gnet.BuiltinEventEngine{},
+		BuiltinEventEngine: &gnetplus.BuiltinEventEngine{},
 		reg:                reg,
 		maxMessageBytes:    defaultMaxMessageBytes,
 		blockingSlots:      make(chan struct{}, 128),
@@ -175,10 +175,10 @@ func (s *Server) requestLimit() int {
 	return limit
 }
 
-func (s *Server) OnTraffic(c gnet.Conn) gnet.Action {
+func (s *Server) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 	data, _ := c.Next(-1)
 	if len(data) == 0 {
-		return gnet.None
+		return gnetplus.None
 	}
 
 	st, _ := c.Context().(*connState)
@@ -213,7 +213,7 @@ func (s *Server) OnTraffic(c gnet.Conn) gnet.Action {
 	}()
 
 	consumed := 0
-	action := gnet.None
+	action := gnetplus.None
 
 	for {
 		start, end, res := nextValue(buf[consumed:], &scan)
@@ -224,7 +224,7 @@ func (s *Server) OnTraffic(c gnet.Conn) gnet.Action {
 			out = appendErrorResponse(out, ErrParseError(), nullID)
 			consumed = len(buf)
 			scan.reset()
-			action = gnet.Close
+			action = gnetplus.Close
 			break
 		}
 		if res == scanIncomplete {
@@ -237,7 +237,7 @@ func (s *Server) OnTraffic(c gnet.Conn) gnet.Action {
 
 		if limit := s.requestLimit(); limit > 0 && len(msg) > limit {
 			out = appendErrorResponse(out, NewError(CodeInvalidRequest, "request too large"), nullID)
-			action = gnet.Close
+			action = gnetplus.Close
 			break
 		}
 
@@ -261,7 +261,7 @@ func (s *Server) OnTraffic(c gnet.Conn) gnet.Action {
 		out = out[:0]
 	}
 
-	if action == gnet.Close {
+	if action == gnetplus.Close {
 		c.SetContext(nil)
 		return action
 	}
@@ -271,13 +271,13 @@ func (s *Server) OnTraffic(c gnet.Conn) gnet.Action {
 
 // saveRemainder stores whatever did not frame into the connection's context.
 func (s *Server) saveRemainder(
-	c gnet.Conn,
+	c gnetplus.Conn,
 	st *connState,
 	buf []byte,
 	consumed int,
 	goOwned bool,
 	scan scanState,
-) gnet.Action {
+) gnetplus.Action {
 	rest := buf[consumed:]
 
 	// A buffer holding only the whitespace between messages is not a partial
@@ -294,7 +294,7 @@ func (s *Server) saveRemainder(
 			// keeps the next event's type assertion on the nil fast path.
 			c.SetContext(nil)
 		}
-		return gnet.None
+		return gnetplus.None
 	}
 
 	if limit := s.requestLimit(); limit > 0 && len(rest) > limit {
@@ -304,7 +304,7 @@ func (s *Server) saveRemainder(
 		fmt.Printf("[Breeze][RPC] message exceeds configured limit, closing connection\n")
 		c.SetContext(nil)
 		_, _ = c.Write(appendErrorResponse(nil, NewError(CodeInvalidRequest, "request too large"), nullID))
-		return gnet.Close
+		return gnetplus.Close
 	}
 
 	if st == nil {
@@ -338,7 +338,7 @@ func (s *Server) saveRemainder(
 	st.scan = scan
 
 	c.SetContext(st)
-	return gnet.None
+	return gnetplus.None
 }
 
 // handoff runs a message off the event loop and answers with AsyncWrite.
@@ -346,7 +346,7 @@ func (s *Server) saveRemainder(
 // The bytes are freshly allocated by the response path here, not pooled:
 // AsyncWrite returns before the write happens and keeps the slice until the
 // poller drains it. This is the same split as Breeze.dispatch.
-func (s *Server) handoff(c gnet.Conn, msg []byte) {
+func (s *Server) handoff(c gnetplus.Conn, msg []byte) {
 	exec := func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -384,9 +384,9 @@ func (s *Server) handoff(c gnet.Conn, msg []byte) {
 // The pending buffer lives in gnet's connection context, which gnet discards
 // with the connection, so there is nothing to unregister from a server-wide map
 // — the reason that state was put there in the first place.
-func (s *Server) OnClose(c gnet.Conn, err error) gnet.Action {
+func (s *Server) OnClose(c gnetplus.Conn, err error) gnetplus.Action {
 	c.SetContext(nil)
-	return gnet.None
+	return gnetplus.None
 }
 
 // Run starts the server on the given TCP port.
@@ -405,14 +405,14 @@ func (s *Server) RunOn(host string, port int, multiCore bool) error {
 	s.listenPort.Store(int64(port))
 	h := host
 	s.listenHost.Store(&h)
-	return gnet.Run(
+	return gnetplus.Run(
 		s,
 		"tcp://"+net.JoinHostPort(host, strconv.Itoa(port)),
-		gnet.WithTCPNoDelay(gnet.TCPNoDelay),
-		gnet.WithMulticore(multiCore),
-		gnet.WithLoadBalancing(gnet.RoundRobin),
-		gnet.WithReadBufferCap(64<<10),
-		gnet.WithWriteBufferCap(64<<10),
+		gnetplus.WithTCPNoDelay(gnetplus.TCPNoDelay),
+		gnetplus.WithMulticore(multiCore),
+		gnetplus.WithLoadBalancing(gnetplus.RoundRobin),
+		gnetplus.WithReadBufferCap(64<<10),
+		gnetplus.WithWriteBufferCap(64<<10),
 	)
 }
 
@@ -449,14 +449,14 @@ func (s *Server) MaxRequestBody() int64 {
 // RunAddr starts the server on an explicit gnet address, for callers that need
 // a bind host, a Unix socket, or a port chosen by the OS.
 func (s *Server) RunAddr(addr string, multiCore bool) error {
-	return gnet.Run(
+	return gnetplus.Run(
 		s,
 		addr,
-		gnet.WithTCPNoDelay(gnet.TCPNoDelay),
-		gnet.WithMulticore(multiCore),
-		gnet.WithLoadBalancing(gnet.RoundRobin),
-		gnet.WithReadBufferCap(64<<10),
-		gnet.WithWriteBufferCap(64<<10),
+		gnetplus.WithTCPNoDelay(gnetplus.TCPNoDelay),
+		gnetplus.WithMulticore(multiCore),
+		gnetplus.WithLoadBalancing(gnetplus.RoundRobin),
+		gnetplus.WithReadBufferCap(64<<10),
+		gnetplus.WithWriteBufferCap(64<<10),
 	)
 }
 

@@ -28,7 +28,7 @@ resp, err := c.Do(req)
 
 ## Why gnet, not `net/http`
 
-The server side of Breeze is built on gnet. Using the same engine for outbound
+The server side of Breeze is built on gnetplus. Using the same engine for outbound
 calls means both directions share one non-blocking I/O model and one
 connection-pooling strategy, rather than the server being event-loop-based while
 every outgoing call spins up `net/http`'s goroutine-per-connection machinery

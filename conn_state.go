@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // Per-connection state.
@@ -39,7 +39,7 @@ func newConnState() *connState {
 // connStateOf returns the state stored on c, creating it when OnOpen did not
 // (hand-built connections in tests, or a connection opened before this server
 // took over its callbacks).
-func connStateOf(c gnet.Conn) *connState {
+func connStateOf(c gnetplus.Conn) *connState {
 	if st, ok := c.Context().(*connState); ok && st != nil {
 		return st
 	}
@@ -61,7 +61,7 @@ func coarseNow() int64 { return coarseClock.Load() }
 
 // connEntry is what the sweeper's registry keeps per open connection.
 type connEntry struct {
-	c  gnet.Conn
+	c  gnetplus.Conn
 	st *connState
 }
 
@@ -87,11 +87,11 @@ func (s *Breeze) SetIdleTimeout(d time.Duration) { s.idleTimeout.Store(int64(d))
 func (s *Breeze) SetReadHeaderTimeout(d time.Duration) { s.headerTimeout.Store(int64(d)) }
 
 // OnTick advances the coarse clock and sweeps for connections past a timeout.
-func (s *Breeze) OnTick() (time.Duration, gnet.Action) {
+func (s *Breeze) OnTick() (time.Duration, gnetplus.Action) {
 	now := time.Now().UnixNano()
 	coarseClock.Store(now)
 	s.sweepConns(now)
-	return time.Second, gnet.None
+	return time.Second, gnetplus.None
 }
 
 func (s *Breeze) sweepConns(now int64) {

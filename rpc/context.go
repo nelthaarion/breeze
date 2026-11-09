@@ -4,7 +4,7 @@ import (
 	"sync"
 
 	json "github.com/goccy/go-json"
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // Context carries one call through its middleware chain and collects the reply.
@@ -20,7 +20,7 @@ type Context struct {
 	// address, or to push an out-of-band notification later. Writing the reply
 	// through it directly is not supported — the server owns the write, because
 	// in a batch the replies have to be collected into one array.
-	Conn gnet.Conn
+	Conn gnetplus.Conn
 
 	// Method is the name the call was dispatched under.
 	Method string

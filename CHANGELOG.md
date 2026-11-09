@@ -210,10 +210,10 @@ policy. The dashboard's behaviour is unchanged: the fast path is the point.
 #### Added
 
 - **`Breeze.Stop(ctx context.Context) error`** — a running server can now be
-  stopped. `Run` wrapped `gnet.Run`, which blocks for the life of the process and
+  stopped. `Run` wrapped `gnetplus.Run`, which blocks for the life of the process and
   discarded the one handle that can end it, so there was no way to shut a Breeze
   server down at all. That blocked moving a consumer's socket tests onto Breeze's
-  WebSocket support: all of them tear down between runs through the `gnet.Engine`
+  WebSocket support: all of them tear down between runs through the `gnetplus.Engine`
   handle, and Breeze had no equivalent.
 
   The shape is `net/http.Server.Shutdown`'s, deliberately — a context for the
@@ -236,8 +236,8 @@ policy. The dashboard's behaviour is unchanged: the fast path is the point.
   repeating any of it, and a call that overlaps the first waits for it rather than
   starting a second teardown.
 
-- **`Breeze.OnBoot`** now keeps the `gnet.Engine` gnet hands it. That handle is
-  the whole mechanism; `gnet.Run` never returned it and Breeze never asked for it.
+- **`Breeze.OnBoot`** now keeps the `gnetplus.Engine` gnet hands it. That handle is
+  the whole mechanism; `gnetplus.Run` never returned it and Breeze never asked for it.
   Per-engine rather than gnet's package-level `Stop(addr)`, which stops "the last
   engine registered for this address" and is deprecated upstream for exactly that
   reason — two Breeze instances in one process now stop independently.
@@ -410,8 +410,8 @@ policy. The dashboard's behaviour is unchanged: the fast path is the point.
   dispatch loop holding accepted and dialled peers in one table would otherwise
   need two of every code path, with nothing stopping it getting one wrong.
 
-  `WSConn.conn` changed from `gnet.Conn` to `wsRawConn`, a three-method interface
-  (`AsyncWrite`, `Close`, `RemoteAddr`) that `gnet.Conn` already satisfies. No
+  `WSConn.conn` changed from `gnetplus.Conn` to `wsRawConn`, a three-method interface
+  (`AsyncWrite`, `Close`, `RemoteAddr`) that `gnetplus.Conn` already satisfies. No
   inbound behaviour changed. Three methods rather than gnet's forty because
   everything else on that interface is inbound-only, and requiring it would mean
   the outbound adapter faking a read path it does not use.
@@ -536,7 +536,7 @@ policy. The dashboard's behaviour is unchanged: the fast path is the point.
 #### Fixed
 
 - **`app.EnableMCP("127.0.0.1:2001")` never listened, and said nothing about it.**
-  The address was handed to `gnet.Run`, which parses it as a URL and rejects one
+  The address was handed to `gnetplus.Run`, which parses it as a URL and rejects one
   without a scheme — so every documented form of the call failed. It failed
   *inside the goroutine*, after `EnableMCP` had already returned `nil`, so the only
   evidence was one `log.Printf` line: no error to the caller, no failed startup,
@@ -549,7 +549,7 @@ policy. The dashboard's behaviour is unchanged: the fast path is the point.
   The fix is `mcpListenAddr`, which splits the two forms apart, because the two
   consumers want different ones and each rejects the other:
 
-  - `gnet.Run` needs the scheme (`tcp://127.0.0.1:2001`).
+  - `gnetplus.Run` needs the scheme (`tcp://127.0.0.1:2001`).
   - `net.SplitHostPort` — which is how `mcp.StartInProcess` detects a port
     collision with Auto-MCP — rejects the scheme-qualified form for having too many
     colons. Recording that form would have made the collision check answer "no

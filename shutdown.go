@@ -2,13 +2,13 @@ package breeze
 
 // shutdown.go — graceful shutdown for a running Breeze server.
 //
-// Run wraps gnet.Run, which blocks for the lifetime of the process and used to
+// Run wraps gnetplus.Run, which blocks for the lifetime of the process and used to
 // discard the one handle that can end it. This file captures that handle in
 // OnBoot, and Stop turns it into the contract net/http.Server.Shutdown has: stop
 // accepting, let in-flight work finish while the context allows, then tear the
 // listener and the remaining connections down.
 //
-// The shape is deliberately net/http's rather than gnet's own. gnet.Stop(addr)
+// The shape is deliberately net/http's rather than gnet's own. gnetplus.Stop(addr)
 // is package-level and keyed by address — it stops "the last engine registered
 // for this address", which is the wrong unit when a process runs two Breeze
 // instances, and gnet itself has deprecated it for that reason. Engine.Stop is
@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ type shutdownFields struct {
 
 	// booted is closed once OnBoot has stored the engine.
 	booted chan struct{}
-	// runExited is closed once Run's gnet.Run call has returned.
+	// runExited is closed once Run's gnetplus.Run call has returned.
 	runExited chan struct{}
 	// stopped is closed once Stop has finished and recorded its result.
 	stopped chan struct{}
@@ -126,7 +126,7 @@ type shutdownFields struct {
 	// engine is the gnet handle Run created, captured in OnBoot. gnet passes
 	// Engine by value and it is a single pointer wide, so this stores the
 	// address of a copy rather than making the field an interface.
-	engine atomic.Pointer[gnet.Engine]
+	engine atomic.Pointer[gnetplus.Engine]
 
 	// runCalled distinguishes "Run has not booted yet" from "Run was never
 	// called", so Stop can wait for the first and refuse the second instead of
@@ -171,18 +171,18 @@ func (s *Breeze) initShutdownState() {
 // OnBoot is called by gnet once, before the event loops start, with the handle
 // to the engine it just built. Keeping it is the whole reason Stop can exist.
 //
-// It returns gnet.None even when a shutdown has already been requested. The
-// tempting alternative — returning gnet.Shutdown to make a racing Run stop
+// It returns gnetplus.None even when a shutdown has already been requested. The
+// tempting alternative — returning gnetplus.Shutdown to make a racing Run stop
 // itself — makes gnet's run return before it defers its own teardown, which
 // leaves the engine in a state where Engine.Stop waits for an inShutdown flag
 // nothing will ever set. Run refuses up front instead (see Run), and a Stop that
 // arrives during boot is handled by waiting for this hook.
-func (s *Breeze) OnBoot(eng gnet.Engine) gnet.Action {
+func (s *Breeze) OnBoot(eng gnetplus.Engine) gnetplus.Action {
 	s.initShutdownState()
 	captured := eng
 	s.engine.Store(&captured)
 	s.bootOnce.Do(func() { close(s.booted) })
-	return gnet.None
+	return gnetplus.None
 }
 
 // OnOpen refuses new connections once a shutdown has begun.
@@ -191,19 +191,19 @@ func (s *Breeze) OnBoot(eng gnet.Engine) gnet.Action {
 // instruction of Stop rather than from the moment gnet closes the listener,
 // which does not happen until the force phase. The cost on the normal path is
 // one relaxed atomic load per accepted connection — not per request.
-func (s *Breeze) OnOpen(c gnet.Conn) ([]byte, gnet.Action) {
+func (s *Breeze) OnOpen(c gnetplus.Conn) ([]byte, gnetplus.Action) {
 	if s.stopping.Load() {
-		return nil, gnet.Close
+		return nil, gnetplus.Close
 	}
 	// One small allocation per accepted connection (not per request): the state
 	// that orders pipelined responses and feeds the timeout sweeper.
 	st := newConnState()
 	c.SetContext(st)
 	s.conns.Store(c.Fd(), connEntry{c: c, st: st})
-	return nil, gnet.None
+	return nil, gnetplus.None
 }
 
-// markRunExited records that Run's gnet.Run call has returned.
+// markRunExited records that Run's gnetplus.Run call has returned.
 func (s *Breeze) markRunExited() {
 	s.runExitOnce.Do(func() { close(s.runExited) })
 }
@@ -357,7 +357,7 @@ func (s *Breeze) shutdown(ctx context.Context) error {
 // on a goroutine and stops it a moment later can easily win the race against
 // gnet's startup, and answering ErrNotRunning there would leave the server
 // running with its owner convinced it had stopped.
-func (s *Breeze) awaitEngine(ctx context.Context) (*gnet.Engine, error) {
+func (s *Breeze) awaitEngine(ctx context.Context) (*gnetplus.Engine, error) {
 	if eng := s.engine.Load(); eng != nil {
 		return eng, nil
 	}

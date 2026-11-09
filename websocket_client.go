@@ -20,8 +20,8 @@ package breeze
 // cannot accidentally treat the two differently.
 //
 // Making that work needed one change to the existing type: WSConn.conn was
-// gnet.Conn and is now wsRawConn, a three-method interface (AsyncWrite, Close,
-// RemoteAddr) that gnet.Conn already satisfies. Nothing inbound changed
+// gnetplus.Conn and is now wsRawConn, a three-method interface (AsyncWrite, Close,
+// RemoteAddr) that gnetplus.Conn already satisfies. Nothing inbound changed
 // behaviourally.
 //
 // The two roles are not symmetric on the wire, and that is confined to two
@@ -83,7 +83,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
@@ -383,7 +383,7 @@ type wsNetConn struct {
 // time means the peer is not consuming, and the connection is no longer useful.
 const wsClientWriteTimeout = 10 * time.Second
 
-func (w *wsNetConn) AsyncWrite(buf []byte, callback gnet.AsyncCallback) error {
+func (w *wsNetConn) AsyncWrite(buf []byte, callback gnetplus.AsyncCallback) error {
 	w.mu.Lock()
 	var err error
 	if w.writeTimeout > 0 {

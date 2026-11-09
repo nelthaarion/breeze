@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/nelthaarion/breeze/v2/diag"
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // ─── Per-connection WebSocket state ──────────────────────────────────────────
@@ -443,13 +443,13 @@ func (s *Breeze) isWSConn(fd int) (*wsConnState, bool) {
 //     dispatched to the handler via the worker pool.
 //   - A Close frame triggers graceful shutdown: we send a Close echo, call
 //     OnClose, and clean up state.
-func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
+func (s *Breeze) handleWSTraffic(c gnetplus.Conn, state *wsConnState) gnetplus.Action {
 	fd := c.Fd()
 	wc := state.wc
 
 	raw, _ := c.Next(-1)
 	if len(raw) == 0 {
-		return gnet.None
+		return gnetplus.None
 	}
 
 	// Accumulate in per-connection reassembly buffer (same pattern as HTTP bufs).
@@ -465,7 +465,7 @@ func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 			// Protocol error — send close and drop.
 			wc.Close(WsCloseProtocolError, "protocol error")
 			s.cleanupWS(fd, wc, state, WsCloseProtocolError, "protocol error")
-			return gnet.Close
+			return gnetplus.Close
 		}
 		if frame == nil {
 			break // wait for more data
@@ -496,14 +496,14 @@ func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 				frame.release()
 				wc.Close(WsCloseProtocolError, "invalid close payload")
 				s.cleanupWS(fd, wc, state, WsCloseProtocolError, "invalid close payload")
-				return gnet.Close
+				return gnetplus.Close
 			}
 			code, reason := parseClosePayload(payload)
 			echo := buildWSFrame(wsOpClose, payload)
 			frame.release()
 			_ = c.AsyncWrite(echo, nil)
 			s.cleanupWS(fd, wc, state, code, reason)
-			return gnet.Close
+			return gnetplus.Close
 
 		case wsOpText, wsOpBinary:
 			s.handleDataFrame(wc, state, frame)
@@ -516,7 +516,7 @@ func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 			wc.Close(WsCloseUnsupportedData, "unsupported opcode")
 			s.cleanupWS(fd, wc, state, WsCloseUnsupportedData, "unsupported opcode")
 			frame.release()
-			return gnet.Close
+			return gnetplus.Close
 		}
 	}
 
@@ -532,7 +532,7 @@ func (s *Breeze) handleWSTraffic(c gnet.Conn, state *wsConnState) gnet.Action {
 		s.wsRxBufs.Store(fd, buf)
 	}
 
-	return gnet.None
+	return gnetplus.None
 }
 
 // handleDataFrame processes a non-continuation data frame.

@@ -5,7 +5,7 @@ import (
 	"runtime/debug"
 
 	json "github.com/goccy/go-json"
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // dispatch.go — turning one framed JSON value into zero or more responses.
@@ -42,7 +42,7 @@ type idProbe struct {
 //
 // A notification, or a batch consisting only of notifications, appends nothing —
 // §4.1 and §6 both require silence rather than an empty reply.
-func (s *Server) appendMessage(buf []byte, msg []byte, conn gnet.Conn) []byte {
+func (s *Server) appendMessage(buf []byte, msg []byte, conn gnetplus.Conn) []byte {
 	v := trimLeadingSpace(msg)
 	if len(v) == 0 {
 		// The framer does not emit empty values, so this is unreachable from
@@ -58,7 +58,7 @@ func (s *Server) appendMessage(buf []byte, msg []byte, conn gnet.Conn) []byte {
 }
 
 // appendBatch handles a top-level array (spec §6).
-func (s *Server) appendBatch(buf []byte, v []byte, conn gnet.Conn) []byte {
+func (s *Server) appendBatch(buf []byte, v []byte, conn gnetplus.Conn) []byte {
 	var elems []json.RawMessage
 	if err := json.Unmarshal(v, &elems); err != nil {
 		if !json.Valid(v) {
@@ -117,7 +117,7 @@ func (s *Server) appendBatch(buf []byte, v []byte, conn gnet.Conn) []byte {
 //
 // A false return means the message was a valid notification and the caller must
 // send nothing for it.
-func (s *Server) appendSingle(buf []byte, v []byte, conn gnet.Conn) ([]byte, bool) {
+func (s *Server) appendSingle(buf []byte, v []byte, conn gnetplus.Conn) ([]byte, bool) {
 	v = trimLeadingSpace(v)
 
 	// A batch element may be any JSON value, including a scalar — `[1,2,3]` is

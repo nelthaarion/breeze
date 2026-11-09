@@ -3,7 +3,7 @@
 //
 // # Why gnet, not net/http
 //
-// The server side of Breeze is built on gnet. Using the same event-loop engine
+// The server side of Breeze is built on gnetplus. Using the same event-loop engine
 // for outbound calls means both directions share one non-blocking I/O model and
 // one connection-pooling strategy, rather than the server being event-loop-based
 // while every outgoing call spins up net/http's goroutine-per-connection
@@ -63,7 +63,7 @@ import (
 	"time"
 	"unsafe"
 
-	gnet "github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // ── Sentinel errors ────────────────────────────────────────────────────────
@@ -274,7 +274,7 @@ func (c Config) withDefaults() Config {
 
 // hostPool holds idle gnet connections for one host:port.
 type hostPool struct {
-	idle chan gnet.Conn
+	idle chan gnetplus.Conn
 }
 
 // connContext is the per-connection state, stored as the gnet connection's
@@ -313,24 +313,24 @@ type clientHandler struct {
 	maxBody int64
 }
 
-func (h *clientHandler) OnBoot(gnet.Engine) gnet.Action { return gnet.None }
-func (h *clientHandler) OnShutdown(gnet.Engine)         {}
-func (h *clientHandler) OnTick() (time.Duration, gnet.Action) {
+func (h *clientHandler) OnBoot(gnetplus.Engine) gnetplus.Action { return gnetplus.None }
+func (h *clientHandler) OnShutdown(gnetplus.Engine)             {}
+func (h *clientHandler) OnTick() (time.Duration, gnetplus.Action) {
 	// Keep-alive tick; idle connections rely on TCP keep-alive probes rather
 	// than application-level pinging, so nothing to do here.
-	return time.Minute, gnet.None
+	return time.Minute, gnetplus.None
 }
 
-func (h *clientHandler) OnOpen(c gnet.Conn) ([]byte, gnet.Action) {
+func (h *clientHandler) OnOpen(c gnetplus.Conn) ([]byte, gnetplus.Action) {
 	// Context was already set by DialContext; nothing to do here.
-	return nil, gnet.None
+	return nil, gnetplus.None
 }
 
-func (h *clientHandler) OnClose(c gnet.Conn, err error) gnet.Action {
+func (h *clientHandler) OnClose(c gnetplus.Conn, err error) gnetplus.Action {
 	// If a request is in flight, unblock Do() with the connection error.
 	ctx, ok := c.Context().(*connContext)
 	if !ok || ctx == nil {
-		return gnet.None
+		return gnetplus.None
 	}
 	var ferr error
 	if err != nil {
@@ -344,20 +344,20 @@ func (h *clientHandler) OnClose(c gnet.Conn, err error) gnet.Action {
 	case ctx.respCh <- connResult{err: ferr}:
 	default:
 	}
-	return gnet.None
+	return gnetplus.None
 }
 
-func (h *clientHandler) OnTraffic(c gnet.Conn) gnet.Action {
+func (h *clientHandler) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 	ctx, ok := c.Context().(*connContext)
 	if !ok || ctx == nil {
 		// Unexpected data on a connection with no context; discard.
 		_, _ = c.Discard(c.InboundBuffered())
-		return gnet.None
+		return gnetplus.None
 	}
 
 	n := c.InboundBuffered()
 	if n == 0 {
-		return gnet.None
+		return gnetplus.None
 	}
 
 	// Next advances the inbound buffer; gnet guarantees the returned slice
@@ -368,7 +368,7 @@ func (h *clientHandler) OnTraffic(c gnet.Conn) gnet.Action {
 		case ctx.respCh <- connResult{err: fmt.Errorf("client: read: %w", err)}:
 		default:
 		}
-		return gnet.Close
+		return gnetplus.Close
 	}
 
 	// Append into ctx.buf (which persists across partial reads).
@@ -377,7 +377,7 @@ func (h *clientHandler) OnTraffic(c gnet.Conn) gnet.Action {
 	resp, consumed, done, perr := parseHTTPResponse(ctx.buf, h.maxBody)
 	if !done {
 		// Response not yet complete; wait for more data.
-		return gnet.None
+		return gnetplus.None
 	}
 
 	// Advance past the consumed bytes; preserve any pipelined data.
@@ -393,9 +393,9 @@ func (h *clientHandler) OnTraffic(c gnet.Conn) gnet.Action {
 		// An oversized or malformed body leaves this connection at an
 		// unknown offset in the stream, so it cannot be safely reused for
 		// the next request. Close it rather than return it to the pool.
-		return gnet.Close
+		return gnetplus.Close
 	}
-	return gnet.None
+	return gnetplus.None
 }
 
 // ── Client ─────────────────────────────────────────────────────────────────
@@ -405,7 +405,7 @@ func (h *clientHandler) OnTraffic(c gnet.Conn) gnet.Action {
 // and share it.
 type Client struct {
 	cfg     Config
-	gcli    *gnet.Client
+	gcli    *gnetplus.Client
 	handler *clientHandler
 	pools   sync.Map // "host:port" → *hostPool
 	started int32    // 0 = not started, 1 = started (atomic)
@@ -426,11 +426,11 @@ func New(cfg ...Config) *Client {
 	c = c.withDefaults()
 
 	h := &clientHandler{maxBody: c.MaxResponseBytes}
-	gcli, err := gnet.NewClient(h)
+	gcli, err := gnetplus.NewClient(h)
 	if err != nil {
 		// NewClient only fails if the options are contradictory; with our
 		// defaults that cannot happen at runtime.
-		panic(fmt.Sprintf("client: gnet.NewClient: %v", err))
+		panic(fmt.Sprintf("client: gnetplus.NewClient: %v", err))
 	}
 	return &Client{cfg: c, gcli: gcli, handler: h}
 }
@@ -455,7 +455,7 @@ func (c *Client) lazyStart() error {
 
 func (c *Client) pool(addr string) *hostPool {
 	v, _ := c.pools.LoadOrStore(addr, &hostPool{
-		idle: make(chan gnet.Conn, c.cfg.MaxIdleConnsPerHost),
+		idle: make(chan gnetplus.Conn, c.cfg.MaxIdleConnsPerHost),
 	})
 	return v.(*hostPool)
 }
@@ -468,7 +468,7 @@ func (c *Client) pool(addr string) *hostPool {
 // the FIN is processed by the event loop, but the connection is still sitting
 // in the idle channel. That race is unavoidable in any connection pool, and is
 // why Do retries once on a pooled connection whose write fails.
-func (c *Client) getConn(addr, hostname string, secure bool) (gnet.Conn, *connContext, bool, error) {
+func (c *Client) getConn(addr, hostname string, secure bool) (gnetplus.Conn, *connContext, bool, error) {
 	p := c.pool(addr)
 
 	// Try an idle connection first.
@@ -501,7 +501,7 @@ func (c *Client) getConn(addr, hostname string, secure bool) (gnet.Conn, *connCo
 
 // dial opens a new connection to addr and counts how that went. The work is dialNew's;
 // this is a wrapper so the counting does not have to be repeated at each of its returns.
-func (c *Client) dial(addr, hostname string, secure bool) (gnet.Conn, *connContext, error) {
+func (c *Client) dial(addr, hostname string, secure bool) (gnetplus.Conn, *connContext, error) {
 	conn, state, err := c.dialNew(addr, hostname, secure)
 	if err != nil {
 		connsCounter.Error()
@@ -512,7 +512,7 @@ func (c *Client) dial(addr, hostname string, secure bool) (gnet.Conn, *connConte
 }
 
 // dialNew opens a new connection to addr, wrapping it in TLS when secure.
-func (c *Client) dialNew(addr, hostname string, secure bool) (gnet.Conn, *connContext, error) {
+func (c *Client) dialNew(addr, hostname string, secure bool) (gnetplus.Conn, *connContext, error) {
 	state := &connContext{respCh: make(chan connResult, 1)}
 
 	if secure {
@@ -546,7 +546,7 @@ func (c *Client) dialNew(addr, hostname string, secure bool) (gnet.Conn, *connCo
 	return conn, state, nil
 }
 
-func (c *Client) putConn(addr string, conn gnet.Conn) {
+func (c *Client) putConn(addr string, conn gnetplus.Conn) {
 	p := c.pool(addr)
 	select {
 	case p.idle <- conn:

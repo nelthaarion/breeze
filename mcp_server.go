@@ -301,7 +301,7 @@ func (s *Breeze) EnableMCPWithToken(addr, token string) error {
 //
 // They differ, and both callers are picky about which one they get:
 //
-//   - gnet.Run parses its address as a URL and rejects one without a scheme, so
+//   - gnetplus.Run parses its address as a URL and rejects one without a scheme, so
 //     "127.0.0.1:2001" — the form this function's own documentation shows, and the
 //     obvious one to write — fails. It fails *inside the goroutine*, after
 //     EnableMCP has already returned nil, so the endpoint simply never listens and

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	json "github.com/goccy/go-json"
-	"github.com/nelthaarion/gnet/v2"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 // frame_test.go — the framer and the event-loop path.
@@ -18,14 +18,14 @@ import (
 // messages in one read, a partial message that never completes — and none of
 // them are reachable through an API that takes a whole message at a time.
 
-// fakeConn is a gnet.Conn that reads from a fixed buffer and records writes.
+// fakeConn is a gnetplus.Conn that reads from a fixed buffer and records writes.
 //
 // The embedded interface is nil, so any method this package does not use will
 // panic rather than silently return a zero value. That is deliberate: if a
 // future change starts calling something else on the connection, the test says
 // so instead of quietly passing against a fake that lied.
 type fakeConn struct {
-	gnet.Conn
+	gnetplus.Conn
 
 	inbound []byte
 	written bytes.Buffer
@@ -50,7 +50,7 @@ func (f *fakeConn) Write(b []byte) (int, error) { return f.written.Write(b) }
 func (f *fakeConn) Context() any                { return f.ctx }
 func (f *fakeConn) SetContext(v any)            { f.ctx = v }
 
-func (f *fakeConn) AsyncWrite(b []byte, _ gnet.AsyncCallback) error {
+func (f *fakeConn) AsyncWrite(b []byte, _ gnetplus.AsyncCallback) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.async.Write(b)
@@ -64,7 +64,7 @@ func (f *fakeConn) asyncBytes() []byte {
 }
 
 // feed delivers data as one read event and returns the action the server took.
-func feed(s *Server, c *fakeConn, data string) gnet.Action {
+func feed(s *Server, c *fakeConn, data string) gnetplus.Action {
 	c.inbound = append(c.inbound, data...)
 	return s.OnTraffic(c)
 }
@@ -133,7 +133,7 @@ func TestFramingSplitAcrossReads(t *testing.T) {
 		s := testServer(t)
 		c := &fakeConn{}
 
-		if feed(s, c, msg[:split]) != gnet.None {
+		if feed(s, c, msg[:split]) != gnetplus.None {
 			t.Fatalf("split %d: server closed the connection on a partial message", split)
 		}
 		if c.written.Len() != 0 {
@@ -248,7 +248,7 @@ func TestFramingWhitespaceOnlyIsDiscarded(t *testing.T) {
 	c := &fakeConn{}
 
 	for i := 0; i < 100; i++ {
-		if act := feed(s, c, "\n\r\t "); act != gnet.None {
+		if act := feed(s, c, "\n\r\t "); act != gnetplus.None {
 			t.Fatalf("whitespace closed the connection after %d heartbeats", i)
 		}
 	}
@@ -286,7 +286,7 @@ func TestFramingGarbageClosesConnection(t *testing.T) {
 			s := testServer(t)
 			c := &fakeConn{}
 
-			if act := feed(s, c, garbage); act != gnet.Close {
+			if act := feed(s, c, garbage); act != gnetplus.Close {
 				t.Errorf("action = %v, want Close", act)
 			}
 			assertErrorCode(t, decode(t, c.written.Bytes()), CodeParseError)
@@ -306,7 +306,7 @@ func TestFramingRecoversAfterAParseErrorInAFramedMessage(t *testing.T) {
 	c := &fakeConn{}
 
 	act := feed(s, c, `{"a"}`+"\n"+`{"jsonrpc":"2.0","method":"sum","params":[9],"id":2}`)
-	if act == gnet.Close {
+	if act == gnetplus.Close {
 		t.Fatal("a single malformed message closed the connection")
 	}
 
@@ -368,7 +368,7 @@ func TestMaxMessageBytesClosesConnection(t *testing.T) {
 	// An array that is never closed: structurally incomplete forever.
 	feed(s, c, `[`+strings.Repeat(`{"jsonrpc":"2.0","method":"sum","params":[1],"id":1},`, 20))
 
-	if act := s.OnTraffic(c); act != gnet.Close && c.written.Len() == 0 {
+	if act := s.OnTraffic(c); act != gnetplus.Close && c.written.Len() == 0 {
 		t.Errorf("oversized partial message was neither answered nor closed (action %v)", act)
 	}
 }
@@ -390,7 +390,7 @@ func TestMaxMessageBytesAllowsMessagesUnderTheCap(t *testing.T) {
 	}
 	sb.WriteByte(']')
 
-	if act := feed(s, c, sb.String()); act != gnet.None {
+	if act := feed(s, c, sb.String()); act != gnetplus.None {
 		t.Fatalf("action = %v, want None", act)
 	}
 	if got := decodeBatch(t, c.written.Bytes()); len(got) != 200 {
@@ -449,7 +449,7 @@ func TestEmptyReadIsANoOp(t *testing.T) {
 	s := testServer(t)
 	c := &fakeConn{}
 
-	if act := s.OnTraffic(c); act != gnet.None {
+	if act := s.OnTraffic(c); act != gnetplus.None {
 		t.Errorf("action = %v on an empty read, want None", act)
 	}
 	if c.written.Len() != 0 {

@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/nelthaarion/gnetplus/v2"
 )
@@ -66,8 +67,17 @@ type Server struct {
 
 	maxMessageBytes int
 
-	listenPort     atomic.Int64
-	listenHost     atomic.Pointer[string]
+	listenPort atomic.Int64
+	listenHost atomic.Pointer[string]
+
+	// runEnded is set when RunOn returns, and cleared when it starts again. gnetplus.Run blocks
+	// for as long as the listener lives, so reaching the end of it means the listener is
+	// gone: it never bound, or it was shut down. See the probe for why that is recorded.
+	runEnded atomic.Pointer[runEnd]
+
+	// noDiagnostics keeps this server out of the "jsonrpc" diagnostic. See WithoutDiagnostics.
+	noDiagnostics bool
+
 	maxRequestBody atomic.Int64
 	blockingSlots  chan struct{}
 }
@@ -88,7 +98,7 @@ type Pool interface {
 // the blocking-method count is refreshed by SetRegistry and by RefreshBlocking
 // rather than watched continuously, so a blocking method registered after Run
 // requires a RefreshBlocking call to be dispatched off the event loop.
-func NewServer(reg *Registry) *Server {
+func NewServer(reg *Registry, opts ...Option) *Server {
 	if reg == nil {
 		reg = NewRegistry()
 	}
@@ -98,10 +108,31 @@ func NewServer(reg *Registry) *Server {
 		maxMessageBytes:    defaultMaxMessageBytes,
 		blockingSlots:      make(chan struct{}, 128),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
 	s.RefreshBlocking()
-	s.registerDiagnostics()
+	if !s.noDiagnostics {
+		s.registerDiagnostics()
+	}
 	return s
 }
+
+// Option configures NewServer.
+type Option func(*Server)
+
+// WithoutDiagnostics builds a server that does not publish itself as the process's
+// "jsonrpc" diagnostic.
+//
+// The diagnostic describes the application's JSON-RPC server, and the registry keeps one
+// entry per name: the server constructed last wins. That is the right rule for an
+// application's own servers and the wrong one for a server the application does not own.
+// The MCP endpoint speaks JSON-RPC too and builds an rpc.Server to do it, and every one it
+// built replaced the application's entry with a report of five MCP methods and no
+// listener. An application with both `jsonrpc` and `mcp` could not see its own JSON-RPC
+// server at all, whether its listener had started included. Protocol adapters built on
+// this package pass this; the endpoint they serve has a diagnostic of its own.
+func WithoutDiagnostics() Option { return func(s *Server) { s.noDiagnostics = true } }
 
 // SetPool gives the server a worker pool for blocking methods.
 //
@@ -405,7 +436,9 @@ func (s *Server) RunOn(host string, port int, multiCore bool) error {
 	s.listenPort.Store(int64(port))
 	h := host
 	s.listenHost.Store(&h)
-	return gnetplus.Run(
+	s.runEnded.Store(nil)
+
+	err := gnetplus.Run(
 		s,
 		"tcp://"+net.JoinHostPort(host, strconv.Itoa(port)),
 		gnetplus.WithTCPNoDelay(gnetplus.TCPNoDelay),
@@ -414,6 +447,23 @@ func (s *Server) RunOn(host string, port int, multiCore bool) error {
 		gnetplus.WithReadBufferCap(64<<10),
 		gnetplus.WithWriteBufferCap(64<<10),
 	)
+
+	// Recorded because the caller is usually a goroutine whose only report is a log line,
+	// and a listener that failed to bind leaves a process that looks healthy and answers
+	// nothing on this port. The probe reads it; nothing else in the process can say so.
+	reason := "the listener was shut down"
+	if err != nil {
+		reason = err.Error()
+	}
+	s.runEnded.Store(&runEnd{at: time.Now(), reason: reason})
+	return err
+}
+
+// runEnd is how a listener ended: when, and the error gnet returned or a note that it was
+// shut down.
+type runEnd struct {
+	at     time.Time
+	reason string
 }
 
 // ListenPort reports the port passed to Run or RunOn, or 0 before startup.

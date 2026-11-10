@@ -198,6 +198,13 @@ func setupFleet(app *breeze.Breeze, router *breeze.Router) {
 		RouteResolver: fleet.RouterResolver(router),
 		Logger:        %s,
 		AggregatorURL: fleetEnv("FLEET_WRITE_URL", %q),
+		// Where the aggregator can reach this service, as the URL of its OpenAPI document
+		// (http://orders:3000/openapi.json). The host is all that is used: it is how the
+		// aggregator finds this service's dashboard to read its logs for a trace. Empty
+		// advertises nothing, and then the service's logs cannot be stitched into a
+		// trace's. The aggregator checks contracts only when a hash is sent as well, and
+		// none is, so no document has to exist at the path.
+		OpenAPIURL: fleetEnv("FLEET_OPENAPI_URL", ""),
 		Transport: %s,
 	})
 
@@ -227,6 +234,7 @@ func fleetEnv(key, fallback string) string {
 
 	notes := []string{
 		"Set FLEET_INGEST_TOKEN, FLEET_WRITE_URL and FLEET_SERVICE_NAME in the environment rather than editing the generated defaults.",
+		"Set FLEET_OPENAPI_URL to this service's address as the aggregator reaches it (http://orders:3000/openapi.json) so the aggregator can read its logs for a trace. Without it the service is traced but its logs are missing from breeze_get_trace_logs.",
 		"Call FleetTracer.Close(context.Background()) on shutdown, or spans buffered at exit are lost.",
 	}
 	if loggerNote != "" {

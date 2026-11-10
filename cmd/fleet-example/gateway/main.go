@@ -6,7 +6,7 @@
 // renders the assembled result.
 //
 // Environment: AUTH_URL, FLEET_WRITE_URL, FLEET_READ_URL, FLEET_INGEST_TOKEN,
-// FLEET_SERVICE_TOKEN, PORT.
+// FLEET_SERVICE_TOKEN, GATEWAY_OPENAPI_URL, PORT.
 package main
 
 import (
@@ -207,7 +207,10 @@ func newTracer(service string, log func(string, string, string), router *breeze.
 		Enabled:       true,
 		ServiceName:   service,
 		AggregatorURL: env("FLEET_WRITE_URL", "http://localhost:9000/fleet"),
-		SampleRate:    1,
+		// Where the aggregator can reach this service, so it can read its logs when it
+		// stitches a trace. Empty advertises nothing (see orders, which does).
+		OpenAPIURL: env("GATEWAY_OPENAPI_URL", ""),
+		SampleRate: 1,
 		// Resolves /api/orders/A-1 to the pattern /api/orders/:id, so the
 		// topology graph has one edge per route instead of one per order id.
 		RouteResolver: fleet.RouterResolver(router),

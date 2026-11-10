@@ -162,11 +162,11 @@ func NewInProcess(version string, cfg InProcessConfig) (*NetworkServer, string, 
 			"it is the control address a client configuration names")
 	}
 
-	// Built through NewServerForMode rather than NewInProcessServer so that an
-	// app-runtime embed gets the structural guarantee: the mutating tools are never
+	// Built through NewServerForMode (by way of NewEmbeddedServer) rather than
+	// NewInProcessServer so that an app-runtime embed gets the structural guarantee: the mutating tools are never
 	// registered, so no scope check stands between an agent and a generator because
 	// there is no generator to reach.
-	inner, err := NewServerForMode(version, cfg.Mode)
+	inner, err := NewEmbeddedServer(version, cfg.Mode)
 	if err != nil {
 		return nil, "", err
 	}

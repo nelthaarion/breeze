@@ -46,6 +46,132 @@ claiming to be the next release. They are now `###` subsections under this one
 heading, in reverse chronological order, which is what a reader collapsing the file
 to `##` needs in order to see one unreleased block and eight releases.
 
+### A dead service was invisible to an agent: `breeze_get_services`, `breeze_get_trace_logs`
+
+A service that is down cannot say so. It exports no spans, so a failing trace stops at its
+caller and the explanation names the caller: "auth-service returned 502", when the cause is
+that orders-service is gone. The aggregator knew. Its service registry marks the dead
+service down within seconds of the heartbeats stopping, and logs every service in a trace
+by asking each of them. No tool read either, so the one fact that turns "this service is
+failing" into "its dependency is gone" was in the dashboard and not in reach of an agent.
+
+- **`breeze_get_services`** reads the registry: status, last heartbeat, instances,
+  versions, down services first. `down` is inferred from silence and the tool says so; the
+  registry also forgets a service after twenty times the TTL, so absence is not health.
+- **`breeze_get_trace_logs`** reads what every service in a trace logged, merged into one
+  timeline, from addresses the services heartbeat. A service that could not be read is
+  listed with the reason: its evidence is missing, not empty.
+- **`breeze_explain_incident`** now joins the topology and the registry. When the failing
+  service calls a service the registry reports down or degraded, the explanation says so
+  and `suspects` names it; `next_steps` lists the calls that would answer what the
+  explanation cannot. A callee the registry has never heard of is a next step, not a
+  suspect: a service that never heartbeats looks the same as one that was forgotten.
+  A service the registry reports down that the topology does not tie to the failing one is
+  listed as a lead, `other_down_services`, and worded as one. An edge is built from the
+  callee's own spans, so a service that died before it exported one has none however often it
+  was called, and the first live run did exactly that. It is a lead because a fleet usually
+  has something unrelated down, and blaming it on timing would be a guess.
+- Tested against a real aggregator: gateway calls auth-service calls orders-service, and
+  orders-service stops heartbeating.
+
+### A generated fleet service could not be log-stitched
+
+The aggregator reads a service's logs for a trace from the address its heartbeat carries,
+and the only way a heartbeat gets one is the tracer's `OpenAPIURL`. The block `breeze add
+fleet` writes never set it, so a generated service was traced and its logs were silently
+missing from the merged view. The block now reads `FLEET_OPENAPI_URL`: the service's
+address as the aggregator reaches it, of which only the host is used. Empty advertises
+nothing, as before. The aggregator checks contracts only when a hash is sent as well and
+none is, so no document has to exist at the path. The command says to set it. In the fleet
+example, `auth` and `gateway` read `AUTH_OPENAPI_URL` and `GATEWAY_OPENAPI_URL` the way
+`orders` already read its own.
+
+### The aggregator's trace-log panel read only the `app` tab
+
+`logFanout.fetch` sent no level, which the dashboard answers with `app`. The merged log
+panel for a failing trace showed what each service did and never what went wrong: the
+failure is filed under `error`. It now reads every tab, one request each, because the
+endpoint has no "all" and an older dashboard answers an unknown level with an empty list,
+which is indistinguishable from a trace that logged nothing. A tab that cannot be read
+fails the service instead of being reported as complete.
+
+### Observability signals and dependency health had tools to read neither
+
+The dashboard records what happens inside a service, and serves it, and no tool read it. A
+request that failed because a query failed, a job that never ran, a listener that threw, a
+workflow stuck on a step: the only thing an agent could learn was a count in a diagnostic
+("0 signals"). A dead database was visible only on a page.
+
+- **`breeze_get_signals`** reads the observability collector: which names are failing and
+  how often (from counters, so they survive eviction), then the recent signals, across
+  events, database, scheduler, workflow, WebSocket, OAuth2, cache and plugins. Failures only
+  by default. Event **payloads are not returned**: they are application data, and a model's
+  context is not the audience of a page a person chose to open. An unknown `source` is
+  refused rather than answered with the empty list the dashboard would give.
+- **`breeze_get_health`** reads the application's health checks and declared connections,
+  failures first. The dashboard registers one check of its own, which says the dashboard is
+  running; a service that registered nothing else is told so instead of showing "1 green".
+- Both are `runtime` capability and served by an embedded endpoint. Tested against a real
+  dashboard, bus and collector, with listeners that really fail.
+
+### A rate-limited service answered the live tools with a bare "returned 429"
+
+The dashboard's API is mounted on the same router as the application's routes, so with
+`breeze add ratelimit` it sits behind the same limiter. Measured on a generated application:
+after a burst past the limit, `/dashboard/api/logs`, `/requests` and `/health` all answered
+429, and so did every tool that reads them, while the in-process `breeze_diagnose_service`,
+which reads the registry directly, carried on working. The tools are refused exactly when the
+service is being asked for more than it allows, which is when an agent is most likely to be
+asking. "returned 429" sent a reader to check credentials and URLs that were fine.
+
+The error is now its own kind, `rate_limited`, and says whose limiter said no, carries the
+`Retry-After` the service sent, and names what still works: `breeze_diagnose_service` with no
+`service_url` on an embedded endpoint, whose `ratelimit` subsystem reports how many requests were
+rejected. The limiter's behaviour is unchanged; exempting the dashboard from it is a security
+decision for the application, not one for a diagnostic tool.
+
+### Starting the MCP endpoint hid the application's JSON-RPC server from diag
+
+The diagnostic registry keeps one entry per name and the last `rpc.Server` constructed takes
+it, which is the right rule for an application's own servers. The MCP endpoint speaks
+JSON-RPC too and builds an `rpc.Server` to do it, and each one it built replaced the
+application's `jsonrpc` entry with a report of five MCP methods (`initialize`, `tools/list`,
+`tools/call` and two more) and no listener. An application with both `breeze add jsonrpc`
+and `breeze add mcp` could not see its own JSON-RPC server: not its methods, not its call
+counts, not whether it was listening. The new `mcp` feature made that combination ordinary.
+
+`rpc.NewServer` takes options, source-compatibly because the parameter is variadic, and
+`rpc.WithoutDiagnostics()` keeps a server out of the diagnostic. The MCP endpoint's server is
+built with it: an adapter is not the application's JSON-RPC server and has a diagnostic of its
+own, `mcp`. Found by running a generated application with every module and reading its
+`jsonrpc` diagnostic: the methods were not the ones the application had registered.
+
+### The JSON-RPC probe said `ok` for a listener that never started
+
+A `rpc.Server` owns its own listener, and the usual way to start it is on a goroutine whose
+only report is one log line. `gnet.Run` blocks while the listener lives, so it returns only
+when the listener is gone, and the commonest cause is the port being taken. The process that
+results looks healthy, serves every HTTP route, and answers nothing on the JSON-RPC port.
+The probe reported `ok` for it: `listen_port` is the port that was asked for, not proof that
+anything is bound to it, and the server did not know its own listener had ended.
+
+`RunOn` now records how the listener ended, and the probe reports `degraded` with the
+reason (`detail.stop_reason`, `detail.stopped_at`, `detail.listening: false`), ahead of every
+other finding because nothing else matters if no client can connect. A server that was never
+asked to listen, served over stdio or embedded, has no listener to be missing and is not
+faulted. Found by generating an application with every module on a host without IPv6, where
+the wildcard bind fails with `address family not supported by protocol` and the probe said
+nothing.
+
+### An embedded endpoint diagnoses its own process directly
+
+`breeze_diagnose_service` on an embedded endpoint with no `service_url` reads the diagnostic
+registry of the process it is in. It used to go out through the dashboard's HTTP endpoint
+to read what was already in memory, which needed the dashboard installed and its credentials.
+A service without the dashboard can now be diagnosed by its own control plane. Given a
+`service_url` it reads that service over HTTP as before; a standalone `breeze-mcp` is
+unchanged. A test holds the direct read and the dashboard's endpoint to identical answers.
+
 ### `breeze_migrate` and `breeze_makemigration`: the last two CLI commands, as tools
 
 `breeze migrate` and `breeze makemigration` were the only commands in the CLI with no

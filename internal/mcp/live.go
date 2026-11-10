@@ -81,7 +81,7 @@ type liveRequest struct {
 // liveError is a failed call, kept as a type so a tool can add its own context
 // without losing the distinction between the four failures above.
 type liveError struct {
-	// Kind is one of unreachable, unauthorized, missing, malformed, status.
+	// Kind is one of unreachable, unauthorized, missing, malformed, rate_limited, status.
 	Kind string
 	// Message is written for the agent that has to act on it.
 	Message string
@@ -204,6 +204,26 @@ func fetchLiveJSON(req liveRequest, dst any) *liveError {
 			Message: fmt.Sprintf("%s returned 404. Either the %s feature is not installed in this service "+
 				"(add it with breeze_add), or it is mounted under a different base path than the default.",
 				target, req.feature),
+		}
+
+	case resp.Status == 429:
+		// Not a fault in the request and not a missing feature: the service's own limiter
+		// said no. The dashboard's API is mounted on the same router as the application's
+		// routes, so it sits behind the same limiter, and it is rejected exactly when the
+		// service is being asked for more than it allows, which is when this is wanted.
+		// "returned 429" alone sends a reader to check credentials and URLs that are fine.
+		retry := ""
+		if after := resp.Header.Get("Retry-After"); after != "" {
+			retry = " Retry-After: " + after + "."
+		}
+		return &liveError{
+			Kind: "rate_limited",
+			Message: fmt.Sprintf("%s returned 429: %s.%s The service's own rate limiter rejected this call: the "+
+				"dashboard's API is behind the same limiter as the application's routes, so it is refused when the "+
+				"service is being asked for more than it allows. Wait for the window to reset and retry. Where the "+
+				"service has an in-process MCP endpoint, breeze_diagnose_service with no service_url reads the "+
+				"diagnostic registry directly and is not rate limited; its ratelimit subsystem reports how many "+
+				"requests were rejected.", target, bodyExcerpt(resp.Body), retry),
 		}
 
 	case resp.Status < 200 || resp.Status > 299:

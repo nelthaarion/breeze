@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"sort"
 	"sync/atomic"
+	"time"
 
 	"github.com/nelthaarion/breeze/v2/diag"
 )
@@ -54,7 +55,9 @@ var (
 // Called by NewServer. A process with two servers reports the one constructed
 // last, which is the registry's uniform rule; two JSON-RPC listeners in one
 // process is rare enough that a per-port key would be more confusing than the
-// limitation.
+// limitation. A server built WithoutDiagnostics is not one of them: protocol
+// adapters such as the MCP endpoint use this package without being the
+// application's JSON-RPC server, and must not stand in for it.
 func (s *Server) registerDiagnostics() {
 	if s == nil {
 		return
@@ -110,6 +113,25 @@ func (s *Server) probe() diag.Report {
 
 	summary := fmt.Sprintf("%d method(s), %d blocking; %d call(s) dispatched",
 		len(methods), blocking, snap.Hits)
+
+	// A listener that is gone. This comes first because nothing else on the page matters
+	// if no client can connect. listen_port is the port that was asked for, so it says
+	// nothing about whether anything is bound to it; the end of RunOn is what does, because
+	// gnet.Run blocks for the life of the listener.
+	if port := s.ListenPort(); port != 0 {
+		end := s.runEnded.Load()
+		detail["listening"] = end == nil
+		if end != nil {
+			detail["stop_reason"] = end.reason
+			detail["stopped_at"] = end.at.UTC().Format(time.RFC3339)
+
+			return diag.Degraded(fmt.Sprintf("the JSON-RPC listener on port %d is not running: %s", port, end.reason), detail).
+				WithNotes("gnet.Run returns only when the listener is gone: a port that is already in use, " +
+					"an address family the host does not have, or a shutdown. The reason above is the error it " +
+					"returned. Nothing else in the process reports it; the generated block logs it once, at the moment " +
+					"it happens, and the process goes on serving HTTP as if nothing were wrong.")
+		}
+	}
 
 	var notes []string
 	if !snap.Counting {

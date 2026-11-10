@@ -63,6 +63,8 @@ var toolCapabilities = map[string]Capability{
 	"breeze_get_performance":   CapRuntime,
 	"breeze_get_recent_errors": CapRuntime,
 	"breeze_get_logs":          CapRuntime,
+	"breeze_get_signals":       CapRuntime,
+	"breeze_get_health":        CapRuntime,
 	"breeze_query_openapi":     CapRuntime,
 	"breeze_simulate_request":  CapRuntime,
 	"breeze_diagnose_service":  CapRuntime,
@@ -73,6 +75,8 @@ var toolCapabilities = map[string]Capability{
 	"breeze_get_trace":               CapFleet,
 	"breeze_get_contract_violations": CapFleet,
 	"breeze_explain_incident":        CapFleet,
+	"breeze_get_services":            CapFleet,
+	"breeze_get_trace_logs":          CapFleet,
 
 	// ── provisioning: drives Docker ──────────────────────────────────────────
 	"provision_service":         CapProvisioning,

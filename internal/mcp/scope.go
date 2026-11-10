@@ -69,6 +69,8 @@ var toolScopes = map[string]toolScope{
 	"breeze_get_performance":         scopeInProcess,
 	"breeze_get_recent_errors":       scopeInProcess,
 	"breeze_get_logs":                scopeInProcess,
+	"breeze_get_signals":             scopeInProcess,
+	"breeze_get_health":              scopeInProcess,
 	"breeze_query_openapi":           scopeInProcess,
 	"breeze_diagnose_service":        scopeInProcess,
 	"breeze_get_topology":            scopeInProcess,
@@ -76,6 +78,8 @@ var toolScopes = map[string]toolScope{
 	"breeze_get_trace":               scopeInProcess,
 	"breeze_get_contract_violations": scopeInProcess,
 	"breeze_explain_incident":        scopeInProcess,
+	"breeze_get_services":            scopeInProcess,
+	"breeze_get_trace_logs":          scopeInProcess,
 
 	// breeze_simulate_request sends one real HTTP request with the framework's own
 	// client. In-process that means the app calling itself, which is a supported

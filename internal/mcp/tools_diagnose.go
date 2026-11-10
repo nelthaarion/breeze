@@ -33,6 +33,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/nelthaarion/breeze/v2/diag"
 )
 
 // diagnoseReport is what the tool returns.
@@ -97,6 +100,19 @@ type diagnoseArgs struct {
 	Status string `json:"status"`
 }
 
+// diagnoseProps are the arguments the tool takes beyond how to reach the service.
+func diagnoseProps() map[string]any {
+	return map[string]any{
+		"subsystem": stringProp("Read one subsystem instead of all of them, e.g. fleet, " +
+			"workflow, templates. Omit for everything."),
+		"status": map[string]any{
+			"type":        "string",
+			"enum":        []string{"ok", "degraded", "off", "unknown"},
+			"description": "Return only subsystems in this state. Use degraded to see just the problems.",
+		},
+	}
+}
+
 func diagnoseServiceTool() *tool {
 	return &tool{
 		name: "breeze_diagnose_service",
@@ -108,15 +124,7 @@ func diagnoseServiceTool() *tool {
 			"it is not yet clear what: a subsystem that is off reports so explicitly, which no " +
 			"other tool can distinguish from one that is merely idle. Requires the dashboard " +
 			"feature.",
-		schema: objectSchema(liveProps(map[string]any{
-			"subsystem": stringProp("Read one subsystem instead of all of them, e.g. fleet, " +
-				"workflow, templates. Omit for everything."),
-			"status": map[string]any{
-				"type":        "string",
-				"enum":        []string{"ok", "degraded", "off", "unknown"},
-				"description": "Return only subsystems in this state. Use degraded to see just the problems.",
-			},
-		}), "service_url"),
+		schema: objectSchema(liveProps(diagnoseProps()), "service_url"),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a diagnoseArgs
 			if err := decodeArgs(raw, &a); err != nil {
@@ -154,6 +162,14 @@ func diagnoseService(a diagnoseArgs) toolCallResult {
 		return liveResultError("reading diagnostics", err)
 	}
 
+	return shapeDiagnostics(a, env)
+}
+
+// shapeDiagnostics turns the diagnostics envelope into the tool's result: filtered,
+// ordered the way someone debugging reads, and summarised. It does not care where the
+// envelope came from, which is the point of it being separate: the dashboard's endpoint
+// and a process reading its own registry produce the same thing, and answer the same way.
+func shapeDiagnostics(a diagnoseArgs, env diagnosticsEnvelope) toolCallResult {
 	report := diagnoseReport{
 		ServiceURL:    a.ServiceURL,
 		Total:         env.Total,
@@ -221,4 +237,137 @@ func degradedNames(subsystems []diagSubsystem) []string {
 		}
 	}
 	return out
+}
+
+// ── an embedded server reading its own process ───────────────────────────────
+
+// thisProcess labels a result that was read from the process the endpoint is embedded in,
+// where there is no URL to show.
+const thisProcess = "(this process)"
+
+// NewEmbeddedServer builds the server an embedded endpoint serves: the mode's server, plus
+// what only a server living inside the process it describes can do.
+//
+// NewInProcess serves it. It is a constructor of its own, and exported, because the first
+// version of reading the process's own diagnostics was written into NewInProcessServer,
+// which the real endpoint does not use: its tests passed and a generated application still
+// answered "a service URL is required". Whatever makes a server embedded belongs in the
+// one function the endpoint and its tests both call.
+func NewEmbeddedServer(version string, mode ServerMode) (*Server, error) {
+	s, err := NewServerForMode(version, mode)
+	if err != nil {
+		return nil, err
+	}
+	s.useLocalDiagnostics()
+	return s, nil
+}
+
+// useLocalDiagnostics lets an embedded server answer breeze_diagnose_service about the
+// process it lives in, without a service_url.
+//
+// The diagnostic registry is process-wide, and an embedded endpoint is in the process it
+// describes. Going through the dashboard's HTTP endpoint to read what is already in memory
+// cost two things that had nothing to do with the question: the dashboard feature had to be
+// installed, and its credentials had to be passed. A service that left the dashboard out, or
+// turned it off in production because it is a surface, could not be diagnosed by its own
+// control plane. Reading the registry directly needs neither, and the endpoint's own token
+// and scope are what authorise the call.
+//
+// Only an embedded server may do this. A standalone breeze-mcp has its own registry, which
+// describes nothing the caller cares about, so it keeps the tool as it was.
+//
+// With a service_url the tool behaves exactly as before: another service is still reached
+// over HTTP.
+func (s *Server) useLocalDiagnostics() {
+	t, ok := s.tools["breeze_diagnose_service"]
+	if !ok {
+		return
+	}
+	remote := t.run
+
+	t.description = "Ask a running service what every one of its subsystems is doing: the event bus, " +
+		"workflow engine, fleet tracer, HTTP client, template engine, i18n bundle, OpenAPI registry, router, " +
+		"worker pool, WebSocket hub, video mounts, and every installed middleware. Each reports ok, degraded " +
+		"or off, with the numbers behind it and notes explaining what a reader should do. This is the tool " +
+		"to call first when something is wrong and it is not yet clear what. On this endpoint, omit " +
+		"service_url to diagnose the process the endpoint is embedded in: the diagnostic registry is read " +
+		"directly, so neither the dashboard feature nor its credentials are needed. Pass service_url to " +
+		"diagnose another service over HTTP."
+	t.schema = objectSchema(liveProps(diagnoseProps()))
+	t.run = func(raw json.RawMessage) toolCallResult {
+		var a diagnoseArgs
+		if err := decodeArgs(raw, &a); err != nil {
+			return errorResult("arguments: " + err.Error())
+		}
+		if strings.TrimSpace(a.ServiceURL) != "" {
+			return remote(raw)
+		}
+		return diagnoseLocal(a)
+	}
+}
+
+// diagnoseLocal answers from this process's own diagnostic registry.
+func diagnoseLocal(a diagnoseArgs) toolCallResult {
+	if name := strings.TrimSpace(a.Subsystem); name != "" {
+		r, found := diag.Get(name)
+		if !found {
+			return errorResult(fmt.Sprintf("this service has no subsystem named %q. Call this tool without a "+
+				"subsystem argument to see the names it does report: %s.", name, strings.Join(diag.Registered(), ", ")))
+		}
+		report := localSubsystem(r)
+		return structuredResult(fmt.Sprintf("%s: %s  %s", report.Subsystem, report.Status, report.Summary), report)
+	}
+
+	a.ServiceURL = thisProcess
+	return shapeDiagnostics(a, localEnvelope())
+}
+
+func localSubsystem(r diag.Report) diagSubsystem {
+	return diagSubsystem{
+		Subsystem: r.Subsystem,
+		Status:    string(r.Status),
+		Summary:   r.Summary,
+		Detail:    r.Detail,
+		Notes:     r.Notes,
+	}
+}
+
+// localEnvelope builds what the dashboard's diagnostics endpoint builds from the same
+// registry: the reports, how many are in each state, and what a reader needs to know about
+// counting. A test compares the two, because a second copy of the rules is only safe while
+// something fails when they drift.
+func localEnvelope() diagnosticsEnvelope {
+	reports := diag.Snapshot()
+
+	env := diagnosticsEnvelope{Subsystems: make([]diagSubsystem, 0, len(reports)), Total: len(reports)}
+	for _, r := range reports {
+		env.Subsystems = append(env.Subsystems, localSubsystem(r))
+		switch r.Status {
+		case diag.StatusOK:
+			env.OK++
+		case diag.StatusDegraded:
+			env.Degraded++
+		case diag.StatusOff:
+			env.Off++
+		default:
+			env.Unknown++
+		}
+	}
+
+	since, counting := diag.CountersSince()
+	env.Counting = counting
+	if counting && !since.IsZero() {
+		env.CountingSince = since.UTC().Format(time.RFC3339)
+	}
+	if !counting {
+		env.Notes = append(env.Notes, "Counted diagnostics are off, so any hit/miss numbers below are not "+
+			"measurements of an idle subsystem  nothing was counted. Call diag.EnableCounters() to turn them "+
+			"on without a restart.")
+	}
+	if env.Off > 0 {
+		env.Notes = append(env.Notes, fmt.Sprintf("%d subsystem(s) report status \"off\". That is not a fault: "+
+			"it means not installed, or installed and deliberately disabled. Each one's summary names what "+
+			"would turn it on.", env.Off))
+	}
+	return env
 }

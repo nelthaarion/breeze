@@ -10,7 +10,7 @@
 // merged log panel (§9C.2), so a service without one contributes no log lines.
 //
 // Environment: ORDERS_URL, FLEET_WRITE_URL, FLEET_INGEST_TOKEN,
-// FLEET_SERVICE_TOKEN, PORT.
+// FLEET_SERVICE_TOKEN, AUTH_OPENAPI_URL, PORT.
 package main
 
 import (
@@ -119,6 +119,9 @@ func newTracer(service string, log func(string, string, string), router *breeze.
 		Enabled:       true,
 		ServiceName:   service,
 		AggregatorURL: env("FLEET_WRITE_URL", "http://localhost:9000/fleet"),
+		// Where the aggregator can reach this service, so it can read its logs when it
+		// stitches a trace. Empty advertises nothing (see orders, which does).
+		OpenAPIURL:    env("AUTH_OPENAPI_URL", ""),
 		SampleRate:    1,
 		RouteResolver: fleet.RouterResolver(router),
 		Logger:        log,

@@ -9,6 +9,7 @@ package rpc
 // dashboard — so the empty-method-table case is asserted first and hardest.
 
 import (
+	"net"
 	"strings"
 	"testing"
 
@@ -159,3 +160,107 @@ func TestProbeIsRegisteredByNewServer(t *testing.T) {
 type stubPool struct{}
 
 func (stubPool) Submit(f func()) { f() }
+
+// TestProbeReportsAListenerThatNeverStarted is the other failure this probe exists for. A
+// JSON-RPC server owns its own listener, and the usual way to start it is on a goroutine
+// whose only report is one log line: gnet.Run blocks while the listener lives, so it returns
+// only when the listener is gone. The commonest cause is the port being taken, and the
+// process that results looks healthy, serves every HTTP route, and answers nothing on the
+// JSON-RPC port. The probe said "ok" for it, because listen_port is the port that was asked
+// for and not proof that anything is bound to it.
+func TestProbeReportsAListenerThatNeverStarted(t *testing.T) {
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	port := taken.Addr().(*net.TCPAddr).Port
+
+	reg := NewRegistry()
+	reg.Register("sum", func(*Context) {})
+	s := NewServer(reg)
+
+	// Wildcard, like the generated block: the port is taken on loopback, so the wildcard
+	// bind to the same port fails.
+	if err := s.Run(port, false); err == nil {
+		t.Fatal("Run returned nil on a port that is already in use; the test cannot show the failure")
+	}
+
+	report := s.probe()
+	if report.Status != diag.StatusDegraded {
+		t.Fatalf("status = %q for a listener that is not running, want %q: %s", report.Status, diag.StatusDegraded, report.Summary)
+	}
+	if !strings.Contains(report.Summary, "not running") {
+		t.Errorf("the summary does not say the listener is not running: %s", report.Summary)
+	}
+	if listening, _ := report.Detail["listening"].(bool); listening {
+		t.Errorf("detail.listening = true for a listener that failed to bind: %v", report.Detail)
+	}
+	// The error gnet returned, whatever it was. Which one depends on the host: a port that
+	// is taken gives "address already in use", and a host without IPv6 fails the wildcard
+	// bind before it gets that far. The probe's job is to carry it, not to know it.
+	reason, _ := report.Detail["stop_reason"].(string)
+	if reason == "" {
+		t.Errorf("detail.stop_reason is empty: the reader is told the listener is down and not why: %v", report.Detail)
+	}
+	if !strings.Contains(report.Summary, reason) {
+		t.Errorf("the summary %q does not carry the reason %q", report.Summary, reason)
+	}
+}
+
+// A server that was never asked to listen has no listener to be missing: it may be served
+// over stdio or embedded, and reporting it degraded would be a false alarm on every one of
+// them.
+func TestProbeDoesNotFaultAServerThatWasNeverRun(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register("sum", func(*Context) {})
+
+	// Not asserted on the overall status: the unknown-method counters are package-level and
+	// earlier tests leave them non-zero, which can legitimately make this report degraded
+	// for a reason that has nothing to do with a listener. What is under test is that no
+	// verdict about a listener is given.
+	report := NewServer(reg).probe()
+	if strings.Contains(report.Summary, "listener") {
+		t.Errorf("a server that never ran is reported as having a listener problem: %s", report.Summary)
+	}
+	for _, key := range []string{"listening", "stop_reason", "stopped_at"} {
+		if _, present := report.Detail[key]; present {
+			t.Errorf("a server that never ran reports %s: %v", key, report.Detail)
+		}
+	}
+}
+
+// TestAServerBuiltWithoutDiagnosticsDoesNotReplaceTheApplicationsProbe: the registry keeps one
+// "jsonrpc" entry and the last server constructed takes it. The MCP endpoint builds an
+// rpc.Server to speak its protocol, and each one it built replaced the application's entry with
+// a report of five MCP methods and no listener, so an application with both could not see its
+// own JSON-RPC server.
+func TestAServerBuiltWithoutDiagnosticsDoesNotReplaceTheApplicationsProbe(t *testing.T) {
+	app := NewRegistry()
+	app.Register("orders.create", func(*Context) {})
+	NewServer(app)
+
+	adapter := NewRegistry()
+	adapter.Register("tools/list", func(*Context) {})
+	NewServer(adapter, WithoutDiagnostics())
+
+	report, ok := diag.Get(diagName)
+	if !ok {
+		t.Fatal("no jsonrpc diagnostic is registered")
+	}
+	methods, _ := report.Detail["methods"].([]string)
+	got := strings.Join(methods, ",")
+	if !strings.Contains(got, "orders.create") || strings.Contains(got, "tools/list") {
+		t.Errorf("the diagnostic describes %q: the adapter's server replaced the application's", got)
+	}
+
+	// And the default is unchanged: a second ordinary server still takes the entry.
+	other := NewRegistry()
+	other.Register("billing.charge", func(*Context) {})
+	NewServer(other)
+	report, _ = diag.Get(diagName)
+	methods, _ = report.Detail["methods"].([]string)
+	if !strings.Contains(strings.Join(methods, ","), "billing.charge") {
+		t.Errorf("an ordinary server no longer takes the entry: %v", methods)
+	}
+}

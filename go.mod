@@ -3,7 +3,7 @@ module github.com/nelthaarion/breeze/v2
 go 1.27.3
 
 require (
-	github.com/andybalholm/brotli v1.2.6
+	github.com/andybalholm/brotli v1.3.0
 	github.com/goccy/go-json v0.12.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/nelthaarion/gnetplus/v2 v2.5.0
@@ -15,7 +15,7 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )

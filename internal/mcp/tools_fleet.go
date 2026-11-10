@@ -48,6 +48,8 @@ func registerFleetTools(s *Server) {
 	s.addTool(getTraceTool())
 	s.addTool(getContractViolationsTool())
 	s.addTool(explainIncidentTool())
+	s.addTool(getServicesTool())
+	s.addTool(getTraceLogsTool())
 }
 
 // defaultFleetBase matches aggregator.DefaultBasePath.
@@ -920,7 +922,22 @@ type incidentReport struct {
 	NearbyViolations  []fleetViolation `json:"nearby_violations,omitempty"`
 
 	AffectedServices []string `json:"affected_services,omitempty"`
-	Notes            []string `json:"notes,omitempty"`
+
+	// Suspects are services the failing service calls that the registry does not report
+	// as up. A service that is down exports no spans, so the trace stops at its caller
+	// and the root cause above names the caller; the dependency that is gone shows up
+	// only when the topology and the registry are read together.
+	Suspects []incidentSuspect `json:"suspects,omitempty"`
+
+	// OtherDown are services the registry reports down that the topology does not tie to
+	// the failing service. A lead and not a finding: see findSuspects.
+	OtherDown []incidentSuspect `json:"other_down_services,omitempty"`
+
+	// NextSteps are the calls that would answer what this explanation cannot, in the
+	// order to make them.
+	NextSteps []string `json:"next_steps,omitempty"`
+
+	Notes []string `json:"notes,omitempty"`
 }
 
 type incidentArgs struct {
@@ -1022,7 +1039,20 @@ func explainIncident(a incidentArgs) toolCallResult {
 		}
 	}
 
+	// Whether what the failing service calls is alive. Only for a failed trace that has a
+	// root cause: with none there is no service to ask about, and a trace that did not
+	// fail has no dependency to suspect.
+	var unregistered []string
+	if report.Trace.HasError && report.Trace.RootCause != nil {
+		var note string
+		report.Suspects, report.OtherDown, unregistered, note = findSuspects(a.fleetArgs, report.Trace.RootCause.Service)
+		if note != "" {
+			report.Notes = append(report.Notes, note)
+		}
+	}
+
 	report.Explanation = buildIncidentExplanation(report)
+	report.NextSteps = buildNextSteps(report, unregistered)
 
 	summary := fmt.Sprintf("trace %s: %s", report.TraceID, firstSentence(report.Explanation))
 	return structuredResult(summary, report)
@@ -1069,6 +1099,15 @@ func buildIncidentExplanation(r incidentReport) string {
 	default:
 		fmt.Fprintf(&b, "This trace failed with status %d, but the aggregator could not identify a "+
 			"single originating span. ", r.Trace.Status)
+	}
+
+	for _, sus := range r.Suspects {
+		b.WriteString(describeSuspect(sus))
+	}
+	if r.Trace.RootCause != nil {
+		for _, lead := range r.OtherDown {
+			b.WriteString(describeLead(r.Trace.RootCause.Service, lead))
+		}
 	}
 
 	if r.Trace.Summary != "" {

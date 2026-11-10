@@ -120,8 +120,8 @@ Every tool belongs to exactly one of eight categories:
 | `planning` | previews changes, holds change sets open |
 | `knowledge` | maintains and searches `llms.txt`, suggests next steps |
 | `verification` | runs the Go toolchain — and therefore project code |
-| `runtime` | reads live state from a running service over HTTP — routes, errors, logs, performance, and `breeze_diagnose_service`, which returns every subsystem's own diagnostic report |
-| `fleet` | reads a Fleet Aggregator: traces, topology, contract violations |
+| `runtime` | reads live state from a running service over HTTP — routes, errors, logs, performance, and `breeze_diagnose_service`, which returns every subsystem's own diagnostic report; also what the observability collector recorded (`breeze_get_signals`: failed jobs, listeners, queries, workflows) and whether its dependencies are up (`breeze_get_health`) |
+| `fleet` | reads a Fleet Aggregator: traces, topology, contract violations, which services are alive (`breeze_get_services`) and what every service in a trace logged (`breeze_get_trace_logs`) |
 | `provisioning` | drives Docker: builds images, starts and removes containers. Also `breeze_migrate`, which applies database migrations: it changes live infrastructure the same way, so it is withheld the same way |
 
 A token minted for a CI job that only reads traces needs one of them:
@@ -201,9 +201,10 @@ curl -H "Authorization: Bearer $BREEZE_MCP_TOKEN" \
             "planning", "provisioning", "runtime", "verification"],
   "scoped": true,
   "tools": ["breeze_diagnose_service", "breeze_explain_incident",
-            "breeze_get_contract_violations",
+            "breeze_get_contract_violations", "breeze_get_health",
             "breeze_get_logs", "breeze_get_performance", "breeze_get_recent_errors",
-            "breeze_get_routes", "breeze_get_topology", "breeze_get_trace",
+            "breeze_get_routes", "breeze_get_services", "breeze_get_signals",
+            "breeze_get_topology", "breeze_get_trace", "breeze_get_trace_logs",
             "breeze_get_traces", "breeze_query_openapi", "breeze_simulate_request"],
   "note": "This endpoint is a convenience for humans and external tooling. …"
 }
@@ -678,6 +679,24 @@ has no use for the rest.
 The zero value is unscoped, so an existing embed is unaffected. `mcp.Capabilities()`
 lists the categories, and `GET /mcp/features` works on an embedded endpoint too — which
 is often exactly where an operator wants it, debugging a deployed application.
+
+### The endpoint reads its own process
+
+On an embedded endpoint, `breeze_diagnose_service` with no `service_url` reads the diagnostic
+registry of the process it lives in. The registry is process-wide and the endpoint is in that
+process, so going out through the dashboard's HTTP endpoint to read what is already in memory
+bought nothing and cost two things unrelated to the question: the dashboard feature had to be
+installed and its credentials passed. A service that left the dashboard out, or turned it off in
+production because it is a surface, can still be diagnosed by its own control plane. The
+endpoint's token and scope are what authorise the call.
+
+With a `service_url` the tool is unchanged and reads that service over HTTP, so an embedded
+endpoint can still look at another service. A standalone `breeze-mcp` does not get the shortcut:
+its own registry describes the tool, not the service you asked about, and its schema still
+requires the URL. A test holds the direct read and the dashboard's endpoint to the same answer.
+
+The other live tools (`breeze_get_logs`, `breeze_get_signals`, `breeze_get_health`, and so on) still
+read the dashboard over HTTP and need it installed.
 
 ### The endpoint reports on itself
 

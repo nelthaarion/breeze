@@ -59,3 +59,25 @@ func TestFleetLoggerIsNilAndNothingIsEmittedWithoutADashboard(t *testing.T) {
 		t.Errorf("fleetLog is emitted although nothing uses it:\n%s", out.Body)
 	}
 }
+
+// TestFleetBlockAdvertisesItsAddressFromTheEnvironment: the aggregator reads a service's
+// logs for a trace from the address the service's heartbeat carries, and the only place a
+// heartbeat gets one is the tracer's OpenAPIURL. A generated service that never set it
+// was traced and could never be log-stitched, and nothing said why.
+func TestFleetBlockAdvertisesItsAddressFromTheEnvironment(t *testing.T) {
+	out := generateFeature(t, features["fleet"], featureCtx{})
+
+	if want := `OpenAPIURL: fleetEnv("FLEET_OPENAPI_URL", ""),`; !strings.Contains(out.Body, want) {
+		t.Errorf("the block does not carry %s:\n%s", want, out.Body)
+	}
+
+	var told bool
+	for _, n := range out.Notes {
+		if strings.Contains(n, "FLEET_OPENAPI_URL") && strings.Contains(n, "breeze_get_trace_logs") {
+			told = true
+		}
+	}
+	if !told {
+		t.Errorf("nothing tells the person adding the feature that FLEET_OPENAPI_URL is what makes a service's logs readable: %q", out.Notes)
+	}
+}

@@ -927,7 +927,8 @@ func TestInProcessScopeFiltersTools(t *testing.T) {
 		if !strings.HasPrefix(name, "breeze_get_trace") &&
 			!strings.Contains(name, "topology") &&
 			!strings.Contains(name, "incident") &&
-			!strings.Contains(name, "contract_violations") {
+			!strings.Contains(name, "contract_violations") &&
+			name != "breeze_get_services" {
 			t.Errorf("%s is advertised to a fleet-scoped token", name)
 		}
 	}

@@ -30,8 +30,21 @@ func logStub(t *testing.T, service string, lines []dashboard.LogEntry) (*httptes
 		if got := r.Header.Get("X-Fleet-Token"); got != "shared-secret" {
 			t.Errorf("%s: token = %q, want shared-secret", service, got)
 		}
+		// The real endpoint reads one tab per request and defaults to app. A stub that
+		// answered every level with every line would hand the fan-out its lines five
+		// times once it reads all five tabs, and would hide the bug it was changed for.
+		level := r.URL.Query().Get("level")
+		if level == "" {
+			level = "app"
+		}
+		matching := []dashboard.LogEntry{}
+		for _, l := range lines {
+			if l.Level == level {
+				matching = append(matching, l)
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(lines)
+		_ = json.NewEncoder(w).Encode(matching)
 	}))
 	t.Cleanup(srv.Close)
 	return srv, srv.URL + "/dashboard"
@@ -84,6 +97,75 @@ func TestLogFanoutMergesByTimestamp(t *testing.T) {
 		if !src.Available || src.Count != 2 {
 			t.Errorf("source %+v: want available with 2 lines", src)
 		}
+	}
+}
+
+// TestLogFanoutReadsEveryLogTab: a failure is filed under the error tab and the work
+// that led to it under app. The fan-out used to read app only, so the merged panel for
+// a failing trace showed what each service did and none of what went wrong.
+func TestLogFanoutReadsEveryLogTab(t *testing.T) {
+	base := time.Now().Truncate(time.Second)
+
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		level := r.URL.Query().Get("level")
+		asked = append(asked, level)
+
+		lines := map[string][]dashboard.LogEntry{
+			"app":   {{Time: base, Level: "app", Message: "auth: authorized order 123", TraceID: "t"}},
+			"error": {{Time: base.Add(time.Millisecond), Level: "error", Message: "auth: could not reach orders: connection refused", TraceID: "t"}},
+		}[level]
+		if lines == nil {
+			lines = []dashboard.LogEntry{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(lines)
+	}))
+	t.Cleanup(srv.Close)
+
+	f := newLogFanout("shared-secret")
+	got := f.Collect(context.Background(),
+		Trace{TraceID: "abc", Services: []string{"auth"}},
+		map[string]string{"auth": srv.URL + "/dashboard"})
+
+	if len(got.Logs) != 2 {
+		t.Fatalf("got %d lines, want the app line and the error line: %+v", len(got.Logs), got.Logs)
+	}
+	if got.Logs[0].Level != "app" || got.Logs[1].Level != "error" {
+		t.Errorf("levels = %q then %q, want app then error, in time order", got.Logs[0].Level, got.Logs[1].Level)
+	}
+	if want := strings.Join(fanoutLogTabs, ","); strings.Join(asked, ",") != want {
+		t.Errorf("asked for tabs %v, want every one of %s", asked, want)
+	}
+	if len(got.Sources) != 1 || got.Sources[0].Count != 2 {
+		t.Errorf("sources = %+v, want one service that contributed both lines", got.Sources)
+	}
+}
+
+// TestLogFanoutOneTabFailingFailsTheService: a service whose error tab could not be read
+// has not been read. Reporting its app lines as the whole answer would present the very
+// gap this change closes as a complete result.
+func TestLogFanoutOneTabFailingFailsTheService(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("level") == "error" {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[]"))
+	}))
+	t.Cleanup(srv.Close)
+
+	f := newLogFanout("shared-secret")
+	got := f.Collect(context.Background(),
+		Trace{TraceID: "abc", Services: []string{"auth"}},
+		map[string]string{"auth": srv.URL + "/dashboard"})
+
+	if len(got.Sources) != 1 || got.Sources[0].Available {
+		t.Fatalf("a service with an unreadable tab was reported available: %+v", got.Sources)
+	}
+	if !strings.Contains(got.Sources[0].Error, "500") {
+		t.Errorf("the reason is not given: %q", got.Sources[0].Error)
 	}
 }
 

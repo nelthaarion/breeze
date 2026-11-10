@@ -39,6 +39,8 @@ func registerLiveTools(s *Server) {
 	s.addTool(getPerformanceTool())
 	s.addTool(getRecentErrorsTool())
 	s.addTool(getLogsTool())
+	s.addTool(getSignalsTool())
+	s.addTool(getHealthTool())
 	s.addTool(queryOpenAPITool())
 	s.addTool(diagnoseServiceTool())
 }

@@ -202,9 +202,43 @@ func (f *logFanout) Collect(ctx context.Context, trace Trace, endpoints map[stri
 	return out
 }
 
-// fetch retrieves one service's logs for a trace id.
+// fanoutLogTabs are the dashboard's log tabs. A service keeps one buffer per tab and
+// files a line on exactly one of them: application lines under app, request lines under
+// http, failures under error or panic.
+//
+// The fan-out reads all of them. It used to send no level, which the endpoint answers
+// with app, so the merged panel showed what each service did and never what went wrong:
+// the line that says why a request failed is filed under error. A panel built to explain
+// an incident that leaves out the failure is the opposite of what it is for.
+var fanoutLogTabs = []string{"app", "http", "error", "panic", "warning"}
+
+// fetch retrieves one service's logs for a trace id, from every tab, oldest first.
+//
+// One request per tab rather than a single request for all of them, because the
+// endpoint has no such option and a service running an older dashboard would answer an
+// unknown level with an empty list, which is indistinguishable from a trace that logged
+// nothing. Any tab failing fails the service: a half-read answer reported as complete is
+// exactly the evidence gap this exists to close.
 func (f *logFanout) fetch(ctx context.Context, endpoint, traceID string) ([]dashboard.LogEntry, error) {
-	target := strings.TrimSuffix(endpoint, "/") + "/api/logs?trace_id=" + url.QueryEscape(traceID)
+	var all []dashboard.LogEntry
+	for _, tab := range fanoutLogTabs {
+		entries, err := f.fetchTab(ctx, endpoint, traceID, tab)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, entries...)
+	}
+
+	// Each tab arrives oldest first on its own; together they have no order until
+	// sorted.
+	sort.SliceStable(all, func(i, j int) bool { return all[i].Time.Before(all[j].Time) })
+	return all, nil
+}
+
+// fetchTab retrieves one tab of one service's logs for a trace id.
+func (f *logFanout) fetchTab(ctx context.Context, endpoint, traceID, tab string) ([]dashboard.LogEntry, error) {
+	target := strings.TrimSuffix(endpoint, "/") + "/api/logs?trace_id=" + url.QueryEscape(traceID) +
+		"&level=" + url.QueryEscape(tab)
 	req := client.NewRequest("GET", target, nil).WithContext(ctx)
 	if f.token != "" {
 		req.SetHeader("X-Fleet-Token", f.token)

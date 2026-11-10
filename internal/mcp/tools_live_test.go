@@ -215,6 +215,13 @@ func driveTraffic(t *testing.T, base string) {
 // tests assert against — not the prose summary, which is allowed to be reworded.
 func callLiveTool(t *testing.T, name string, args map[string]any) (map[string]any, string, bool) {
 	t.Helper()
+	return callLiveToolOn(t, mcp.NewServer("test"), name, args)
+}
+
+// callLiveToolOn is callLiveTool against a server the caller built, for the tests whose
+// subject is which kind of server it is.
+func callLiveToolOn(t *testing.T, srv *mcp.Server, name string, args map[string]any) (map[string]any, string, bool) {
+	t.Helper()
 
 	req := map[string]any{
 		"jsonrpc": "2.0",
@@ -227,7 +234,7 @@ func callLiveTool(t *testing.T, name string, args map[string]any) (map[string]an
 		t.Fatalf("marshal request: %v", err)
 	}
 
-	out := mcp.NewServer("test").RPCServer().Handle(raw)
+	out := srv.RPCServer().Handle(raw)
 	if len(out) == 0 {
 		t.Fatalf("%s produced no response", name)
 	}
@@ -361,6 +368,39 @@ func requestLogService(t *testing.T, records []dashboard.RequestRecord) string {
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
+}
+
+// TestLiveToolsExplainARateLimitedDashboard: the dashboard's API is mounted on the same router
+// as the application and sits behind the same rate limiter, so once the service is rejecting
+// traffic the tools that read it are rejected too. "returned 429" alone sent a reader to
+// check credentials and URLs that were fine; it has to say whose limiter said no and what
+// still works.
+func TestLiveToolsExplainARateLimitedDashboard(t *testing.T) {
+	limited := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "17")
+		http.Error(w, "Rate limit exceeded: max 30 requests per 1m0s", http.StatusTooManyRequests)
+	}))
+	t.Cleanup(limited.Close)
+
+	got, summary, isErr := callLiveTool(t, "breeze_get_logs", creds(limited.URL))
+	if !isErr {
+		t.Fatalf("a 429 was reported as success: %s", summary)
+	}
+	for _, want := range []string{
+		"returned 429",
+		"Rate limit exceeded: max 30 requests",
+		"Retry-After: 17",
+		"rate limiter rejected this call",
+		"breeze_diagnose_service",
+		"not rate limited",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("the error does not say %q:\n%s", want, summary)
+		}
+	}
+	if got["error"] != "rate_limited" {
+		t.Errorf("error kind = %v, want rate_limited so a caller can tell it from a fault", got["error"])
+	}
 }
 
 // TestGetRecentErrorsEmptyResultExplainsWhatTheDashboardKeeps: an empty answer is not

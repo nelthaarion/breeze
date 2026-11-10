@@ -95,7 +95,13 @@ func NewServer(version string) *Server {
 func (s *Server) Registry() *rpc.Registry { return s.reg }
 
 // RPCServer returns a dispatcher over this server's methods.
-func (s *Server) RPCServer() *rpc.Server { return rpc.NewServer(s.reg) }
+// RPCServer returns the JSON-RPC server that speaks MCP over s.
+//
+// Built without diagnostics: it is an adapter, not the application's JSON-RPC server, and
+// the diagnostic registry keeps one "jsonrpc" entry that the last server constructed
+// takes. Without this, starting the endpoint replaced the application's entry with a report
+// of five MCP methods, and an application with both could not see its own.
+func (s *Server) RPCServer() *rpc.Server { return rpc.NewServer(s.reg, rpc.WithoutDiagnostics()) }
 
 // addTool registers a callable. It panics on a duplicate name because that can
 // only be a programming error in this package, and a silently-shadowed tool

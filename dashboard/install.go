@@ -72,6 +72,10 @@ func Install(app *breeze.Breeze, router *breeze.Router, cfg Config) *Collector {
 	diag.EnableCounters()
 	c.registerDiagnostics()
 
+	// Publish the collector for an MCP endpoint in this process, which reads it
+	// directly instead of calling this dashboard's own HTTP API (see local.go).
+	c.MakeCurrent()
+
 	// ── Initialize storage and load persisted state ──────────────────────
 	c.storage = newStorage(cfg)
 	if c.storage != nil {

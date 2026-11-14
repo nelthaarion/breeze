@@ -962,6 +962,7 @@ var nextStepRules = []string{
 	"websocket-without-auth",
 	"fleet-without-tagged-routes",
 	"fleet-without-aggregator",
+	"workflow-invisible-to-dashboard",
 	"no-docs",
 	"edited-blocks",
 	"llms-missing",
@@ -1073,6 +1074,20 @@ func suggestNextSteps(path string) toolCallResult {
 				Severity: severityError,
 			})
 		}
+	}
+
+	if facts.workflowHiddenFromDashboard {
+		result.Suggestions = append(result.Suggestions, suggestion{
+			Kind:    "workflow-invisible-to-dashboard",
+			Subject: "workflow",
+			Rationale: "the workflow block gives the engine ObsCollector, the observability block's collector, but the dashboard " +
+				"reads its own, so every workflow run is published into a collector nothing reads: breeze_get_signals " +
+				"source=workflow and the Events page show none of them, although the runs' bus events are recorded and the " +
+				"live executions list still works, which is why nothing looks broken. The generator was corrected in the " +
+				"release that added this check; a project generated before it still has the old block.",
+			Action:   "breeze_add with feature=workflow again: the block is regenerated to publish into the dashboard's collector (no force is needed unless the block was edited)",
+			Severity: severityWarning,
+		})
 	}
 
 	if !installed["docs"] && !installed["fleet"] {

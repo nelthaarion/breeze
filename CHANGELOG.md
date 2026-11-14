@@ -6,6 +6,207 @@ All changes made to the Breeze framework.
 
 ## [Unreleased]
 
+### The fleet aggregator's service TTL is configurable
+
+`cmd/fleet-aggregator` had no environment variable for the interval after which a silent service is reported
+down (15 seconds, set in code). A fleet whose services heartbeat every minute was reported down for three quarters of
+every minute, and one that wanted a fast failure signal could not have one. `FLEET_SERVICE_TTL` takes a Go duration
+(`30s`, `2m`). Unset keeps the default. A set value that is not a positive duration stops the process with a
+message, because a liveness window that silently reverts to the default is one nobody chose; a bare number is
+refused as ambiguous. The registry forgets a service that has been silent for twenty times the TTL, which is now
+written in the command's documentation next to it.
+
+### The JSON-RPC listener works on a host with no IPv6
+
+`jsonrpc` apps generate `RPCServer.Run(port, true)`, which binds `tcp://:port`: gnet turns the empty
+host into the IPv6 wildcard. On a host whose kernel has no IPv6 the socket is refused before anything is
+bound (`socket: address family not supported by protocol`), the listener never exists, and the process goes on
+serving HTTP, which binds `tcp4://0.0.0.0` and was fine. The only report was one log line at startup. The probe
+already says so (`degraded`, with the reason); this makes the port work.
+
+`RunOn` with an empty host still asks for the wildcard first, because that is what an empty host has always meant
+and an IPv6 client of an existing deployment relies on it. When the answer is that the host has no such address
+family it binds `tcp4://0.0.0.0` instead, which is the same all-interfaces on the one family the host has, and
+records that it did: the probe carries `ipv4_fallback` and `listen_address` and says an IPv6 client cannot reach it.
+A named host is bound as given and never retried, and so is any other failure (a port in use, a permission
+error), because a fallback that hid those would be worse than the bug. The two options considered were defaulting
+to `tcp4` outright, which narrows every dual-stack deployment, and this; the second is the one that cannot break
+anyone.
+
+Tests: a stub in place of `gnetplus.Run` fails the first bind the three ways the error arrives (the raw socket
+error, wrapped so `errors.Is` sees it, flattened to text, which is what gnet returned here), and checks the
+addresses tried, that a named host and other errors are not retried, and the probe; and one test with no stub
+asks a real `Run` for an answer on IPv4. That one fails without the fallback on this machine (no IPv6) and passes
+either way on a dual-stack machine, where the stub tests carry the logic.
+
+### Generated workflow engines now publish where the dashboard reads
+
+Found by running a generated application end to end, which is the only way it could be found:
+with `workflow`, `observability` and `dashboard` in one project, `breeze_get_signals
+source=workflow` answered zero while workflows ran. The engine publishes one observability signal
+per run, with its steps as spans, directly into a collector and not over the bus; the generated
+block gave it `ObsCollector`, the collector the observability block builds. The dashboard reads a
+different one, created when it attached to the bus. Every run was published into a collector
+nothing reads. The runs' bus events were recorded (under source `events`, as
+`events.WorkflowStepCompleted` and the like) and the `live` executions list worked, which is why
+nothing looked broken, but the per-run signal, with its duration, state and failed step, was
+never visible to the Events page or to an agent.
+
+`dashboard.Collector.Observability` has documented the requirement from the start ("those
+subsystems must publish into *this* collector, not a private one, or their signals will never reach
+the page"); the generator did not follow it. The generated block now asks the dashboard for its
+collector and falls back to `ObsCollector` when there is none (the dashboard has one only once it
+has attached to a bus, so the choice is made when the block runs, not when it is generated). The
+feature now declares its dependency on `dashboard`, so adding a dashboard after a workflow prints
+the re-run hint, and the registry's own invariant test checked that the declaration was real, which
+is why the choice is made at run time. Verified live: the same application, rebuilt, reports the two
+`checkout` runs under `source=workflow` with their steps.
+
+### The dashboard counts every request, and keeps failures under a bound
+
+`breeze_get_routes` reported a route that had served ten thousand fast requests as never
+called, and `breeze_get_recent_errors` could not see a 404, a 400, a 422 or a 429 at all. Both
+were the dashboard's capture policy doing what it was written to do. The middleware attributed
+a request to a route only when it kept a full record of it, and kept one only when the request
+was slow, failed with a 5xx, or arrived while someone had the dashboard open. A fast success
+with nobody watching was added to one total and to nothing else. The tools disclosed this in a
+note, which is the right thing to do about a blind spot and the wrong place to leave one: an
+agent has to read the note, believe it, and then reason around a zero.
+
+The policy is now: **count every request, keep the failures worth keeping.**
+
+- **Every request is counted against its route and status class**, exactly, with no allocation:
+  a route lookup, a few atomic adds into the accumulator the routes endpoint and the storage
+  already used. The routes endpoint's `requests`, average and maximum latency are now true of
+  every request, not of the slow and failed ones (which made the averages systematically
+  pessimistic). `errors` is still the 5xx count; **`client_errors`** is the new 4xx count.
+- **A failure is kept in full up to a budget per route per window**: 20 client errors and 100
+  server errors per route per 10 seconds, counted separately so a 404 flood cannot hide a 500.
+  Beyond the budget a failure is counted and not stored, and the count of what was not stored is
+  reported. A flood of one failure can no longer churn the ring buffer, and a 5xx flood no longer
+  allocates a record per request: the failing path costs what a success costs (3980 ns and 27
+  allocations per request before, 894 ns and 8 after, in the same fixture). 2xx and 3xx stay
+  unrecorded unless slow or watched, as before.
+- **`GET /dashboard/api/traffic`** (new; also readable in-process) serves the exact counts by
+  class, per route and for requests no route served, the budgets in force, and `instrumented`:
+  whether `dashboard.Middleware` was ever created for this collector. A dashboard that is
+  installed without its middleware counts nothing and every route then reads zero, which looks
+  exactly like a service nobody called; the diagnostic probe now degrades with a note saying so.
+- **The MCP tools say what a zero means.** `breeze_get_routes` and `breeze_get_recent_errors`
+  carry `counting`: `exact` (zero is "never called"), `not_measured` (nothing is counting; the note
+  names the missing middleware or `Config.Enabled`) or `partial` (an older dashboard with no
+  traffic endpoint, which keeps the old caveats). `breeze_get_recent_errors` returns an `exact`
+  block beside the sampled records: totals, the worst routes, how many failures were not kept,
+  and the policy in the dashboard's own numbers, so "ten 404s" can be told from ten thousand and
+  "none" can be told from a sample that kept none. `breeze_get_routes` says "not observed" rather
+  than "never called" whenever it cannot stand behind the second.
+
+**Why the dashboard resolves the route itself.** The router resolves a route for every request
+and does not keep the answer where a middleware can reach it; putting a field on `Context` would
+add a store to the request path of every application, including those that never install a
+dashboard, and the disabled path is meant to cost nothing. So the middleware has its own lookup,
+which follows the router's rule exactly (of all routes that match, the one registered first
+wins: not "static beats parameter", and a table built on that rule attributes requests to the wrong
+route precisely where routes overlap). A test asks the real router and the index the same question
+over a corpus built to make them disagree (parameter routes shadowing later static ones and the
+reverse, wildcards in both orders, duplicate shapes, trailing and doubled slashes, every method
+bucket, a node wide enough for the router to build a map) and fails if they differ.
+
+**Measured** (`go test ./dashboard -bench 'ZZ(Routed|MiddlewareDisabled|ChainOnly)'`, the old and new
+test binaries run alternately twelve times and the minimum taken, because this machine is one shared
+vCPU and a single run drifts by tens of percent):
+
+| | before | after |
+|---|---|---|
+| middleware installed, dashboard **off** | 509 ns | 512 ns (+3: unchanged) |
+| enabled, static route, 200 | +315 ns over off | +366 (+51 ns) |
+| enabled, `:param` route, 200 | +319 | +483 (+164 ns) |
+| enabled, two `:param`s, 200 | +321 | +509 (+188 ns) |
+| enabled, wildcard route, 200 | +313 | +448 (+135 ns) |
+| enabled, 404 on a route | +315 | +378 (+63 ns) |
+| enabled, 500 on a route, over budget | +3471 ns, 27 allocs | +382 ns, 8 allocs |
+
+Allocations per request on the success paths are identical before and after. The lookup alone
+(`BenchmarkZZRouteIndexFind`) is 25 ns for a static route and 110 to 170 ns for a parameter route
+with zero allocations, against 380 to 560 ns and two allocations for `Router.Find` on the same
+requests. **Not measured:** contention. The counters are atomics on one accumulator per route, so a
+single hot route served from many cores contends on its cache line; this machine has one CPU, and
+`BenchmarkZZRoutedStatic200Parallel` is the serial number here. It should be run on the target
+hardware before the cost is called small at a hundred thousand requests a second to one route.
+
+**What no count can see**, and the tools now say: a request for a path that no route serves is
+answered by the framework before any global middleware runs (`router.findDispatch` returns no
+chain), so it is in no dashboard count, no log line and no rate limiter. A test holds that claim to
+what the framework does. And a request refused by middleware ordered before the dashboard's never
+reaches it.
+
+Also fixed on the way: route statistics restored from storage came back with an empty method and
+pattern (the accumulator was rebuilt from the key without its name), so the routes endpoint listed
+restored counts under no route until something rebuilt them. `RouteStat` and the persisted format
+gain `client_errors`, which a file written before it reads as zero. The dashboard README's claim
+that every request is captured is replaced by the table above.
+
+### An embedded MCP endpoint reads its own dashboard, and the rate limiter cannot refuse it
+
+`breeze_diagnose_service` on an embedded endpoint already read the process's own diagnostic
+registry when given no `service_url`. The tools that read the dashboard (routes, requests, logs,
+performance, signals, health) still went out through the service's own listener and came back
+through its router. That needed the dashboard installed with credentials the endpoint was handed,
+and it put the call behind the application's rate limiter. Measured against a limit of 30 a
+minute: after a 40-request burst, `/dashboard/api/logs`, `/requests` and `/health` all answered 429
+and `breeze_get_logs` failed, while the direct `breeze_diagnose_service` kept working. The tool was
+refused exactly when the service was rejecting traffic, which is when its logs are wanted.
+
+- **Six tools read the collector in memory** when called on an embedded endpoint with no
+  `service_url`: `breeze_get_routes`, `breeze_get_recent_errors`, `breeze_get_logs`,
+  `breeze_get_performance`, `breeze_get_signals`, `breeze_get_health`. The answer says
+  `"service_url": "(this process)"`; their schemas no longer require the URL and their descriptions
+  say it may be omitted; with a URL they behave exactly as before and read that service over HTTP.
+  No dashboard in the process is an explicit `missing` error that names `breeze add dashboard`.
+- **`dashboard.Install` publishes the collector** through a new leaf package,
+  `internal/livesource`, which both sides import and which imports nothing. The dashboard imports
+  the root package and the root package imports `internal/mcp`, so neither can import the other,
+  and the public `mcp` package importing `dashboard` would link the dashboard and its embedded
+  assets into every service that only wants an endpoint. The last install wins, as with the
+  diagnostic registry; `Collector.MakeCurrent` selects one when a process (a test, usually) installs
+  several. The collector is exposed through a closure, so it gains no public `Read`.
+- **One shaping, written once.** Each dashboard endpoint is now a function that returns its payload
+  (`routesPayload`, `requestsPayload`, `logsPayload`, `performancePayload`, `architecturePayload`,
+  `eventsView`, `trafficPayload`); the HTTP handler writes it as JSON and the in-process reader
+  returns it, and the tool decodes the same JSON into the same mirror types on either transport.
+  The diagnostics endpoint is built differently (a second implementation held to the first by a
+  test) and survives on that test; this has no second implementation to drift. Event payloads are
+  still left out of `breeze_get_signals` by the mirror type not declaring them, and a test puts a
+  card number in a payload and checks it does not come back.
+- **Where the reader is attached is not an argument.** It is an unexported field set only by an
+  embedded server, for a call that named no URL. A standalone `breeze-mcp` has no dashboard of its
+  own, and a test, in a process that has one, checks it does not use it.
+
+Verified three ways per tool: a drift test comparing the direct answer with the HTTP answer on one
+collector; a test through `NewInProcess`, the constructor the running endpoint calls (the last
+embedded behaviour was written into a sibling nobody calls and passed its tests while a generated
+application refused the call); and one through `StartInProcess` with a dashboard whose credentials
+the endpoint is not told. A burst past a real limiter, with a real dashboard behind it, shows the
+HTTP read refused with `rate_limited` and the direct reads answering.
+
+### The rate limiter and the dashboard: what each says about the other
+
+`middlewares.NewRateLimiter` has no skip path or skip key, only `KeyFunc`, so there is no opt-in flag to
+add and no default exemption was added: the dashboard's HTTP API is a brute-force surface and stays
+behind the limiter. What changed is that the facts are said where someone meets them.
+
+- The generated `setupRatelimit` carries a comment, when the project has a dashboard, saying the
+  dashboard's API is behind the limiter, that an embedded MCP endpoint is not affected, and that what
+  the limiter rejects never reaches the dashboard's middleware (the dashboard is registered after
+  it, so those requests are counted by the `ratelimit` subsystem and not per route). `breeze add
+  dashboard` says the same from the other side when a limiter is already there, and `ratelimit` now
+  declares its dependency on `dashboard`, which the registry's own invariant test required once the
+  generated code began to differ, so adding a dashboard after a limiter prints the re-run hint.
+- `rate_limited` errors from the live tools now point at calling the embedded endpoint without a
+  `service_url`, which now works for every dashboard-reading tool. They already report `Retry-After`
+  when the response carries one; Breeze's own limiter does not send it, and it was left that way:
+  setting a header allocates, and the 429 path was written not to.
+
 ### Maintenance
 
 - Toolchain moved to **Go 1.27.3**, which clears fourteen standard-library

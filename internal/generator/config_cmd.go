@@ -198,6 +198,7 @@ func addFeatureFromConfig(f *feature, cfg ProjectConfig, modulePath string) erro
 		HasEvents:        hasBlock(featuresFileName, featureMarkerPrefix, "events"),
 		HasObservability: hasBlock(featuresFileName, featureMarkerPrefix, "observability"),
 		HasDashboard:     hasBlock(featuresFileName, featureMarkerPrefix, "dashboard"),
+		HasRatelimit:     hasBlock(featuresFileName, featureMarkerPrefix, "ratelimit"),
 	})
 	if err != nil {
 		return err

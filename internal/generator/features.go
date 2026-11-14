@@ -99,6 +99,10 @@ type featureCtx struct {
 	// can route its logs through that collector â€” which is what stamps a log
 	// line with the current trace id â€” instead of dropping them.
 	HasDashboard bool
+	// HasRatelimit reports whether a rate limiter block is present. The dashboard's HTTP API is
+	// behind that limiter, so a dashboard added after it says so, as a limiter added after the
+	// dashboard does.
+	HasRatelimit bool
 }
 
 // featureOutput is one feature's generated code.

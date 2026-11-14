@@ -77,7 +77,11 @@ type RouteStat struct {
 	AvgLatencyMS float64  `json:"avg_latency_ms"`
 	MaxLatencyMS float64  `json:"max_latency_ms"`
 	LastRequest  string   `json:"last_request"` // RFC3339, "" if never
-	Errors       int64    `json:"errors"`
+	// Errors counts responses with status 500 and above. ClientErrors counts 400 to 499.
+	// Both are exact: every request is counted against its route, not only the ones the
+	// dashboard kept a record of.
+	Errors       int64 `json:"errors"`
+	ClientErrors int64 `json:"client_errors"`
 
 	// Summary, Description and Tags are what the developer wrote in
 	// middleware.Doc, carried through from the Scalar registry.

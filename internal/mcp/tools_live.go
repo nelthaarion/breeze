@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/breeze/v2/internal/livesource"
 )
 
 func registerLiveTools(s *Server) {
@@ -59,6 +60,12 @@ type liveArgs struct {
 	Token      string `json:"token"`
 	Username   string `json:"username"`
 	Password   string `json:"password"`
+
+	// local, when set, reads this process's own dashboard collector instead of calling a
+	// service over HTTP. Unexported on purpose: a caller cannot set it through a tool's
+	// arguments. Only an embedded server sets it (embedded_live.go), and only for a call
+	// that named no service_url.
+	local livesource.Reader
 }
 
 // request builds the transport call for one dashboard API path.
@@ -72,6 +79,8 @@ func (a liveArgs) request(apiPath, feature string) liveRequest {
 	return liveRequest{
 		baseURL:  a.ServiceURL,
 		path:     base + "/api" + apiPath,
+		apiPath:  apiPath,
+		local:    a.local,
 		token:    a.Token,
 		username: a.Username,
 		password: a.Password,
@@ -114,6 +123,7 @@ type liveRoute struct {
 	MaxLatencyMS float64  `json:"max_latency_ms"`
 	LastRequest  string   `json:"last_request"`
 	Errors       int64    `json:"errors"`
+	ClientErrors int64    `json:"client_errors"`
 
 	// Summary, Description and Tags are what the route's author wrote in
 	// middleware.Doc. They are the reason this tool is worth calling rather than
@@ -136,14 +146,27 @@ type liveRoute struct {
 // next, and no way to say "the dashboard is installed but nothing has been
 // called yet" — which is a different situation from an empty service.
 type routesReport struct {
-	ServiceURL string      `json:"service_url"`
-	Total      int         `json:"total"`
-	Exercised  int         `json:"exercised"`
-	Unused     int         `json:"unused"`
-	WithErrors int         `json:"with_errors"`
-	Documented int         `json:"documented"`
-	Routes     []liveRoute `json:"routes"`
-	Notes      []string    `json:"notes,omitempty"`
+	ServiceURL string `json:"service_url"`
+	// Counting says what a request count of zero means: "exact" (every request that reaches the
+	// dashboard's middleware is counted, so zero is "never called"), "not_measured" (nothing is
+	// counting, so zero says nothing) or "partial" (an older dashboard that counts only the requests
+	// it kept in full).
+	Counting string `json:"counting"`
+	Total    int    `json:"total"`
+	// Exercised is the routes that served at least one request, Unused those that served none. Read
+	// Unused with Counting: it means "never called" only when counting is exact.
+	Exercised int `json:"exercised"`
+	Unused    int `json:"unused"`
+	// WithErrors counts routes with a 5xx, WithClientErrors those with a 4xx.
+	WithErrors       int         `json:"with_errors"`
+	WithClientErrors int         `json:"with_client_errors"`
+	Documented       int         `json:"documented"`
+	Routes           []liveRoute `json:"routes"`
+	// Unmatched is the requests that ran the middleware chain and that no route served (a CORS
+	// preflight, the auto-served index page). They belong to no route above. A request for a path
+	// that is not routed at all never reaches the dashboard's middleware and is in no count.
+	Unmatched *liveRouteTraffic `json:"unmatched,omitempty"`
+	Notes     []string          `json:"notes,omitempty"`
 }
 
 func getRoutesTool() *tool {
@@ -151,10 +174,12 @@ func getRoutesTool() *tool {
 		name: "breeze_get_routes",
 		description: "List the routes a running service is serving, with each route's own summary and " +
 			"description as its author wrote them, plus live request counts, average and maximum " +
-			"latency, and error counts. Reads the dashboard's routes endpoint, so it reflects what " +
-			"the process is actually doing rather than what the source says. Reports which routes " +
-			"carry no documentation — those are also absent from the OpenAPI document. Requires " +
-			"the dashboard feature.",
+			"latency, and server-error and client-error counts. The counts are exact: the dashboard " +
+			"counts every request against its route, so a route with zero requests was never called " +
+			"(the report's counting field says when that does not hold). Reads the dashboard's routes " +
+			"endpoint, so it reflects what the process is actually doing rather than what the source " +
+			"says. Reports which routes carry no documentation — those are also absent from the " +
+			"OpenAPI document. Requires the dashboard feature.",
 		schema: objectSchema(liveProps(nil), "service_url"),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a liveArgs
@@ -172,7 +197,14 @@ func getRoutes(a liveArgs) toolCallResult {
 		return liveResultError("reading routes", err)
 	}
 
-	report := routesReport{ServiceURL: a.ServiceURL, Total: len(routes), Routes: routes}
+	// What a zero means depends on whether anything is counting, so that is read first.
+	traffic := readTraffic(a)
+	mode := countingOf(traffic)
+
+	report := routesReport{ServiceURL: a.ServiceURL, Counting: string(mode), Total: len(routes), Routes: routes}
+	if traffic != nil && traffic.Unmatched.Requests > 0 {
+		report.Unmatched = &traffic.Unmatched
+	}
 	for _, r := range routes {
 		if r.Requests > 0 {
 			report.Exercised++
@@ -182,29 +214,52 @@ func getRoutes(a liveArgs) toolCallResult {
 		if r.Errors > 0 {
 			report.WithErrors++
 		}
+		if r.ClientErrors > 0 {
+			report.WithClientErrors++
+		}
 		if r.Documented {
 			report.Documented++
 		}
 	}
 
-	// Said explicitly, because a listing of zeroes has two causes and the more
-	// surprising one is not "no traffic".
+	// Said explicitly, because a listing of zeroes has more than one cause and an agent that
+	// guessed would call a healthy service dead code, or a dead counter a quiet service.
 	//
-	// The dashboard middleware only accumulates per-route statistics for
-	// requests it captures in full, and to keep the hot path allocation-free it
-	// captures only when someone has the dashboard open, when the request was
-	// slower than SlowRequestMs, or when it failed. A service that has served
-	// ten thousand fast, successful requests with nobody watching therefore
-	// reports every route at zero. An agent that did not know this would report
-	// a healthy service as dead code, so the tool says it rather than leaving
-	// the caller to infer it.
-	if report.Total > 0 && report.Exercised == 0 {
-		report.Notes = append(report.Notes, "Every route reports zero requests. That may mean no traffic, "+
-			"but per-route statistics are only accumulated for requests the dashboard captures in full — "+
-			"those served while someone has the dashboard open, those slower than the configured "+
-			"slow_request_ms, and those that failed. Fast successful requests served with nobody watching "+
-			"are counted in the totals but not attributed to a route. Treat zero here as 'not measured', "+
-			"not as 'never called'.")
+	// The dashboard now counts every request against its route, so on a dashboard that is
+	// counting a zero is a fact: the route was not called. Where nothing is counting (the
+	// middleware was never created, or the dashboard is off) or the dashboard is an older build
+	// that attributed only the requests it kept in full, a zero says nothing about traffic, and
+	// the tool says which of those it is looking at.
+	switch mode {
+	case countingNotMeasured:
+		report.Notes = append(report.Notes, notCountingExplanation(traffic))
+	case countingPartial:
+		if report.Total > 0 && report.Exercised == 0 {
+			report.Notes = append(report.Notes, "Every route reports zero requests. This dashboard does not report "+
+				"exact counts (it has no traffic endpoint, or it could not be read), and an older dashboard "+
+				"attributes a request to its route only when it captured the request in full: while someone "+
+				"has the dashboard open, when it was slower than slow_request_ms, or when it failed. Fast "+
+				"successful requests served with nobody watching are counted in the totals but not attributed "+
+				"to a route. Treat zero here as 'not measured', not as 'never called'.")
+		}
+	case countingExact:
+		if report.Total > 0 && report.Exercised == 0 && traffic.Unmatched.Requests == 0 {
+			report.Notes = append(report.Notes, "No route has served a request since the dashboard started counting. "+
+				"The counts are exact, so this is 'no traffic', not 'not measured'. Requests refused before the "+
+				"dashboard's middleware runs (by a rate limiter or other middleware ordered ahead of it) are not "+
+				"counted.")
+		}
+		if traffic.Unmatched.Requests > 0 {
+			report.Notes = append(report.Notes, fmt.Sprintf("%d request(s) ran the middleware and matched no route (%d of them "+
+				"client errors): a CORS preflight, the auto-served index page. See the unmatched field; they belong to "+
+				"no route above.", traffic.Unmatched.Requests, traffic.Unmatched.ClientErrors))
+		}
+		// The framework answers a request for a path that no route serves before any middleware runs, so
+		// it is in no count and in no log. An agent chasing "clients get 404" has to be told, or it will
+		// read a zero as the absence of the problem.
+		report.Notes = append(report.Notes, "A request for a path that no route serves is answered by the framework before "+
+			"any middleware runs, so it is not counted here and does not appear in the logs either: these counts "+
+			"cover requests that matched a route (or a preflight).")
 	}
 
 	// Slowest first — the ordering someone asking about performance wants.
@@ -224,8 +279,13 @@ func getRoutes(a liveArgs) toolCallResult {
 			undocumented, report.Total))
 	}
 
-	summary := fmt.Sprintf("%d route(s): %d exercised, %d never called, %d with errors, %d documented",
-		report.Total, report.Exercised, report.Unused, report.WithErrors, report.Documented)
+	// "Never called" is a claim about traffic, so it is made only where the counts can support it.
+	idle := "never called"
+	if mode != countingExact {
+		idle = "not observed"
+	}
+	summary := fmt.Sprintf("%d route(s): %d exercised, %d %s, %d with server errors, %d with client errors, %d documented",
+		report.Total, report.Exercised, report.Unused, idle, report.WithErrors, report.WithClientErrors, report.Documented)
 	return structuredResult(summary, report)
 }
 
@@ -370,14 +430,36 @@ type liveRequestRecord struct {
 }
 
 type errorsReport struct {
-	ServiceURL string              `json:"service_url"`
+	ServiceURL string `json:"service_url"`
+	// Counting says how far to trust the counts: "exact" (the dashboard counts every request, so
+	// the exact block below is the whole picture and the records are a sample of it), "not_measured"
+	// (nothing is counting) or "partial" (an older dashboard that keeps only some failures).
+	Counting   string              `json:"counting"`
 	Scanned    int                 `json:"requests_scanned"`
 	Count      int                 `json:"count"`
 	ServerSide int                 `json:"server_errors"`
 	ClientSide int                 `json:"client_errors"`
 	ByRoute    map[string]int      `json:"by_route,omitempty"`
 	Errors     []liveRequestRecord `json:"errors"`
-	Notes      []string            `json:"notes,omitempty"`
+	// Exact is what the dashboard counted, of which the records above are a sample. The counts in
+	// ServerSide and ClientSide are of the records scanned; these are of every request.
+	Exact *exactFailures `json:"exact,omitempty"`
+	Notes []string       `json:"notes,omitempty"`
+}
+
+// exactFailures is the dashboard's own count of failures, and how many it did not keep in full.
+type exactFailures struct {
+	Requests     int64 `json:"requests"`
+	ServerErrors int64 `json:"server_errors"`
+	ClientErrors int64 `json:"client_errors"`
+	// NotRecorded is the failures counted and not stored as full records, the difference between
+	// this block and the records above.
+	NotRecorded int64 `json:"not_recorded"`
+	// Unmatched is the failures that no route served.
+	Unmatched liveRouteTraffic `json:"unmatched"`
+	// Routes are the routes with the most failures, worst first, at most ten.
+	Routes  []liveRouteTraffic `json:"routes"`
+	Capture liveCapturePolicy  `json:"capture"`
 }
 
 type recentErrorsArgs struct {
@@ -390,7 +472,10 @@ func getRecentErrorsTool() *tool {
 		name: "breeze_get_recent_errors",
 		description: "List the recent failed requests of a running service — status, path, matched " +
 			"route, duration, and timeline id — grouped by route so a repeated failure is " +
-			"visible as one problem. Separates 5xx from 4xx. Requires the dashboard feature.",
+			"visible as one problem. Separates 5xx from 4xx. The records are a sample (the dashboard " +
+			"keeps a failure in full up to a budget per route per window); the exact block beside them " +
+			"is the dashboard's own count of every failure, by route, with how many were not kept. " +
+			"Requires the dashboard feature.",
 		schema: objectSchema(liveProps(map[string]any{
 			"limit": map[string]any{
 				"type": "integer",
@@ -423,8 +508,12 @@ func getRecentErrors(a recentErrorsArgs) toolCallResult {
 		return liveResultError("reading recent errors", err)
 	}
 
+	traffic := readTraffic(a.liveArgs)
+	mode := countingOf(traffic)
+
 	report := errorsReport{
 		ServiceURL: a.ServiceURL,
+		Counting:   string(mode),
 		Scanned:    len(records),
 		Errors:     make([]liveRequestRecord, 0),
 		ByRoute:    map[string]int{},
@@ -452,25 +541,77 @@ func getRecentErrors(a recentErrorsArgs) toolCallResult {
 	}
 	report.Count = len(report.Errors)
 
-	// What the dashboard keeps decides what this tool can see, and the caller cannot tell
-	// an empty answer from an unobserved one. The middleware counts every request but
-	// records one in full only while someone has the dashboard open, when it was slower
-	// than slow_request_ms, or when it failed with a 5xx (see shouldCaptureFullRecord).
-	// A 404 or a validation failure served with nobody watching is counted and not kept.
-	// An agent told "no client-side errors" would conclude the service's clients are
-	// behaving, and one told the middleware might be missing would go looking for a fault
-	// that is not there while the real cause is the policy.
-	switch {
-	case report.Scanned == 0:
-		report.Notes = append(report.Notes, "The dashboard holds no request records, so this is not evidence that the "+
-			"service is error-free. It records a request in full only while someone has the dashboard open, when the "+
-			"request was slower than slow_request_ms, or when it failed with a 5xx: a fast success or a 4xx served "+
-			"with nobody watching is counted in the totals and not kept. If traffic should have produced records, "+
-			"check that the dashboard middleware is installed and that the traffic reached this service.")
-	case report.ClientSide == 0:
-		report.Notes = append(report.Notes, "No client-side (4xx) failures were found, which does not rule them out: the "+
-			"dashboard keeps a 4xx only while someone has the dashboard open or when it was slow, and counts the rest "+
-			"without recording them. 5xx failures are always kept.")
+	// What the dashboard keeps decides what this tool can see, and the caller cannot tell an
+	// empty answer from an unobserved one, so the notes say which this is.
+	//
+	// A dashboard that counts exactly gives the tool two views of failures: the records, which are a
+	// sample (a failure is kept in full up to a budget per route per window, so that a flood of one
+	// cannot evict everything else), and the counts, which are complete. An agent told "ten 404s"
+	// could not otherwise know whether that was ten or ten thousand, and one told "no 4xx" could not
+	// tell a quiet service from a policy that kept none.
+	switch mode {
+	case countingNotMeasured:
+		report.Notes = append(report.Notes, notCountingExplanation(traffic))
+
+	case countingPartial:
+		// An older dashboard keeps a 5xx always, a 4xx only while watched or slow, and has no counts.
+		switch {
+		case report.Scanned == 0:
+			report.Notes = append(report.Notes, "The dashboard holds no request records, so this is not evidence that the "+
+				"service is error-free. This dashboard has no exact counts (it has no traffic endpoint, or it could not "+
+				"be read) and records a request in full only while someone has the dashboard open, when the request "+
+				"was slower than slow_request_ms, or when it failed with a 5xx: a fast success or a 4xx served with "+
+				"nobody watching is counted in the totals and not kept. If traffic should have produced records, "+
+				"check that the dashboard middleware is installed and that the traffic reached this service.")
+		case report.ClientSide == 0:
+			report.Notes = append(report.Notes, "No client-side (4xx) failures were found, which does not rule them out: this "+
+				"dashboard keeps a 4xx only while someone has the dashboard open or when it was slow, and counts the "+
+				"rest without recording them. 5xx failures are always kept.")
+		}
+
+	case countingExact:
+		exact := &exactFailures{
+			Requests:     traffic.Requests,
+			ServerErrors: traffic.ServerErrors,
+			ClientErrors: traffic.ClientErrors,
+			Unmatched:    traffic.Unmatched,
+			NotRecorded:  traffic.Unmatched.NotRecorded,
+			Routes:       traffic.Routes,
+			Capture:      traffic.Capture,
+		}
+		for _, r := range traffic.Routes {
+			exact.NotRecorded += r.NotRecorded
+		}
+		if len(exact.Routes) > 10 {
+			exact.Routes = exact.Routes[:10]
+		}
+		if exact.Routes == nil {
+			exact.Routes = []liveRouteTraffic{}
+		}
+		report.Exact = exact
+
+		failures := traffic.ClientErrors + traffic.ServerErrors
+		switch {
+		case traffic.Requests == 0:
+			report.Notes = append(report.Notes, "The dashboard has counted no requests yet, so there is nothing to report: this is "+
+				"not evidence that the service is error-free, only that nothing has reached the dashboard's middleware.")
+		case failures == 0:
+			report.Notes = append(report.Notes, fmt.Sprintf("The dashboard has counted %d request(s) and none failed: no 4xx and no 5xx. "+
+				"The counts are exact, so this is evidence that the service has not failed a request it served, with one "+
+				"limit: a request refused before the dashboard's middleware runs (by a rate limiter, CORS or security "+
+				"middleware ordered ahead of it) is not counted.", traffic.Requests))
+		default:
+			report.Notes = append(report.Notes, captureSentence(traffic.Capture))
+			if exact.NotRecorded > 0 {
+				report.Notes = append(report.Notes, fmt.Sprintf("%d of the %d failure(s) counted were not kept in full: a route's budget "+
+					"for the window was spent. The records above are a sample; exact.routes lists each route's exact counts.",
+					exact.NotRecorded, failures))
+			}
+			if report.Scanned == 0 {
+				report.Notes = append(report.Notes, "The dashboard counted failures but holds no records of them (the ring buffer "+
+					"was overwritten, or they were sampled out); the exact block is the evidence here.")
+			}
+		}
 	}
 
 	summary := fmt.Sprintf("%d failed request(s) out of %d scanned: %d server-side, %d client-side",

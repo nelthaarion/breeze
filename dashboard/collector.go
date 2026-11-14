@@ -67,6 +67,15 @@ type Collector struct {
 	routeStatsMu sync.RWMutex
 	routeStats   map[string]*routeStatAccumulator
 
+	// routeIdx resolves a request to its route on the request path, and unmatched is where
+	// a request no route served is counted. instrumented records that Middleware was created
+	// for this collector, which is how the traffic endpoint tells "no requests were seen" from
+	// "nothing is counting". See routeindex.go.
+	routeIdx     atomic.Pointer[routeIndex]
+	routeIdxMu   sync.Mutex
+	unmatched    *routeEntry
+	instrumented atomic.Bool
+
 	// Counters.
 	//
 	// requestsTotal is bumped on every request from every event loop at
@@ -189,7 +198,10 @@ type routeStatAccumulator struct {
 	totalDurUS  atomic.Int64 // sum of durations in microseconds
 	maxDurUS    atomic.Int64
 	lastRequest atomic.Int64 // unix nanos
-	errors      atomic.Int64
+	errors      atomic.Int64 // server errors: status 500 and above
+	// clientErrors counts status 400 to 499. Kept apart from errors so the existing
+	// meaning of errors (a failure of the service) is unchanged.
+	clientErrors atomic.Int64
 }
 
 // HealthCheckFunc is a named probe returning a status string ("green",
@@ -212,6 +224,7 @@ func newCollector(cfg Config, router *breeze.Router) *Collector {
 		logsWarn:    newRingBuffer[LogEntry](cfg.MaxLogs),
 		metrics:     newRingBuffer[MetricsSnapshot](600), // 10min @ 1Hz
 		routeStats:  make(map[string]*routeStatAccumulator),
+		unmatched:   newUnmatchedEntry(),
 		jobs:        make(map[string]*QueueJob),
 		tasks:       make(map[string]*SchedulerTask),
 		checks:      make(map[string]HealthCheckFunc),
@@ -582,6 +595,12 @@ func (c *Collector) RouteStats() []RouteStat {
 	out := make([]RouteStat, 0, len(c.routeStats))
 	for _, acc := range c.routeStats {
 		reqs := acc.requests.Load()
+		// A route nothing has asked for is not reported here: the routes endpoint lists
+		// those from the router's own table, which is also what keeps a static mount that
+		// has never been read out of its listing.
+		if reqs == 0 {
+			continue
+		}
 		dur := acc.totalDurUS.Load()
 		avg := 0.0
 		if reqs > 0 {
@@ -601,6 +620,7 @@ func (c *Collector) RouteStats() []RouteStat {
 			MaxLatencyMS: float64(acc.maxDurUS.Load()) / 1000.0,
 			LastRequest:  last,
 			Errors:       acc.errors.Load(),
+			ClientErrors: acc.clientErrors.Load(),
 		})
 	}
 	return out

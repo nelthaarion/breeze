@@ -220,6 +220,11 @@ func setupDashboard(app *breeze.Breeze, router *breeze.Router) {
 				if !ctx.HasEvents {
 					notes = append(notes, "No events block found, so the live Events page stays empty. Run `breeze add events`, then re-run `breeze add dashboard` to wire them together.")
 				}
+				if ctx.HasRatelimit {
+					notes = append(notes, "The rate limiter is registered before the dashboard, so the dashboard's HTTP API is limited like any route "+
+						"and a request the limiter rejects is not counted by the dashboard. An MCP endpoint embedded in the service "+
+						"(breeze add mcp) reads the dashboard in memory and is not rate limited.")
+				}
 				return featureOutput{Body: body, Notes: notes}, nil
 			}
 		},
@@ -232,7 +237,7 @@ func registerWorkflow() {
 		Summary:   "durable multi-step workflow engine with retries and compensation",
 		Priority:  200,
 		Imports:   []string{workflowImport, timeImport, contextImport, logImport},
-		DependsOn: []string{"events", "observability"},
+		DependsOn: []string{"events", "observability", "dashboard"},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
 			workers := fs.Int("workers", 0, "max concurrent step workers (0 = one per CPU)")
 			shutdown := fs.Duration("shutdown-timeout", 0, "how long Shutdown waits for in-flight runs (default 30s)")
@@ -256,7 +261,32 @@ func registerWorkflow() {
 				if ctx.HasEvents {
 					cfg.WriteString("\t\tBus:             EventBus,\n")
 				}
-				if ctx.HasObservability {
+				// The engine publishes one observability signal per run, with its steps as spans,
+				// straight into a collector and not over the bus. Which collector decides whether the
+				// run is visible: the dashboard reads its own, created when it attached to the bus,
+				// not the one the observability block builds, so an engine pointed at ObsCollector in
+				// a project with a dashboard published every run into a collector nothing reads and
+				// breeze_get_signals source=workflow stayed empty while workflows ran (found running a
+				// generated application: the bus events were recorded, the run signals were not).
+				// dashboard.Collector.Observability documents this requirement; the generator did not
+				// follow it.
+				//
+				// The dashboard has a collector only once it has attached to a bus, so the choice is
+				// made when the block runs and not when it is generated: the dashboard's, and where it
+				// has none, the observability block's.
+				collectorPrelude := ""
+				switch {
+				case ctx.HasDashboard && ctx.HasObservability:
+					collectorPrelude = "\t// Publish runs where the dashboard reads them: its collector, which exists once it has\n" +
+						"\t// attached to the event bus, and otherwise the observability block's.\n" +
+						"\tobs := DashboardCollector.Observability()\n\tif obs == nil {\n\t\tobs = ObsCollector\n\t}\n\n"
+					cfg.WriteString("\t\tCollector:       obs,\n")
+				case ctx.HasDashboard:
+					collectorPrelude = "\t// Publish runs where the dashboard reads them: its collector, which exists once it has\n" +
+						"\t// attached to the event bus (nil before that, which the engine reads as its default).\n" +
+						"\tobs := DashboardCollector.Observability()\n\n"
+					cfg.WriteString("\t\tCollector:       obs,\n")
+				case ctx.HasObservability:
 					cfg.WriteString("\t\tCollector:       ObsCollector,\n")
 				}
 				cfg.WriteString(workersLine)
@@ -269,7 +299,7 @@ func registerWorkflow() {
 var WorkflowEngine *workflow.Engine
 
 func setupWorkflow(app *breeze.Breeze, router *breeze.Router) {
-	WorkflowEngine = workflow.NewEngine(workflow.Config{
+%s	WorkflowEngine = workflow.NewEngine(workflow.Config{
 %s	})
 
 	// Register your definitions here. Register returns an error for a
@@ -294,7 +324,7 @@ func ShutdownWorkflow() {
 	if err := WorkflowEngine.Shutdown(ctx); err != nil {
 		log.Printf("workflow: shutdown: %%v", err)
 	}
-}`, cfg.String(), timeout)
+}`, collectorPrelude, cfg.String(), timeout)
 
 				notes := []string{
 					"Call ShutdownWorkflow() on your shutdown path â€” in-flight runs are dropped otherwise.",

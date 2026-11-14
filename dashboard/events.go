@@ -403,18 +403,25 @@ type eventTotals struct {
 // rather than an error, so the page can render a clear explanation
 // instead of a failed request.
 func (c *Collector) handleEvents(ctx *breeze.Context) error {
+	return ctx.JSON(c.eventsView(ctx))
+}
+
+// eventsView is what the events endpoint serves, shaped by the query. The handler and
+// the in-process reader (local.go) both call it, so the observability signals an MCP
+// endpoint reads from memory are exactly the ones the Events page is given.
+func (c *Collector) eventsView(params query) eventsPayload {
 	col := c.eventsCollector()
 	if col == nil {
-		return ctx.JSON(eventsPayload{
+		return eventsPayload{
 			Attached: false,
 			Recent:   []eventRow{},
 			Metrics:  []eventMetric{},
 			Graph:    []observability.GraphNode{},
-		})
+		}
 	}
 
 	limit := 200
-	if v := ctx.Query("limit"); v != "" {
+	if v := params.Query("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			// Capped so a hand-edited URL cannot ask for an unbounded
 			// response.
@@ -426,15 +433,15 @@ func (c *Collector) handleEvents(ctx *breeze.Context) error {
 	}
 
 	q := observability.Query{
-		Name:         ctx.Query("name"),
-		NameContains: ctx.Query("q"),
-		FailedOnly:   ctx.Query("failed") == "1" || ctx.Query("failed") == "true",
+		Name:         params.Query("name"),
+		NameContains: params.Query("q"),
+		FailedOnly:   params.Query("failed") == "1" || params.Query("failed") == "true",
 		Limit:        limit,
 		Newest:       true,
 	}
 	// An empty or "all" source means no restriction, so the filter
 	// degrades to the previous behaviour rather than matching nothing.
-	if src := ctx.Query("source"); src != "" && src != "all" {
+	if src := params.Query("source"); src != "" && src != "all" {
 		q.Source = observability.Source(src)
 	}
 
@@ -470,7 +477,7 @@ func (c *Collector) handleEvents(ctx *breeze.Context) error {
 		graph = []observability.GraphNode{}
 	}
 
-	return ctx.JSON(eventsPayload{
+	return eventsPayload{
 		Attached: true,
 		Recent:   rows,
 		Metrics:  mrows,
@@ -485,5 +492,5 @@ func (c *Collector) handleEvents(ctx *breeze.Context) error {
 			DistinctEvents: len(col.Names()),
 			RatePerSec:     col.Rate(time.Minute),
 		},
-	})
+	}
 }

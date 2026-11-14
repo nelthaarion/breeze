@@ -26,6 +26,7 @@ package mcp
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -34,6 +35,7 @@ import (
 	"time"
 
 	"github.com/nelthaarion/breeze/v2/client"
+	"github.com/nelthaarion/breeze/v2/internal/livesource"
 )
 
 // liveTimeout bounds one call to a service.
@@ -50,6 +52,14 @@ type liveRequest struct {
 	baseURL string
 	// path is the absolute path to fetch, including any query.
 	path string
+	// apiPath is the endpoint below the dashboard's /api, without the base and without
+	// the query: the name an in-process reader knows the endpoint by.
+	apiPath string
+	// local, when set, answers the call from this process's own dashboard collector
+	// instead of over HTTP. It is set only by an embedded server, for a call that named
+	// no service_url; see embedded_live.go. Everything else about the request (what is
+	// asked, how the answer is decoded and shaped) is unchanged.
+	local livesource.Reader
 	// token, when set, is sent as X-Fleet-Token. Only the endpoints wrapped by
 	// the dashboard's wrapService accept it — the logs endpoint is the one that
 	// matters here — and the Fleet aggregator uses the same header.
@@ -150,6 +160,10 @@ func normaliseBaseURL(raw string) (string, error) {
 // is not JSON at all means whatever answered is not one of these endpoints, and
 // saying so is far more useful than reporting an empty result.
 func fetchLiveJSON(req liveRequest, dst any) *liveError {
+	if req.local != nil {
+		return fetchLocalJSON(req, dst)
+	}
+
 	base, err := normaliseBaseURL(req.baseURL)
 	if err != nil {
 		return &liveError{Kind: "malformed", Message: err.Error()}
@@ -221,9 +235,9 @@ func fetchLiveJSON(req liveRequest, dst any) *liveError {
 			Message: fmt.Sprintf("%s returned 429: %s.%s The service's own rate limiter rejected this call: the "+
 				"dashboard's API is behind the same limiter as the application's routes, so it is refused when the "+
 				"service is being asked for more than it allows. Wait for the window to reset and retry. Where the "+
-				"service has an in-process MCP endpoint, breeze_diagnose_service with no service_url reads the "+
-				"diagnostic registry directly and is not rate limited; its ratelimit subsystem reports how many "+
-				"requests were rejected.", target, bodyExcerpt(resp.Body), retry),
+				"service has an in-process MCP endpoint, call this tool on that endpoint with no service_url: it "+
+				"reads the dashboard's collector in memory and is not rate limited, and neither is "+
+				"breeze_diagnose_service, whose ratelimit subsystem reports how many requests were rejected.", target, bodyExcerpt(resp.Body), retry),
 		}
 
 	case resp.Status < 200 || resp.Status > 299:
@@ -246,6 +260,51 @@ func fetchLiveJSON(req liveRequest, dst any) *liveError {
 		}
 	}
 
+	return nil
+}
+
+// fetchLocalJSON answers a call from the collector in this process and decodes the
+// payload into dst the way the HTTP path decodes a response body.
+//
+// The value is marshalled and unmarshalled rather than copied into dst because that is
+// what makes the two transports one: the HTTP path decodes the JSON an endpoint wrote, and
+// so does this, with the same types, so a field the mirror types do not declare (an event's
+// payload, left out on purpose) is left out here too. The cost is one encode and one decode
+// of a value already in memory, on a tool an agent calls a few times a minute.
+//
+// None of the HTTP failures can happen here: there is no listener to be closed, no
+// credential to be wrong, and no limiter to refuse the call. A reader that cannot answer
+// says so with the status the endpoint would have used.
+func fetchLocalJSON(req liveRequest, dst any) *liveError {
+	var values url.Values
+	if i := strings.IndexByte(req.path, '?'); i >= 0 {
+		parsed, err := url.ParseQuery(req.path[i+1:])
+		if err != nil {
+			return &liveError{Kind: "malformed", Message: fmt.Sprintf("the query %q is not valid: %v", req.path[i+1:], err)}
+		}
+		values = parsed
+	}
+
+	payload, err := req.local.Read(req.apiPath, values)
+	if err != nil {
+		var rerr *livesource.Error
+		if errors.As(err, &rerr) && rerr.Status == 404 {
+			if req.notFound != "" {
+				return &liveError{Kind: "missing", Message: req.notFound}
+			}
+			return &liveError{Kind: "missing", Message: fmt.Sprintf("this process's dashboard has no %s endpoint: %s",
+				req.feature, rerr.Message)}
+		}
+		return &liveError{Kind: "status", Message: fmt.Sprintf("reading %s from this process's dashboard: %v", req.apiPath, err)}
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return &liveError{Kind: "malformed", Message: fmt.Sprintf("this process's dashboard produced %s data that cannot be encoded: %v", req.apiPath, err)}
+	}
+	if err := json.Unmarshal(body, dst); err != nil {
+		return &liveError{Kind: "malformed", Message: fmt.Sprintf("this process's dashboard produced %s data in a shape this tool does not read: %v", req.apiPath, err)}
+	}
 	return nil
 }
 

@@ -3,7 +3,12 @@
 // Environment:
 //
 //	FLEET_PORT (9000), FLEET_BASE_PATH (/fleet), FLEET_USERNAME,
-//	FLEET_PASSWORD, FLEET_INGEST_TOKEN.
+//	FLEET_PASSWORD, FLEET_INGEST_TOKEN, FLEET_SERVICE_TOKEN,
+//	FLEET_FETCH_ALLOWED_HOSTS, FLEET_SERVICE_TTL.
+//
+// FLEET_SERVICE_TTL is how long a service may go without a heartbeat before the registry
+// reports it down, as a Go duration ("30s", "2m"); the default is 15s. The registry forgets
+// a service that has been silent for twenty times that.
 package main
 
 import (
@@ -13,6 +18,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nelthaarion/breeze/v2"
 	"github.com/nelthaarion/breeze/v2/fleet/aggregator"
@@ -42,6 +48,10 @@ func main() {
 	if hosts := os.Getenv("FLEET_FETCH_ALLOWED_HOSTS"); hosts != "" {
 		cfg.FetchAllowedHosts = strings.Split(hosts, ",")
 	}
+	if err := applyServiceTTL(&cfg, os.Getenv); err != nil {
+		fmt.Fprintln(os.Stderr, "fleet-aggregator:", err)
+		os.Exit(2)
+	}
 	cfg.TransportsEnabled = []string{"events", "http", "ws"}
 	cfg.Logger = func(level, message, source string) { fmt.Printf("[%s] %s: %s\n", level, source, message) }
 	agg := aggregator.InstallAggregator(app, router, cfg)
@@ -58,6 +68,28 @@ func main() {
 
 	fmt.Printf("Breeze Fleet Aggregator listening on :%d%s\n", port, cfg.BasePath)
 	app.Run(port, true)
+}
+
+// applyServiceTTL sets cfg.ServiceTTL from FLEET_SERVICE_TTL.
+//
+// It was not settable at all: a deployment whose services heartbeat every minute was marked down
+// four times in five at the 15 second default, and one that wanted a fast failure signal could not
+// have it. An unset variable leaves the default. A set one that is not a positive duration stops
+// the process, because a liveness window that silently reverts to the default is one nobody chose.
+func applyServiceTTL(cfg *aggregator.Config, getenv func(string) string) error {
+	v := strings.TrimSpace(getenv("FLEET_SERVICE_TTL"))
+	if v == "" {
+		return nil
+	}
+	ttl, err := time.ParseDuration(v)
+	if err != nil {
+		return fmt.Errorf("FLEET_SERVICE_TTL=%q is not a duration such as 30s or 2m: %v", v, err)
+	}
+	if ttl <= 0 {
+		return fmt.Errorf("FLEET_SERVICE_TTL=%q must be positive", v)
+	}
+	cfg.ServiceTTL = ttl
+	return nil
 }
 
 func env(key, fallback string) string {

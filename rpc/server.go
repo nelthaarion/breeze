@@ -1,10 +1,13 @@
 package rpc
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/nelthaarion/gnetplus/v2"
@@ -74,6 +77,12 @@ type Server struct {
 	// for as long as the listener lives, so reaching the end of it means the listener is
 	// gone: it never bound, or it was shut down. See the probe for why that is recorded.
 	runEnded atomic.Pointer[runEnd]
+
+	// listenAddr is the gnet address the listener was last asked to bind, and fellBack records that
+	// it is not the one the caller's host implied: an all-interfaces listener that had to settle for
+	// IPv4 because the host has no IPv6.
+	listenAddr atomic.Pointer[string]
+	fellBack   atomic.Bool
 
 	// noDiagnostics keeps this server out of the "jsonrpc" diagnostic. See WithoutDiagnostics.
 	noDiagnostics bool
@@ -420,6 +429,10 @@ func (s *Server) OnClose(c gnetplus.Conn, err error) gnetplus.Action {
 	return gnetplus.None
 }
 
+// gnetRun is gnetplus.Run. It is a variable so a test can make the first bind fail the way a host
+// without IPv6 does, which no test machine reliably is.
+var gnetRun = gnetplus.Run
+
 // Run starts the server on the given TCP port.
 //
 // The gnet options match Breeze.Run: one read buffer per event loop sized for a
@@ -432,21 +445,39 @@ func (s *Server) Run(port int, multiCore bool) error {
 
 // RunOn starts the JSON-RPC server on host:port. An empty host preserves the
 // historical behavior of listening on all interfaces.
+//
+// All interfaces means the dual-stack wildcard where the host has IPv6, and IPv4 on every
+// interface where it does not. The wildcard is asked for first because that is what an empty host
+// has always meant, and it is what an IPv6 client of an existing deployment relies on. A host with
+// no IPv6 stack refuses the socket outright ("address family not supported by protocol") before
+// anything is bound, and the listener then never existed: this port was dead on such hosts while
+// the HTTP server, which binds tcp4, served normally and nothing but the probe said otherwise. The
+// fallback is the same all-interfaces on the one family the host has. A named host is bound as
+// given and never retried: a caller who names one means it.
 func (s *Server) RunOn(host string, port int, multiCore bool) error {
 	s.listenPort.Store(int64(port))
 	h := host
 	s.listenHost.Store(&h)
 	s.runEnded.Store(nil)
+	s.fellBack.Store(false)
 
-	err := gnetplus.Run(
-		s,
-		"tcp://"+net.JoinHostPort(host, strconv.Itoa(port)),
+	opts := []gnetplus.Option{
 		gnetplus.WithTCPNoDelay(gnetplus.TCPNoDelay),
 		gnetplus.WithMulticore(multiCore),
 		gnetplus.WithLoadBalancing(gnetplus.RoundRobin),
-		gnetplus.WithReadBufferCap(64<<10),
-		gnetplus.WithWriteBufferCap(64<<10),
-	)
+		gnetplus.WithReadBufferCap(64 << 10),
+		gnetplus.WithWriteBufferCap(64 << 10),
+	}
+
+	addr := "tcp://" + net.JoinHostPort(host, strconv.Itoa(port))
+	s.listenAddr.Store(&addr)
+	err := gnetRun(s, addr, opts...)
+	if err != nil && host == "" && addressFamilyUnsupported(err) {
+		addr = "tcp4://" + net.JoinHostPort("0.0.0.0", strconv.Itoa(port))
+		s.listenAddr.Store(&addr)
+		s.fellBack.Store(true)
+		err = gnetRun(s, addr, opts...)
+	}
 
 	// Recorded because the caller is usually a goroutine whose only report is a log line,
 	// and a listener that failed to bind leaves a process that looks healthy and answers
@@ -457,6 +488,16 @@ func (s *Server) RunOn(host string, port int, multiCore bool) error {
 	}
 	s.runEnded.Store(&runEnd{at: time.Now(), reason: reason})
 	return err
+}
+
+// addressFamilyUnsupported reports whether err says the host has no such address family: an
+// IPv6 wildcard asked of a kernel without IPv6. gnet wraps what the socket call returned, and not
+// always so that errors.Is can see through it, so the text is checked as well.
+func addressFamilyUnsupported(err error) bool {
+	if errors.Is(err, syscall.EAFNOSUPPORT) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "address family not supported")
 }
 
 // runEnd is how a listener ended: when, and the error gnet returned or a note that it was

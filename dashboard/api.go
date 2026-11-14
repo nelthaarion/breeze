@@ -61,6 +61,7 @@ func jsonError(ctx *breeze.Context, status int, message string) error {
 //	GET  /dashboard/api/logs         → Logs (level param)
 //	GET  /dashboard/api/health       → Health checks
 //	GET  /dashboard/api/performance  → Runtime performance
+//	GET  /dashboard/api/traffic      → Exact request counts by route and status class
 //	GET  /dashboard/api/timeline     → Recent timelines
 //	GET  /dashboard/api/timeline/:id → Single timeline by ID
 //	GET  /dashboard/api/diagnostics  → Every subsystem's diagnostic report
@@ -296,6 +297,7 @@ func (c *Collector) registerAPIRoutes(router *breeze.Router, base string, auth b
 
 	router.HandleBlocking(breeze.GET, api+"/health", c.wrap(auth, c.handleHealth))
 	router.HandleBlocking(breeze.GET, api+"/performance", c.wrap(auth, c.handlePerformance))
+	router.HandleBlocking(breeze.GET, api+"/traffic", c.wrap(auth, c.handleTraffic))
 	router.HandleBlocking(breeze.GET, api+"/timeline", c.wrap(auth, c.handleTimelineList))
 	router.HandleBlocking(breeze.GET, api+"/timeline/:id", c.wrap(auth, c.handleTimelineGet))
 	router.HandleBlocking(breeze.GET, api+"/architecture", c.wrap(auth, c.handleArchitecture))
@@ -453,6 +455,17 @@ func (c *Collector) handleOverview(ctx *breeze.Context) error {
 // a real defect and it is invisible from the outside, so the join reports which
 // routes it could not find rather than silently returning blank summaries.
 func (c *Collector) handleRoutes(ctx *breeze.Context) error {
+	return ctx.JSON(c.routesPayload())
+}
+
+// routesPayload is what the routes endpoint serves: every application route with
+// its documentation and, where it has been measured, its traffic.
+//
+// A function of its own, not the body of the handler, because the handler is no
+// longer the only reader. An MCP endpoint embedded in this process answers the same
+// question from this function (see local.go), so the shaping is written once and the
+// two transports cannot describe the same service differently.
+func (c *Collector) routesPayload() []RouteStat {
 	base := strings.TrimSuffix(c.cfg.BasePath, "/")
 	if base == "" {
 		base = "/dashboard"
@@ -501,7 +514,7 @@ func (c *Collector) handleRoutes(ctx *breeze.Context) error {
 			stats = append(stats, stat)
 		}
 	}
-	return ctx.JSON(stats)
+	return stats
 }
 
 // describeRoute fills a RouteStat's documentation fields from the registry.
@@ -521,11 +534,16 @@ func describeRoute(stat *RouteStat, docs map[string]scalar.RouteDoc) {
 }
 
 func (c *Collector) handleRequests(ctx *breeze.Context) error {
-	n := atoiDefault(ctx.Query("limit"), 200)
-	method := ctx.Query("method")
-	status := ctx.Query("status")
-	route := ctx.Query("route")
-	user := ctx.Query("user")
+	return ctx.JSON(c.requestsPayload(ctx))
+}
+
+// requestsPayload is what the requests endpoint serves, filtered by the query.
+func (c *Collector) requestsPayload(q query) []RequestRecord {
+	n := atoiDefault(q.Query("limit"), 200)
+	method := q.Query("method")
+	status := q.Query("status")
+	route := q.Query("route")
+	user := q.Query("user")
 	all := c.Requests(n)
 	out := make([]RequestRecord, 0, len(all))
 	for _, r := range all {
@@ -543,7 +561,7 @@ func (c *Collector) handleRequests(ctx *breeze.Context) error {
 		}
 		out = append(out, r)
 	}
-	return ctx.JSON(out)
+	return out
 }
 
 func (c *Collector) handleQueries(ctx *breeze.Context) error {
@@ -588,17 +606,23 @@ func (c *Collector) handleCacheClear(ctx *breeze.Context) error {
 }
 
 func (c *Collector) handleLogs(ctx *breeze.Context) error {
-	level := ctx.Query("level")
+	return ctx.JSON(c.logsPayload(ctx))
+}
+
+// logsPayload is what the logs endpoint serves: one tab, newest lines within the
+// limit, narrowed by a substring and/or a trace id.
+func (c *Collector) logsPayload(params query) []LogEntry {
+	level := params.Query("level")
 
 	if level == "" {
 		level = "app"
 	}
-	n := atoiDefault(ctx.Query("limit"), 500)
-	q := ctx.Query("q")
-	traceID := ctx.Query("trace_id")
+	n := atoiDefault(params.Query("limit"), 500)
+	q := params.Query("q")
+	traceID := params.Query("trace_id")
 	all := c.Logs(level, n)
 	if q == "" && traceID == "" {
-		return ctx.JSON(all)
+		return all
 	}
 	out := make([]LogEntry, 0, len(all))
 	for _, e := range all {
@@ -609,7 +633,7 @@ func (c *Collector) handleLogs(ctx *breeze.Context) error {
 			out = append(out, e)
 		}
 	}
-	return ctx.JSON(out)
+	return out
 }
 
 func (c *Collector) handleCapabilities(ctx *breeze.Context) error {
@@ -656,12 +680,18 @@ func (c *Collector) handleHealth(ctx *breeze.Context) error {
 }
 
 func (c *Collector) handlePerformance(ctx *breeze.Context) error {
+	return ctx.JSON(c.performancePayload())
+}
+
+// performancePayload is what the performance endpoint serves: the runtime's numbers
+// now, and the sampled history behind them.
+func (c *Collector) performancePayload() map[string]any {
 	hist := c.MetricsHistory(120)
 	pm := buildPerfMetrics(c)
-	return ctx.JSON(map[string]any{
+	return map[string]any{
 		"current": pm,
 		"history": hist,
-	})
+	}
 }
 
 func (c *Collector) handleTimelineList(ctx *breeze.Context) error {
@@ -680,6 +710,12 @@ func (c *Collector) handleTimelineGet(ctx *breeze.Context) error {
 }
 
 func (c *Collector) handleArchitecture(ctx *breeze.Context) error {
+	return ctx.JSON(c.architecturePayload())
+}
+
+// architecturePayload is what the architecture endpoint serves: the connections the
+// application declared, with their status, and the counts by status.
+func (c *Collector) architecturePayload() map[string]any {
 	conns := c.Connections()
 
 	// Aggregate stats
@@ -701,14 +737,14 @@ func (c *Collector) handleArchitecture(ctx *breeze.Context) error {
 		}
 	}
 
-	return ctx.JSON(map[string]any{
+	return map[string]any{
 		"connections":  conns,
 		"total":        total,
 		"connected":    connected,
 		"degraded":     degraded,
 		"disconnected": disconnected,
 		"unknown":      unknown,
-	})
+	}
 }
 
 func (c *Collector) handleDBTables(ctx *breeze.Context) error {

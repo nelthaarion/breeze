@@ -52,7 +52,20 @@ The dashboard provides **14 pages** grouped into Monitor / Develop / System sect
 Real-time cards for: Requests Today, Requests/sec, Avg Response Time, Error Rate, Active Sessions, DB Connections, Cache Hit Ratio, Queue Jobs, Goroutines, Heap Allocation, Memory System, CPU Usage. Plus four live charts (RPS, Latency, Memory, Goroutines) updated over WebSocket at 1 Hz.
 
 #### 2. Live Requests
-Every incoming request is captured and displayed with: Time, Method, Path, Status, Duration, IP, User, Response Size, and a link to the per-request timeline. Filters by Method / Status / Route / User. Slow requests (>500ms) are highlighted in red.
+Requests are shown with: Time, Method, Path, Status, Duration, IP, User, Response Size, and a link to the per-request timeline. Filters by Method / Status / Route / User. Slow requests (>500ms) are highlighted in red.
+
+**Every request is counted; not every request is kept.** The middleware counts each request against the route that served it and its status class (exact, no allocation), and keeps a full record only when it is worth one:
+
+| Request | Counted | Kept as a full record |
+|---|---|---|
+| 2xx / 3xx, fast | yes | no, unless someone has the dashboard open |
+| slower than `slow_request_ms` | yes | yes |
+| 4xx / 5xx | yes | yes, up to 20 client errors and 100 server errors per route per 10-second window; the rest are counted and reported as *not recorded* |
+| any, while a browser has the dashboard open | yes | yes |
+
+The budget exists so that a flood of one failure (a client enumerating ids that do not exist, a retry loop, a bad deploy answering 500 everywhere) cannot evict everything else from the ring buffer or make the middleware allocate per request. `GET /dashboard/api/traffic` reports the exact counts, the budgets and how much was not kept; the Routes page and `breeze_get_routes` show the exact per-route counts.
+
+Two kinds of request are in no count. A request for a path that no route serves is answered by the framework before any middleware runs, and a request refused by middleware ordered *before* the dashboard's (a rate limiter, in the generated order) never reaches it. A request counts only if it reached the dashboard's middleware.
 
 #### 3. Developer Timeline (the headline feature)
 Each request generates a hierarchical timeline showing every phase: Request Received → Middleware → Authentication → Cache → ORM Query → Controller → JSON Serialization → Response. Each step shows start/end timestamps, duration, and arbitrary metadata. Slow steps (>100ms) are flagged.

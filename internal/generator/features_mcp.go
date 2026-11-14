@@ -76,8 +76,13 @@ func registerMCPFeature() {
 					"The binary grows by several megabytes: the mcp package links the generator and the verification tools, whether or not an agent ever calls them.",
 				}
 				if !ctx.HasDashboard {
-					notes = append(notes, "No dashboard block yet: most of the endpoint's tools read this service's dashboard. "+
-						"Run `breeze add dashboard` so they have something to read.")
+					notes = append(notes, "No dashboard block yet: the tools that read routes, errors, logs, signals, health and performance "+
+						"read this service's dashboard, and without one in the process they answer that there is nothing to read. "+
+						"Only breeze_diagnose_service and the Fleet tools work. Run `breeze add dashboard` so the rest have something to read.")
+				} else {
+					notes = append(notes, "With the dashboard in the same process those tools read its collector in memory when called without a "+
+						"service_url: no credentials are needed, and the application's own rate limiter cannot refuse the call, which matters "+
+						"most while the service is rejecting traffic.")
 				}
 
 				// Placeholder substitution, not Sprintf: the block carries its own %q verbs.
@@ -91,7 +96,9 @@ func registerMCPFeature() {
 const mcpBlock = `// setupMcp serves this service's in-process MCP endpoint: a window onto the running
 // service for an AI agent. It can read the routes, recent errors, logs, performance and
 // the health of every subsystem, and with Fleet installed the traces. Most of those
-// tools read the dashboard, so add that too (breeze add dashboard).
+// tools read the dashboard, so add that too (breeze add dashboard); called without a
+// service_url they read it in memory, so they need no credentials and the application's
+// own rate limiter cannot refuse them.
 //
 // Read-only by construction. The mode below is app-runtime, in which the tools that
 // generate code, run migrations or drive Docker are not registered at all, so a leaked

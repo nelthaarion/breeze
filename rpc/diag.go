@@ -100,6 +100,7 @@ func (s *Server) probe() diag.Report {
 		"max_request_body":  s.MaxRequestBody(),
 		"listen_host":       s.ListenHost(),
 		"listen_port":       s.ListenPort(),
+		"ipv4_fallback":     s.fellBack.Load(),
 		"calls_dispatched":  snap.Hits,
 		"unknown_methods":   unknown,
 		"counting":          snap.Counting,
@@ -134,6 +135,13 @@ func (s *Server) probe() diag.Report {
 	}
 
 	var notes []string
+	if addr := s.listenAddr.Load(); addr != nil {
+		detail["listen_address"] = *addr
+	}
+	if s.fellBack.Load() {
+		notes = append(notes, "This host has no IPv6, so the all-interfaces listener fell back to IPv4 only. "+
+			"An IPv6 client cannot reach it, and neither could it reach the HTTP server, which binds IPv4.")
+	}
 	if !snap.Counting {
 		notes = append(notes, "Counted diagnostics are off, so calls_dispatched was not measured. "+
 			"unknown_methods and the method list are exact either way.")

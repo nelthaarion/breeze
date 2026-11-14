@@ -259,6 +259,7 @@ func NewEmbeddedServer(version string, mode ServerMode) (*Server, error) {
 		return nil, err
 	}
 	s.useLocalDiagnostics()
+	s.useLocalDashboard()
 	return s, nil
 }
 

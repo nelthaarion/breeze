@@ -192,6 +192,9 @@ func registerRateLimit() {
 		Summary:  "per-client request rate limiting",
 		Priority: 60,
 		Imports:  []string{middlewareImport, timeImport},
+		// The generated block says the dashboard is behind the limiter when there is one, so a
+		// dashboard added afterwards leaves the comment out of date until this is re-run.
+		DependsOn: []string{"dashboard"},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
 			requests := fs.Int("requests", 100, "requests allowed per window")
 			per := fs.Duration("per", 0, "window length (default 1m)")
@@ -212,20 +215,42 @@ func registerRateLimit() {
 					msgLine = fmt.Sprintf("\t\tMessage:  %q,\n", *message)
 				}
 
+				// The dashboard is ordered after this limiter, so what the limiter rejects never
+				// reaches the dashboard's middleware, and the dashboard's own HTTP API is limited
+				// like any route. Said in the block, where someone debugging a 429 will read it.
+				dashboardNote := ""
+				if ctx.HasDashboard {
+					dashboardNote = `	//
+	// The dashboard's HTTP API sits behind this limiter too, so a service that is
+	// rejecting traffic also refuses reads of its dashboard: a client sees 429 on
+	// /dashboard/api/... exactly when it wants to look. An MCP endpoint embedded in
+	// the service (breeze add mcp) reads the dashboard in memory and is not affected.
+	// Requests rejected here never reach the dashboard's middleware, which is
+	// registered after this one, so they are counted by the ratelimit diagnostic
+	// subsystem and not per route.
+`
+				}
+
 				body := fmt.Sprintf(`func setupRatelimit(app *breeze.Breeze, router *breeze.Router) {
 	// After cors so preflights are never counted or rejected, before auth so a
 	// flood of bad tokens is dropped without paying for signature
 	// verification.
-	router.Use(middleware.NewRateLimiter(middleware.RateLimiterOptions{
+%s	router.Use(middleware.NewRateLimiter(middleware.RateLimiterOptions{
 		Requests: %d,
 		Per:      %s,
 %s	}))
-}`, *requests, window, msgLine)
+}`, dashboardNote, *requests, window, msgLine)
 
-				return featureOutput{Body: body, Notes: []string{
+				out := featureOutput{Body: body, Notes: []string{
 					fmt.Sprintf("Limiting to %d requests per %s.", *requests, strings.TrimPrefix(window, "time.")),
 					"The limiter keys on client address, so behind a proxy every request looks like one client â€” set the proxy to pass a real client IP.",
-				}}, nil
+				}}
+				if ctx.HasDashboard {
+					out.Notes = append(out.Notes,
+						"The dashboard's HTTP API is behind this limiter: a service that is rejecting traffic also refuses reads of its dashboard. "+
+							"An MCP endpoint embedded in the service (breeze add mcp) reads the dashboard in memory and is not rate limited.")
+				}
+				return out, nil
 			}
 		},
 	})

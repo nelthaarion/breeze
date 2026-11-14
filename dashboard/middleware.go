@@ -11,23 +11,27 @@ import (
 // Middleware returns a Breeze middleware that instruments every request for
 // the dashboard.
 //
-// # Performance: sampling-based collection
+// # Performance: count everything, record what is worth recording
 //
 // The middleware uses a two-tier strategy to minimize overhead:
 //
-//  1. **Always** (zero-cost fast path): increment the request counter and
-//     measure duration with time.Now()/time.Since(). This is ~5ns per
-//     request and has no allocations.
+//  1. **Every request** (no allocation): resolve its route, add it to that
+//     route's counters by status class, and fold its duration into the route's
+//     average and maximum. A route lookup, a few atomic adds and two
+//     time.Now() calls. The counts are exact, so a route that served a
+//     thousand fast requests says so, and a 404 or a validation failure is
+//     counted against the route it hit (or against "no route matched").
 //
-//  2. **Only when someone is watching**: if there are WebSocket clients
-//     connected (someone has the dashboard open), OR the request is slow
-//     (duration > SlowRequestMs), OR the request errored (status >= 500),
-//     we capture the full request record (IP, headers, route pattern,
-//     timeline, etc.).
+//  2. **Only when the request is worth a full record**: there are WebSocket
+//     clients connected (someone has the dashboard open), OR the request is
+//     slow (duration > SlowRequestMs), OR it failed (status >= 400) and its
+//     route is still inside its sampling budget for the window. We then capture
+//     the full request record (IP, headers, route pattern, timeline, etc.).
 //
-// This means when nobody is viewing the dashboard, the overhead is just
-// an atomic increment + 2 time.Now() calls. When someone IS viewing, we
-// do the full capture so the Live Requests feed and Timeline page work.
+// A failure is sampled rather than always kept so that a flood of one (a
+// client enumerating missing ids, a retry loop, a bad deploy) cannot churn the ring buffer or make the
+// middleware allocate per request; routeindex.go states the budgets, and what
+// they drop is counted. 2xx and 3xx stay unrecorded unless watched or slow.
 //
 // # Critical: capture-before-Next pattern
 //
@@ -46,6 +50,10 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 	// Pre-compute whether timeline is enabled to avoid checking c.cfg.Timeline
 	// on every request.
 	timelineEnabled := c.cfg.Timeline
+
+	// Say that something is counting. A dashboard that was installed but whose middleware was
+	// never added would otherwise report zero for every route, which reads as "no traffic".
+	c.instrumented.Store(true)
 
 	return func(ctx *breeze.Context) error {
 		if !c.cfg.Enabled {
@@ -125,13 +133,18 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 		// Track daily count (for persistence — daily viewers).
 		c.trackDailyCount()
 
-		// Update per-route stats (only if we can match the route cheaply).
-		// We do this lazily — only if there are stats being tracked or
-		// if someone is viewing the routes page.
-		shouldCapture := c.shouldCaptureFullRecord(duration, status)
+		// Count the request against its route and status class. This is the part that used
+		// to happen only for a captured request, which is why a route could report zero
+		// requests after serving thousands. It allocates nothing.
+		entry := c.resolveRoute(string(ctx.Req.Method), ctx.Req.Path)
+		when := start.UnixNano()
+		entry.record(status, duration.Microseconds(), when)
+
+		shouldCapture := c.shouldCaptureFullRecord(duration, status, entry, when)
 		if !shouldCapture {
-			// Nobody is watching and the request isn't interesting.
-			// We're done — zero allocations, zero locks (beyond the atomic).
+			// Nobody is watching and the request isn't interesting, or it is a failure over
+			// its route's sampling budget (and counted as such). We're done — zero
+			// allocations, zero locks (beyond the atomics).
 			return chainErr
 		}
 
@@ -160,7 +173,7 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 		ua := strings.Clone(ctx.Req.Header["user-agent"])
 		ip := clientIP(ctx)
 		user := dashboardUser(ctx)
-		routePattern := matchRoute(c, ctx)
+		routePattern := entry.pattern
 
 		r := RequestRecord{
 			ID:         reqID,
@@ -194,11 +207,6 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 		// when nobody is connected.
 		if c.hub != nil {
 			pushEvent(c.hub, "request", r)
-		}
-
-		// Update per-route aggregation.
-		if routePattern != "" {
-			c.updateRouteStats(method, routePattern, duration.Microseconds(), status, start)
 		}
 
 		// Close the timeline recorder if we attached one.
@@ -235,10 +243,12 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 // We capture when ANY of these are true:
 //   - There are WebSocket clients connected (someone is viewing the dashboard)
 //   - The request is slow (duration > SlowRequestMs)
-//   - The request errored (status >= 500)
+//   - The request failed (status >= 400) and its route is within its sampling
+//     budget for the current window (see captureWindow in routeindex.go)
 //
-// This keeps the fast path zero-allocation when nobody is watching.
-func (c *Collector) shouldCaptureFullRecord(duration time.Duration, status int) bool {
+// This keeps the fast path zero-allocation when nobody is watching, and bounds
+// what a flood of one failure can cost.
+func (c *Collector) shouldCaptureFullRecord(duration time.Duration, status int, entry *routeEntry, now int64) bool {
 	// Someone is viewing the dashboard — capture everything.
 	if c.hub != nil && c.hub.clientCount() > 0 {
 		return true
@@ -247,45 +257,8 @@ func (c *Collector) shouldCaptureFullRecord(duration time.Duration, status int) 
 	if c.cfg.SlowRequestMs > 0 && duration.Microseconds() >= int64(c.cfg.SlowRequestMs)*1000 {
 		return true
 	}
-	// Error — always capture for debugging.
-	if status >= 500 {
-		return true
-	}
-	return false
-}
-
-// updateRouteStats updates per-route aggregation for a request.
-// This is called only when capturing a full record.
-func (c *Collector) updateRouteStats(method, pattern string, durationUS int64, status int, when time.Time) {
-	key := method + " " + pattern
-	c.routeStatsMu.RLock()
-	acc, ok := c.routeStats[key]
-	c.routeStatsMu.RUnlock()
-	if !ok {
-		acc = &routeStatAccumulator{
-			method:  method,
-			pattern: pattern,
-		}
-		c.routeStatsMu.Lock()
-		if existing, ok := c.routeStats[key]; ok {
-			acc = existing
-		} else {
-			c.routeStats[key] = acc
-		}
-		c.routeStatsMu.Unlock()
-	}
-	acc.requests.Add(1)
-	acc.totalDurUS.Add(durationUS)
-	for {
-		cur := acc.maxDurUS.Load()
-		if durationUS <= cur || acc.maxDurUS.CompareAndSwap(cur, durationUS) {
-			break
-		}
-	}
-	acc.lastRequest.Store(when.UnixNano())
-	if status >= 500 {
-		acc.errors.Add(1)
-	}
+	// Failure — captured for debugging, within the route's budget.
+	return entry.admitFailure(status, now)
 }
 
 // selectHeaders returns a small subset of request headers for the inspector.
@@ -308,60 +281,6 @@ func selectHeaders(ctx *breeze.Context) map[string]string {
 		}
 	}
 	return out
-}
-
-// matchRoute finds the registered route pattern matching the request path.
-func matchRoute(c *Collector, ctx *breeze.Context) string {
-	if c.router == nil {
-		return ""
-	}
-	reqPath := ctx.Req.Path
-	reqSegments := splitPath(reqPath)
-	for _, rt := range c.router.RoutesInfo() {
-		if rt.Method() != ctx.Req.Method {
-			continue
-		}
-		if routeMatches(rt, reqSegments) {
-			return rt.Pattern()
-		}
-	}
-	return ""
-}
-
-func splitPath(p string) []string {
-	if len(p) > 0 && p[0] == '/' {
-		p = p[1:]
-	}
-	if len(p) > 0 && p[len(p)-1] == '/' {
-		p = p[:len(p)-1]
-	}
-	if p == "" {
-		return nil
-	}
-	return strings.Split(p, "/")
-}
-
-func routeMatches(rt breeze.RouteInfo, req []string) bool {
-	segs := rt.Segments()
-	if rt.HasWildcard() {
-		if len(req) < len(segs) {
-			return false
-		}
-	} else if len(segs) != len(req) {
-		return false
-	}
-	for i, s := range segs {
-		if len(s) > 0 && s[0] == ':' {
-			continue
-		}
-		if i >= len(req) {
-			return false
-		}
-		if s != req[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // clientIP extracts the client IP. Safe with nil ctx.Conn.

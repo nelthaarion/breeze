@@ -411,6 +411,13 @@ type projectFacts struct {
 	Features []featureState         `json:"features"`
 	Routes   []generator.RouteEntry `json:"routes"`
 
+	// workflowHiddenFromDashboard is set when the project has a workflow block that gives the engine
+	// the observability block's collector, beside a dashboard that attached to the event bus. The
+	// dashboard reads its own collector, so the engine's per-run signals go where nothing reads them.
+	// It is read from the block's text, not from the configuration rebuilt from the blocks, because
+	// nothing in that configuration records which collector the engine was handed.
+	workflowHiddenFromDashboard bool
+
 	// Models is read from the project's models directory rather than from the
 	// reconstructed configuration. A model is a whole generated file, not a
 	// marker block, so nothing in the blocks records that one was ever asked
@@ -483,6 +490,7 @@ func gatherProjectFacts(path string) (projectFacts, generator.ProjectConfig, err
 	cfg := generator.Defaults()
 	var notes []string
 
+	var workflowBody string
 	err = inProject(root, func() error {
 		if module, err := generator.CurrentModulePath(); err == nil {
 			facts.Module = module
@@ -509,7 +517,13 @@ func gatherProjectFacts(path string) (projectFacts, generator.ProjectConfig, err
 				facts.Edited = append(facts.Edited, name)
 			}
 			applyFeatureBlockToConfig(&cfg, name, info.Body)
+			if name == "workflow" {
+				workflowBody = info.Body
+			}
 		}
+		facts.workflowHiddenFromDashboard = workflowBody != "" &&
+			strings.Contains(workflowBody, "Collector:       ObsCollector,") &&
+			containsString(installed, "dashboard") && containsString(installed, "events")
 
 		if routes, err := generator.ParseRoutes(generator.RegistryFileName); err == nil {
 			facts.Routes = routes

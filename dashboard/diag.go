@@ -61,31 +61,43 @@ func (c *Collector) probe() diag.Report {
 	}
 
 	m := c.Metrics()
+	traffic := c.trafficPayload()
+	notKept := traffic.Unmatched.NotRecorded
+	for _, r := range traffic.Routes {
+		notKept += r.NotRecorded
+	}
 	detail := map[string]any{
-		"base_path":         strings.TrimSuffix(c.cfg.BasePath, "/"),
-		"requests_captured": c.requestsTotal.Load(),
-		"errors":            c.errorsTotal.Load(),
-		"live_watchers":     watchers,
-		"buffered_requests": len(c.Requests(0)),
-		"tracked_routes":    len(c.RouteStats()),
-		"timelines":         len(c.Timelines(0)),
-		"events_attached":   c.EventsAttached(),
-		"video_attached":    c.VideoAttached(),
-		"db_inspector":      c.DBInspector() != nil,
-		"storage_type":      c.cfg.StorageType,
-		"auth_enabled":      c.cfg.Username != "",
-		"service_token":     c.cfg.ServiceToken != "",
-		"fleet_view":        c.cfg.FleetAggregatorURL != "",
-		"timeline_enabled":  c.cfg.Timeline,
-		"dev_mode":          c.cfg.DevMode,
-		"health_checks":     len(c.RunHealthChecks()),
-		"goroutines":        m.Goroutines,
+		"base_path": strings.TrimSuffix(c.cfg.BasePath, "/"),
+		// requests_captured is the same figure under the name it had before the count was exact: it is
+		// every request counted, not only those kept in full.
+		"requests_captured":    c.requestsTotal.Load(),
+		"requests_counted":     traffic.Requests,
+		"middleware_installed": traffic.Instrumented,
+		"client_errors":        traffic.ClientErrors,
+		"unmatched_requests":   traffic.Unmatched.Requests,
+		"failures_not_kept":    notKept,
+		"errors":               c.errorsTotal.Load(),
+		"live_watchers":        watchers,
+		"buffered_requests":    len(c.Requests(0)),
+		"tracked_routes":       len(c.RouteStats()),
+		"timelines":            len(c.Timelines(0)),
+		"events_attached":      c.EventsAttached(),
+		"video_attached":       c.VideoAttached(),
+		"db_inspector":         c.DBInspector() != nil,
+		"storage_type":         c.cfg.StorageType,
+		"auth_enabled":         c.cfg.Username != "",
+		"service_token":        c.cfg.ServiceToken != "",
+		"fleet_view":           c.cfg.FleetAggregatorURL != "",
+		"timeline_enabled":     c.cfg.Timeline,
+		"dev_mode":             c.cfg.DevMode,
+		"health_checks":        len(c.RunHealthChecks()),
+		"goroutines":           m.Goroutines,
 	}
 	if !m.Time.IsZero() {
 		detail["last_sample"] = m.Time.UTC().Format(time.RFC3339)
 	}
 
-	summary := fmt.Sprintf("mounted at %s: %d request(s) captured, %d live watcher(s)",
+	summary := fmt.Sprintf("mounted at %s: %d request(s) counted, %d live watcher(s)",
 		detail["base_path"], c.requestsTotal.Load(), watchers)
 
 	var notes []string
@@ -101,10 +113,22 @@ func (c *Collector) probe() diag.Report {
 			"unauthenticated. Anyone who can reach this service can read its request log, its "+
 			"queries and — if a DB inspector is set — its data.")
 	}
-	if watchers == 0 {
-		notes = append(notes, "Nobody has the dashboard open, so per-route statistics are only "+
-			"accumulated for slow and failed requests. A route reporting zero requests means "+
-			"'not measured', not 'never called'.")
+	// A dashboard whose middleware was never created counts nothing, and every route then reads
+	// zero, which looks exactly like a service nobody has called. That is a fault, not a quiet
+	// service, so it degrades the report.
+	if !traffic.Instrumented {
+		degraded = true
+		notes = append(notes, "The dashboard's middleware has not been created, so no request is counted and every "+
+			"route reports zero: that is 'not measured', not 'never called'. Add "+
+			"router.Use(dashboard.Middleware(coll)) after dashboard.Install.")
+	}
+	// Every request is counted; a failure is kept in full only within a per-route sample. When the
+	// sample has been spent, say so: it is the signature of a flood of one failure, and the reader
+	// should know the records are not the whole of it.
+	if notKept > 0 {
+		notes = append(notes, fmt.Sprintf("%d failed request(s) were counted but not kept in full, because a route "+
+			"used its sampling budget for the window (a client enumerating missing ids, a retry loop or a bad deploy produces this). The "+
+			"counts are exact; the records are a sample. See the traffic endpoint for each route's counts.", notKept))
 	}
 	if c.cfg.DevMode {
 		notes = append(notes, "DevMode serves the readable, unminified dashboard assets. Correct "+

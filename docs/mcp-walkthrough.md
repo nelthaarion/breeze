@@ -120,7 +120,7 @@ Every tool belongs to exactly one of eight categories:
 | `planning` | previews changes, holds change sets open |
 | `knowledge` | maintains and searches `llms.txt`, suggests next steps |
 | `verification` | runs the Go toolchain — and therefore project code |
-| `runtime` | reads live state from a running service over HTTP — routes, errors, logs, performance, and `breeze_diagnose_service`, which returns every subsystem's own diagnostic report; also what the observability collector recorded (`breeze_get_signals`: failed jobs, listeners, queries, workflows) and whether its dependencies are up (`breeze_get_health`) |
+| `runtime` | reads live state from a running service — over HTTP, or straight from memory when the endpoint is embedded in that service — routes, errors, logs, performance, and `breeze_diagnose_service`, which returns every subsystem's own diagnostic report; also what the observability collector recorded (`breeze_get_signals`: failed jobs, listeners, queries, workflows) and whether its dependencies are up (`breeze_get_health`) |
 | `fleet` | reads a Fleet Aggregator: traces, topology, contract violations, which services are alive (`breeze_get_services`) and what every service in a trace logged (`breeze_get_trace_logs`) |
 | `provisioning` | drives Docker: builds images, starts and removes containers. Also `breeze_migrate`, which applies database migrations: it changes live infrastructure the same way, so it is withheld the same way |
 
@@ -695,8 +695,48 @@ endpoint can still look at another service. A standalone `breeze-mcp` does not g
 its own registry describes the tool, not the service you asked about, and its schema still
 requires the URL. A test holds the direct read and the dashboard's endpoint to the same answer.
 
-The other live tools (`breeze_get_logs`, `breeze_get_signals`, `breeze_get_health`, and so on) still
-read the dashboard over HTTP and need it installed.
+The dashboard-reading tools do the same: `breeze_get_routes`, `breeze_get_recent_errors`,
+`breeze_get_logs`, `breeze_get_performance`, `breeze_get_signals` and `breeze_get_health`. Called on an
+embedded endpoint with no `service_url`, they read the dashboard's collector in memory, and the
+answer says `"service_url": "(this process)"`. The dashboard must be installed in the process (`breeze
+add dashboard`); it does not need credentials, and without one the tool says so and names the fix. Each
+has a schema that no longer requires `service_url`, and a description that says it may be omitted.
+
+This matters most when the service is in trouble. The dashboard's HTTP API sits behind the
+application's own rate limiter, so a service that is rejecting traffic also refuses reads of its
+dashboard. Measured against a limit of 30 a minute, after a 40-request burst `/dashboard/api/logs`,
+`/requests` and `/health` all answered `429` and `breeze_get_logs` failed, in the one situation where
+the logs are wanted. The limiter is deliberately not exempted for the dashboard (it is a brute-force
+surface); the embedded endpoint is made independent of it instead. A read over HTTP still reports
+`rate_limited`, and says to call the embedded endpoint.
+
+The read is the same code as the HTTP one. Each dashboard endpoint is a function that returns its
+payload; the HTTP handler writes it as JSON and the in-process reader hands it back, and the tool
+decodes the same JSON into the same types either way. A test per tool holds the two transports to one
+answer on one collector. Only an embedded endpoint does this: a standalone `breeze-mcp` has no
+dashboard of its own, and its schemas still require the URL. A caller cannot ask a standalone server
+for its own process through the arguments, because the reader is not an argument.
+
+### What the traffic numbers mean
+
+`breeze_get_routes` and `breeze_get_recent_errors` report what the dashboard counted, and say how far
+to trust it in a `counting` field:
+
+| `counting` | Meaning |
+|---|---|
+| `exact` | Every request that reached the dashboard's middleware is counted against its route and status class. A route with zero requests was never called. |
+| `not_measured` | The dashboard is installed and nothing is counting: its middleware was never created (`router.Use(dashboard.Middleware(coll))`), or `Config.Enabled` is false. Every figure is zero because nothing was measured. |
+| `partial` | An older dashboard with no traffic endpoint, which attributes a request to its route only when it kept the request in full. Zero says nothing. |
+
+`breeze_get_recent_errors` returns the records, which are a sample, beside an `exact` block that is the
+whole count: totals by class, the routes with the most failures, how many failures were counted and not
+kept, and the budgets in force. An agent told "ten 404s" can tell ten from ten thousand, and one told
+"no failures" can tell a quiet service from a sample that kept none.
+
+Two things are in no count, and the tools say so. A request for a path that no route serves is
+answered by the framework before any middleware runs, so it is neither counted nor logged. And a
+request that middleware ordered before the dashboard's refuses (a rate limiter, in the generated
+order) never reaches it: the limiter's own `ratelimit` diagnostic subsystem counts those.
 
 ### The endpoint reports on itself
 

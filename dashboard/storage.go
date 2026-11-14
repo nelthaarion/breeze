@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -48,6 +49,9 @@ type PersistedRouteStat struct {
 	MaxDurUS    int64 `json:"max_dur_us"`
 	Errors      int64 `json:"errors"`
 	LastRequest int64 `json:"last_request"` // unix nanos
+	// ClientErrors was added after the file format shipped; a file written before it reads
+	// as zero.
+	ClientErrors int64 `json:"client_errors,omitempty"`
 }
 
 // fileStorage is a simple file-based JSON storage. It's the default when
@@ -185,10 +189,15 @@ func (c *Collector) loadState() {
 	c.routeStatsMu.Lock()
 	for key, ps := range state.RouteStats {
 		acc := &routeStatAccumulator{}
+		// The key is "METHOD pattern". A restored accumulator used to come back with no
+		// name, and the routes endpoint then listed its counts under an empty method and
+		// pattern until something happened to rebuild it.
+		acc.method, acc.pattern, _ = strings.Cut(key, " ")
 		acc.requests.Store(ps.Requests)
 		acc.totalDurUS.Store(ps.TotalDurUS)
 		acc.maxDurUS.Store(ps.MaxDurUS)
 		acc.errors.Store(ps.Errors)
+		acc.clientErrors.Store(ps.ClientErrors)
 		acc.lastRequest.Store(ps.LastRequest)
 		c.routeStats[key] = acc
 	}
@@ -225,11 +234,12 @@ func (c *Collector) saveState() {
 	c.routeStatsMu.RLock()
 	for key, acc := range c.routeStats {
 		state.RouteStats[key] = PersistedRouteStat{
-			Requests:    acc.requests.Load(),
-			TotalDurUS:  acc.totalDurUS.Load(),
-			MaxDurUS:    acc.maxDurUS.Load(),
-			Errors:      acc.errors.Load(),
-			LastRequest: acc.lastRequest.Load(),
+			Requests:     acc.requests.Load(),
+			TotalDurUS:   acc.totalDurUS.Load(),
+			MaxDurUS:     acc.maxDurUS.Load(),
+			Errors:       acc.errors.Load(),
+			ClientErrors: acc.clientErrors.Load(),
+			LastRequest:  acc.lastRequest.Load(),
 		}
 	}
 	c.routeStatsMu.RUnlock()

@@ -5,9 +5,8 @@
     <div class="empty"><div class="icon">&#x2197;</div>Select an endpoint to begin</div>
   </div>
 </div>
-<script>window.__breezeDashPage='api';</script>
 <script data-spa-run="always">
-if(window.BreezeDash) BreezeDash.initPage('api');
-BreezeDash.initPage('api');
+window.__breezeDashPage='api';
+if(window.BreezeDash) { window.BreezeDash.initPage('api'); window.__breezeDashPage=null; }
 </script>
 {{end}}

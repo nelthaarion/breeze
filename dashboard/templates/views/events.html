@@ -54,9 +54,8 @@
   </div>
 </div>
 
-<script>window.__breezeDashPage='events';</script>
 <script data-spa-run="always">
-if(window.BreezeDash) BreezeDash.initPage('events');
-BreezeDash.initPage('events');
+window.__breezeDashPage='events';
+if(window.BreezeDash) { window.BreezeDash.initPage('events'); window.__breezeDashPage=null; }
 </script>
 {{end}}

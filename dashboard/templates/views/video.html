@@ -35,8 +35,8 @@
   </div>
 </div>
 
-<script>window.__breezeDashPage='video';</script>
 <script data-spa-run="always">
-if(window.BreezeDash) BreezeDash.initPage('video');
+window.__breezeDashPage='video';
+if(window.BreezeDash) { window.BreezeDash.initPage('video'); window.__breezeDashPage=null; }
 </script>
 {{end}}

@@ -32,7 +32,7 @@ var S = {
   logSearch: '',
   _slowOnly: false,
   _routeSearch: '',
-  fleet: {cursor:'', hasMore:false, loading:false, traces:[], topology:null, services:[], playback:null},
+  fleet: {cursor:'', hasMore:false, loading:false, traces:[], topology:null, services:[], incidents:[], playback:null},
 };
 
 // ─── Utils ─────────────────────────────────────────────────────────────
@@ -166,28 +166,50 @@ function escapeHTML(s){
 }
 
 // ─── API client ────────────────────────────────────────────────────────
-function api(path){
-  return fetch(S.base + '/api/' + path).then(function(r){
+function throwIfAborted(signal){
+  if(!signal || !signal.aborted) return;
+  var error = new Error('Request aborted');
+  error.name = 'AbortError';
+  throw error;
+}
+function api(path, options){
+  options = options || {};
+  var signal = options.signal;
+  return fetch(S.base + '/api/' + path, options).then(function(r){
+    // Fetch normally rejects an aborted request, but an abort can race with a
+    // response that has already fulfilled. Check both sides of JSON parsing
+    // so a stale page response can never mutate the next page's shared state.
+    throwIfAborted(signal);
     if(r.status === 401){
       // Session expired — redirect to login.
       window.location.href = S.base + '/login';
       throw new Error('unauthorized');
     }
     if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
+    return r.json().then(function(data){
+      throwIfAborted(signal);
+      return data;
+    });
   });
 }
-function apiPost(path, body){
+function apiPost(path, body, options){
+  options = options || {};
+  var signal = options.signal;
   return fetch(S.base + '/api/' + path, {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body||{})
+    headers: Object.assign({'Content-Type': 'application/json'}, options.headers || {}),
+    body: JSON.stringify(body||{}),
+    signal: signal
   }).then(function(r){
+    throwIfAborted(signal);
     if(r.status === 401){
       window.location.href = S.base + '/login';
       throw new Error('unauthorized');
     }
-    return r.json();
+    return r.json().then(function(data){
+      throwIfAborted(signal);
+      return data;
+    });
   });
 }
 
@@ -272,6 +294,86 @@ function onEvent(ch, data){
 }
 
 
+// Page-owned event listeners share the page's AbortSignal with its initial
+// API loads. Leaving/re-entering a page therefore removes all view listeners
+// and cancels its outstanding reads with one lifecycle operation. A WeakMap
+// replaces same-node/same-event handlers during a re-init without retaining
+// detached DOM nodes.
+var _pageEventMap = new WeakMap();
+function pageOn(node, type, handler, options){
+  if(!node || typeof node.addEventListener !== 'function' || typeof handler !== 'function') return;
+  var handlers = _pageEventMap.get(node);
+  if(!handlers){ handlers = new Map(); _pageEventMap.set(node, handlers); }
+  var previous = handlers.get(type);
+  if(previous) node.removeEventListener(type, previous.handler, previous.options);
+  var opts = typeof options === 'boolean' ? {capture:options} : Object.assign({}, options || {});
+  if(_activePageController && !_activePageController.signal.aborted) opts.signal = _activePageController.signal;
+  node.addEventListener(type, handler, opts);
+  handlers.set(type, {handler:handler, options:opts});
+}
+
+// Page-owned polling: one active timer and one in-flight request per page.
+// A fixed-delay loop is used instead of setInterval, so a slow API response
+// cannot overlap the next tick. Navigation aborts the outstanding request.
+var _activePagePoll = null;
+var _activePageController = null;
+function stopPageWork(){
+  if(_activePageController){ _activePageController.abort(); _activePageController=null; }
+  stopPagePoll();
+  // Timers and pointer state belong to their view even when they are not API
+  // pollers. Leaving Fleet must stop trace playback; leaving Architecture must
+  // not carry an in-progress drag into a later visit.
+  var playback = S.fleet && S.fleet.playback;
+  if(playback){
+    if(playback.timer) clearTimeout(playback.timer);
+    playback.timer = null;
+    playback.running = false;
+    playback.finishedAt = 0;
+  }
+  // Fleet's canvas animation is driven by a shared requestAnimationFrame
+  // loop rather than the playback timeout. Cancel its pending frame as well;
+  // otherwise a paused 0.0x trace or the post-playback fade can keep the loop
+  // alive after the Fleet view has been replaced.
+  if(typeof _fleetRaf !== 'undefined' && _fleetRaf){
+    if(typeof cancelAnimationFrame === 'function') cancelAnimationFrame(_fleetRaf);
+    _fleetRaf = 0;
+  }
+  if(typeof archDragging !== 'undefined') archDragging = false;
+}
+function stopPagePoll(){
+  var poll = _activePagePoll;
+  if(!poll) return;
+  _activePagePoll = null;
+  poll.stopped = true;
+  if(poll.timer) clearTimeout(poll.timer);
+  if(poll.controller) poll.controller.abort();
+}
+function startPagePoll(page, fn, intervalMs){
+  stopPagePoll();
+  var poll = {page:page, timer:0, controller:null, stopped:false};
+  _activePagePoll = poll;
+  function schedule(){
+    if(!poll.stopped) poll.timer = setTimeout(run, intervalMs);
+  }
+  function run(){
+    poll.timer = 0;
+    if(poll.stopped) return;
+    if(S.page !== page){ schedule(); return; }
+    var controller = new AbortController();
+    poll.controller = controller;
+    var result;
+    try { result = fn(controller.signal); }
+    catch(e) { result = Promise.reject(e); }
+    Promise.resolve(result).catch(function(e){
+      if(!e || e.name !== 'AbortError') return;
+    }).finally(function(){
+      if(poll.controller === controller) poll.controller = null;
+      if(!poll.stopped) schedule();
+    });
+  }
+  schedule();
+}
+
 // ─── Page initialization ───────────────────────────────────────────────
 var PAGES = {
   overview: {title:'Overview', init: initOverview},
@@ -292,7 +394,12 @@ var PAGES = {
 
 
 
+function currentPageSignal(){
+  return _activePageController ? _activePageController.signal : undefined;
+}
 function initPage(page){
+  stopPageWork();
+  _activePageController = new AbortController();
   S.page = page;
   var titleEl = $('#page-title');
   if(titleEl && PAGES[page]) titleEl.textContent = PAGES[page].title;
@@ -300,33 +407,29 @@ function initPage(page){
   $$('.nav-item').forEach(function(n){
     n.classList.toggle('active', n.getAttribute('data-nav') === page);
   });
-  if(PAGES[page] && PAGES[page].init) PAGES[page].init();
+  if(PAGES[page] && PAGES[page].init) PAGES[page].init(_activePageController.signal);
 }
 
 // ─── Fleet View ─────────────────────────────────────────────────────────
-function initFleet(){
+function initFleet(signal){
   var tag=$('#fleet-tag');
-  if(tag && !tag.dataset.bound){
-    tag.dataset.bound='1';
-    tag.addEventListener('change', loadFleet);
-  }
+  if(tag) pageOn(tag, 'change', function(){ loadFleet(false, currentPageSignal()); });
   var next=$('#fleet-next-page');
-  if(next && !next.dataset.bound){
-    next.dataset.bound='1';
-    next.addEventListener('click', function(){ if(S.fleet.hasMore && !S.fleet.loading) loadFleet(true); });
-  }
+  if(next) pageOn(next, 'click', function(){ if(S.fleet.hasMore && !S.fleet.loading) loadFleet(true, currentPageSignal()); });
   S.fleet.cursor=''; S.fleet.traces=[];
-  loadFleet();
-  // Every other "live" page in this dashboard polls itself (see initHealth,
-  // initQueue, initScheduler). Fleet View previously had no refresh at all —
+  loadFleet(false, signal);
+  // Polling is owned by the page lifecycle. Fleet refreshes itself without
+  // overlapping requests and stops cleanly on navigation.
+  // Fleet View previously had no refresh at all —
   // it only ever updated on the tag-filter change event. That's now safe to
   // add because renderFleetTraces/renderFleetTopology reconcile in place
   // instead of rebuilding the DOM, so a poll tick no longer collapses an
   // open accordion or resets scroll position.
   //
-  // Armed exactly once, not once per visit. initFleet runs on *every*
-  // navigation to this page, so an unguarded setInterval here left one extra
-  // live poller behind per visit — and they were never cleared. By the fifth
+  // Exactly one poller is active for this page visit. startPagePoll stops the
+  // previous page's timer/request before arming this one, so navigation back
+  // to Fleet cannot leave old pollers behind. Previously, setInterval was
+  // added on every visit and never cleared. By the fifth
   // visit five pollers were interleaving calls to loadFleet(), each mutating
   // the shared S.fleet.cursor/traces mid-flight: one tick's response would
   // land on a cursor a different tick had already advanced, so pages of
@@ -334,31 +437,61 @@ function initFleet(){
   // aggregator actually held. It looked like Fleet View only refreshed on a
   // tab change, because a tab change re-ran the one code path that reset
   // cursor and traces from scratch (above) before any poller could interfere.
-  if(!_fleetPoll) _fleetPoll=setInterval(function(){
-    if(S.page==='fleet' && !S.fleet.loading) loadFleet();
+  startPagePoll('fleet', function(signal){
+    return !S.fleet.loading ? loadFleet(false, signal, true) : Promise.resolve();
   }, 5000);
 }
-var _fleetPoll=0;
 
-function loadFleet(nextPage){
+var _fleetLoadController = null;
+function loadFleet(nextPage, signal, refreshOnly){
+  // A filter change or explicit reload supersedes the previous Fleet load.
+  // Keep the request controller separate from the page controller so both a
+  // new load and leaving the page can cancel all four API requests together.
+  if(_fleetLoadController) _fleetLoadController.abort();
+  var controller = new AbortController();
+  _fleetLoadController = controller;
+  var parentAbort = null;
+  if(signal){
+    if(signal.aborted) controller.abort();
+    else {
+      parentAbort = function(){controller.abort();};
+      signal.addEventListener('abort', parentAbort, {once:true});
+    }
+  }
   var tag=$('#fleet-tag'), suffix='page_size=40&min_services=2';
   if(tag && tag.value) suffix+='&tag='+encodeURIComponent(tag.value);
   if(nextPage && S.fleet.cursor) suffix+='&cursor='+encodeURIComponent(S.fleet.cursor);
-  else if(!nextPage) S.fleet.cursor='';
+  else if(!nextPage && !refreshOnly) S.fleet.cursor='';
   S.fleet.loading=true;
-  Promise.all([api('fleet/services'),api('fleet/topology'),api('fleet/traces?'+suffix),api('fleet/incidents')]).then(function(v){
+  var requestSignal = controller.signal;
+  var requests = [
+    api('fleet/services', {signal:requestSignal}),
+    api('fleet/topology', {signal:requestSignal})
+  ];
+  if(!refreshOnly) requests.push(api('fleet/traces?'+suffix, {signal:requestSignal}));
+  requests.push(api('fleet/incidents', {signal:requestSignal}));
+  return Promise.all(requests).then(function(v){
+    if(requestSignal.aborted || _fleetLoadController !== controller) return;
     var dead=$('#fleet-unreachable'); if(dead) dead.style.display='none';
-    var page=Array.isArray(v[2])?{traces:v[2],has_more:false}:v[2]||{};
     S.fleet.services=v[0]||[]; S.fleet.topology=v[1]||{};
-    S.fleet.hasMore=!!page.has_more; S.fleet.cursor=page.next_cursor||'';
-    if(nextPage) S.fleet.traces=S.fleet.traces.concat(page.traces||[]); else S.fleet.traces=page.traces||[];
-    renderFleetCards(v[0],v[3]); renderFleetTopology(v[1],v[0]); renderFleetTraces(S.fleet.traces);
+    S.fleet.incidents=v[refreshOnly?2:3]||[];
+    if(!refreshOnly){
+      var page=Array.isArray(v[2])?{traces:v[2],has_more:false}:v[2]||{};
+      S.fleet.hasMore=!!page.has_more; S.fleet.cursor=page.next_cursor||'';
+      if(nextPage) S.fleet.traces=S.fleet.traces.concat(page.traces||[]); else S.fleet.traces=page.traces||[];
+    }
+    renderFleetCards(S.fleet.services,S.fleet.incidents); renderFleetTopology(S.fleet.topology,S.fleet.services); renderFleetTraces(S.fleet.traces);
     var status=$('#fleet-page-status'); if(status) status.textContent=S.fleet.traces.length+' traces loaded';
     var next=$('#fleet-next-page'); if(next) next.style.display=S.fleet.hasMore?'inline-flex':'none';
-  }).catch(function(){
+  }).catch(function(error){
+    if(error && error.name === 'AbortError') return;
+    if(_fleetLoadController !== controller) return;
     var dead=$('#fleet-unreachable');
     if(dead){dead.style.display='block';dead.innerHTML='<div class="icon">&#9888;</div>Fleet Aggregator unreachable — check that it is running and the configured URL is correct.';}
-  }).finally(function(){S.fleet.loading=false;});
+  }).finally(function(){
+    if(signal && parentAbort) signal.removeEventListener('abort', parentAbort);
+    if(_fleetLoadController === controller){_fleetLoadController=null; S.fleet.loading=false;}
+  });
 }
 function renderFleetCards(services,incidents){
   var root=$('#fleet-cards'); if(!root)return;
@@ -388,7 +521,7 @@ function _fleetTraceBuild(t){
     '<code class="fleet-t-id">'+escapeHTML(t.trace_id.slice(0,12))+'…</code>'+
     '<span class="accordion-caret">&#9656;</span>';
   var body = el('div', {class:'accordion-body', style:'display:none'});
-  head.addEventListener('click', function(){ toggleFleetTrace(row, t.trace_id); });
+  head.onclick = function(){ toggleFleetTrace(row, t.trace_id); };
   row.appendChild(head);
   row.appendChild(body);
   return row;
@@ -443,7 +576,7 @@ function toggleFleetTrace(row, id){
   if(caret) caret.innerHTML = wasOpen ? '&#9656;' : '&#9662;';
   if(wasOpen || !bodyEl || row.dataset.loaded) return;
   row.dataset.loaded = '1';
-  api('fleet/traces/'+id).then(function(t){
+  api('fleet/traces/'+id, {signal:currentPageSignal()}).then(function(t){
     function stepRow(n,d){
       var s=n||{}, tags=Object.keys(s.tags||{}).map(function(k){return '<span class="badge">'+escapeHTML(k)+'='+escapeHTML(s.tags[k])+'</span>';}).join(' ');
       var html='<div class="t-step" style="margin-left:'+(d*20)+'px"><div><strong>'+escapeHTML(s.service||'unknown')+'</strong> '+escapeHTML(s.method||'')+' '+escapeHTML(s.route||'')+' — '+fmtMS(s.duration_ms||0)+' '+(n.root_cause?'<span class="status s5">ROOT CAUSE</span>':'')+(n.skewed?' &#9888;':'')+'</div><div>'+tags+'</div></div>';
@@ -466,10 +599,11 @@ function toggleFleetTrace(row, id){
       // the user picked, so every speed change applied one step late, and
       // keyboard selection never applied at all.
       var evt = control.tagName === 'SELECT' ? 'change' : 'click';
-      control.addEventListener(evt, function(ev){ev.stopPropagation(); fleetPlaybackAction(row, t, control.dataset.action, control.value);});
+      pageOn(control, evt, function(ev){ev.stopPropagation(); fleetPlaybackAction(row, t, control.dataset.action, control.value);});
     });
     fleetPlaybackAction(row, t, 'render');
-  }).catch(function(){
+  }).catch(function(error){
+    if(error && error.name === 'AbortError') return;
     row.dataset.loaded = '';
     bodyEl.innerHTML = '<div class="empty">Failed to load trace detail</div>';
   });
@@ -785,7 +919,9 @@ function fleetDrawNode(g,label,kind,p,fill,accent,textColor,active){
 // flight no matter how many callers ask to render.
 var _fleetRaf=0;
 function fleetTopoNeedsFrame(pb){
-  if(!pb) return false;
+  // The animation belongs to Fleet, not to the global dashboard shell. A
+  // queued render or a theme change after navigation must never restart it.
+  if(S.page !== 'fleet' || !pb) return false;
   if(pb.running) return true;
   if(!(pb.speed>0) && pb.index>=0) return true;   // 0.0x: held, still live
   return !!(pb.finishedAt && Date.now()-pb.finishedAt<1800);
@@ -906,9 +1042,7 @@ function initOverview(){
   if(S.snapshot) renderOverview();
   // Real-time updates are handled by WebSocket snapshots (pushed every 1s).
   // This interval is just a fallback to re-render if WS is disconnected.
-  setInterval(function(){
-    if(S.page==='overview') renderOverview();
-  }, 5000);
+  startPagePoll('overview', renderOverview, 5000);
 }
 function renderOverview(){
   var m = S.snapshot ? S.snapshot.metrics : (S.history[S.history.length-1]||{});
@@ -940,10 +1074,10 @@ function renderOverview(){
 }
 
 // ─── Routes ────────────────────────────────────────────────────────────
-function initRoutes(){
-  api('routes').then(function(d){S.routes=d;renderRoutes();});
+function initRoutes(signal){
+  api('routes', {signal:signal}).then(function(d){S.routes=d;renderRoutes();}).catch(function(){});
   var inp = $('#route-search');
-  if(inp) inp.addEventListener('input', function(){S._routeSearch=inp.value; renderRoutes(); inp.focus();});
+  if(inp) pageOn(inp, 'input', function(){S._routeSearch=inp.value; renderRoutes(); inp.focus();});
 }
 function renderRoutes(){
   var routes = S.routes || [];
@@ -968,9 +1102,9 @@ function renderRoutes(){
 }
 
 // ─── API Explorer ──────────────────────────────────────────────────────
-function initAPI(){
+function initAPI(signal){
   if(!S.apiRoutes.length){
-    api('api-explorer').then(function(d){S.apiRoutes=d;renderAPIExplorer();});
+    api('api-explorer', {signal:signal}).then(function(d){S.apiRoutes=d;renderAPIExplorer();}).catch(function(){});
   } else {
     renderAPIExplorer();
   }
@@ -988,7 +1122,7 @@ function renderAPIExplorer(){
   var listEl = $('#api-list');
   if(listEl) listEl.innerHTML = listHtml;
   $$('#api-list .item').forEach(function(it){
-    it.addEventListener('click', function(){
+    pageOn(it, 'click', function(){
       S.apiRouteSel = parseInt(it.dataset.idx);
       S.apiResp = null;
       renderAPIExplorer();
@@ -1030,19 +1164,19 @@ function renderAPIExplorer(){
   c.innerHTML = html;
 
   var addHdr = $('#api-add-header');
-  if(addHdr) addHdr.addEventListener('click', function(){
+  if(addHdr) pageOn(addHdr, 'click', function(){
     var c2 = $('#api-headers');
     c2.appendChild(el('input', {class:'hk', placeholder:'Key'}));
     c2.appendChild(el('input', {class:'hv', placeholder:'Value'}));
     var btn = el('button', {class:'rm', text:'-'});
-    btn.addEventListener('click', function(){c2.removeChild(btn.previousSibling); c2.removeChild(btn.previousSibling); c2.removeChild(btn);});
+    pageOn(btn, 'click', function(){c2.removeChild(btn.previousSibling); c2.removeChild(btn.previousSibling); c2.removeChild(btn);});
     c2.appendChild(btn);
   });
   $$('.headers .rm').forEach(function(b){
-    b.addEventListener('click', function(){b.parentNode.removeChild(b.previousSibling); b.parentNode.removeChild(b.previousSibling); b.parentNode.removeChild(b);});
+    pageOn(b, 'click', function(){b.parentNode.removeChild(b.previousSibling); b.parentNode.removeChild(b.previousSibling); b.parentNode.removeChild(b);});
   });
   var sendBtn = $('#api-send');
-  if(sendBtn) sendBtn.addEventListener('click', function(){
+  if(sendBtn) pageOn(sendBtn, 'click', function(){
     var headers = {};
     var ks = $$('.api-headers .hk');
     var vs = $$('.api-headers .hv');
@@ -1056,37 +1190,39 @@ function renderAPIExplorer(){
       body: $('#api-body').value
     };
     sendBtn.textContent = 'Sending...';
-    apiPost('api-explorer', body).then(function(r){
+    apiPost('api-explorer', body, {signal:currentPageSignal()}).then(function(r){
       S.apiResp = r;
       renderAPIExplorer();
     }).catch(function(e){
+      if(e && e.name === 'AbortError') return;
       sendBtn.textContent = 'Send';
       alert('Error: '+e.message);
     });
   });
   var clearBtn = $('#api-clear');
-  if(clearBtn) clearBtn.addEventListener('click', function(){S.apiResp=null; renderAPIExplorer();});
+  if(clearBtn) pageOn(clearBtn, 'click', function(){S.apiResp=null; renderAPIExplorer();});
   $$('.snippets .tab').forEach(function(t){
-    t.addEventListener('click', function(){
+    pageOn(t, 'click', function(){
       S.apiSnippetLang = t.dataset.lang;
       renderAPIExplorer();
     });
   });
   var copyBtn = $('.copy-btn');
-  if(copyBtn) copyBtn.addEventListener('click', function(){
+  if(copyBtn) pageOn(copyBtn, 'click', function(){
     var txt = $('.snippets pre').textContent;
     navigator.clipboard.writeText(txt).then(function(){copyBtn.textContent='Copied!'; setTimeout(function(){copyBtn.textContent='Copy';},1500);});
   });
 }
 
 // ─── Live Requests ─────────────────────────────────────────────────────
-function initRequests(){
+function initRequests(signal){
+  loadRequests(signal);
   renderRequests();
   ['f-method','f-status','f-route','f-user'].forEach(function(id){
     var e = $('#'+id);
     if(!e) return;
     var evt = id==='f-method'||id==='f-status' ? 'change' : 'input';
-    e.addEventListener(evt, function(){
+    pageOn(e, evt, function(){
       if(id==='f-method') S.reqFilter.method=e.value;
       if(id==='f-status') S.reqFilter.status=e.value;
       if(id==='f-route') S.reqFilter.route=e.value;
@@ -1095,9 +1231,10 @@ function initRequests(){
       if(evt==='input') e.focus();
     });
   });
-  setInterval(function(){
-    if(S.page==='requests') api('requests?limit=200').then(function(d){S.requests=d; renderRequests();}).catch(function(){});
-  }, 10000);
+  startPagePoll('requests', loadRequests, 10000);
+}
+function loadRequests(signal){
+  return api('requests?limit=200', {signal:signal}).then(function(d){S.requests=d; renderRequests();}).catch(function(){});
 }
 function renderRequests(){
   var list = S.requests.slice().reverse();
@@ -1127,7 +1264,7 @@ function renderRequests(){
   var tb = $('#req-tbody');
   if(tb) tb.innerHTML = html;
   $$('a[data-tl]').forEach(function(a){
-    a.addEventListener('click', function(e){
+    pageOn(a, 'click', function(e){
       e.preventDefault();
       S._tlSelected = a.dataset.tl;
       if(window.breeze) breeze.navigate(S.base+'/timeline');
@@ -1137,16 +1274,15 @@ function renderRequests(){
 }
 
 // ─── ORM Queries ───────────────────────────────────────────────────────
-var _queriesPoll=0;
-function initQueries(){
-  api('queries?limit=200').then(function(d){S.queries=d||[]; renderQueries();}).catch(function(){});
+function initQueries(signal){
+  api('queries?limit=200', {signal:signal}).then(function(d){S.queries=d||[]; renderQueries();}).catch(function(){});
   renderQueries();
   var so = $('#slow-only');
-  if(so) so.addEventListener('change', function(){S._slowOnly=so.checked; renderQueries();});
+  if(so) pageOn(so, 'change', function(){S._slowOnly=so.checked; renderQueries();});
   var si = $('#q-search');
-  if(si) si.addEventListener('input', function(){S.qSearch=si.value; renderQueries(); si.focus();});
-  if(!_queriesPoll) _queriesPoll=setInterval(function(){
-    if(S.page==='queries') api('queries?limit=200').then(function(d){S.queries=d||[]; renderQueries();}).catch(function(){});
+  if(si) pageOn(si, 'input', function(){S.qSearch=si.value; renderQueries(); si.focus();});
+  startPagePoll('queries', function(signal){
+    return api('queries?limit=200', {signal:signal}).then(function(d){S.queries=d||[]; renderQueries();}).catch(function(){});
   }, 5000);
 }
 function renderQueries(){
@@ -1171,16 +1307,16 @@ function renderQueries(){
 }
 
 // ─── Cache ─────────────────────────────────────────────────────────────
-function initCache(){
-  loadCache();
+function initCache(signal){
+  loadCache(signal);
   var cc = $('#cache-clear');
-  if(cc) cc.addEventListener('click', function(){apiPost('cache/clear',{}).then(loadCache);});
+  if(cc) pageOn(cc, 'click', function(){apiPost('cache/clear',{}, {signal:currentPageSignal()}).then(function(){ loadCache(currentPageSignal()); }).catch(function(){});});
   var cp = $('#cache-clear-prefix');
-  if(cp) cp.addEventListener('click', function(){apiPost('cache/clear',{prefix:$('#cache-prefix').value}).then(loadCache);});
-  setInterval(function(){ if(S.page==='cache') loadCache(); }, 5000);
+  if(cp) pageOn(cp, 'click', function(){apiPost('cache/clear',{prefix:$('#cache-prefix').value}, {signal:currentPageSignal()}).then(function(){ loadCache(currentPageSignal()); }).catch(function(){});});
+  startPagePoll('cache', loadCache, 5000);
 }
-function loadCache(){
-  api('cache').then(function(d){S.cache=d; renderCache();}).catch(function(){});
+function loadCache(signal){
+  return api('cache', {signal:signal}).then(function(d){S.cache=d; renderCache();}).catch(function(){});
 }
 function renderCache(){
   var c = S.cache || {};
@@ -1196,12 +1332,12 @@ function renderCache(){
 }
 
 // ─── Queue ─────────────────────────────────────────────────────────────
-function initQueue(){
-  loadQueue();
-  setInterval(function(){ if(S.page==='queue') loadQueue(); }, 5000);
+function initQueue(signal){
+  loadQueue(signal);
+  startPagePoll('queue', loadQueue, 5000);
 }
-function loadQueue(){
-  api('queue').then(function(d){S.queue=d; renderQueue();}).catch(function(){});
+function loadQueue(signal){
+  return api('queue', {signal:signal}).then(function(d){S.queue=d; renderQueue();}).catch(function(){});
 }
 function renderQueue(){
   var q = S.queue || {};
@@ -1229,14 +1365,16 @@ function renderQueue(){
   var tb = $('#job-tbody');
   if(tb) tb.innerHTML = html;
   $$('.retry').forEach(function(b){
-    b.addEventListener('click', function(){apiPost('queue/retry',{id:b.dataset.id}).then(loadQueue);});
+    pageOn(b, 'click', function(){apiPost('queue/retry',{id:b.dataset.id}, {signal:currentPageSignal()}).then(function(){ loadQueue(currentPageSignal()); }).catch(function(){});});
   });
 }
 
 // ─── Scheduler ─────────────────────────────────────────────────────────
-function initScheduler(){
-  api('scheduler').then(function(d){S.tasks=d; renderScheduler();}).catch(function(){});
-  setInterval(function(){ if(S.page==='scheduler') api('scheduler').then(function(d){S.tasks=d; renderScheduler();}).catch(function(){}); }, 5000);
+function initScheduler(signal){
+  api('scheduler', {signal:signal}).then(function(d){S.tasks=d; renderScheduler();}).catch(function(){});
+  startPagePoll('scheduler', function(signal){
+    return api('scheduler', {signal:signal}).then(function(d){S.tasks=d; renderScheduler();}).catch(function(){});
+  }, 5000);
 }
 function renderScheduler(){
   var tasks = S.tasks || [];
@@ -1260,25 +1398,23 @@ function renderScheduler(){
 }
 
 // ─── Logs ──────────────────────────────────────────────────────────────
-function initLogs(){
-  $$('.log-tab').forEach(function(t){t.addEventListener('click', function(){
+function initLogs(signal){
+  $$('.log-tab').forEach(function(t){pageOn(t, 'click', function(){
     S.logTab=t.dataset.tab;
     $$('.log-tab').forEach(function(x){x.classList.remove('active')});
     t.classList.add('active');
     // Load the newly-active tab's data.
-    api('logs?level='+S.logTab+'&limit=500').then(function(d){S.logs[S.logTab]=d||[]; renderLogs();}).catch(function(){});
+    api('logs?level='+S.logTab+'&limit=500', {signal:currentPageSignal()}).then(function(d){S.logs[S.logTab]=d||[]; renderLogs();}).catch(function(){});
     renderLogs();
   });});
   var s = $('#log-search');
-  if(s) s.addEventListener('input', function(){S.logSearch=s.value; renderLogs(); s.focus();});
+  if(s) pageOn(s, 'input', function(){S.logSearch=s.value; renderLogs(); s.focus();});
   // Poll only the active tab every 10 seconds (not all 5 tabs).
-  setInterval(function(){
-    if(S.page==='logs') {
-      api('logs?level='+S.logTab+'&limit=500').then(function(d){S.logs[S.logTab]=d||[]; renderLogs();}).catch(function(){});
-    }
+  startPagePoll('logs', function(signal){
+    return api('logs?level='+S.logTab+'&limit=500', {signal:signal}).then(function(d){S.logs[S.logTab]=d||[]; renderLogs();}).catch(function(){});
   }, 10000);
   // Initial load — only the active tab.
-  api('logs?level='+S.logTab+'&limit=500').then(function(d){S.logs[S.logTab]=d||[]; renderLogs();}).catch(function(){});
+  api('logs?level='+S.logTab+'&limit=500', {signal:signal}).then(function(d){S.logs[S.logTab]=d||[]; renderLogs();}).catch(function(){});
 }
 function renderLogs(){
   var tab = S.logTab;
@@ -1301,14 +1437,14 @@ function renderLogs(){
 }
 
 // ─── Health ────────────────────────────────────────────────────────────
-function initHealth(){
-  loadHealth();
+function initHealth(signal){
+  loadHealth(signal);
   var rb = $('#health-refresh');
-  if(rb) rb.addEventListener('click', loadHealth);
-  setInterval(function(){ if(S.page==='health') loadHealth(); }, 5000);
+  if(rb) pageOn(rb, 'click', function(){ loadHealth(currentPageSignal()); });
+  startPagePoll('health', loadHealth, 5000);
 }
-function loadHealth(){
-  api('health').then(function(d){S.health=d; renderHealth();}).catch(function(){});
+function loadHealth(signal){
+  return api('health', {signal:signal}).then(function(d){S.health=d; renderHealth();}).catch(function(){});
 }
 function renderHealth(){
   var list = S.health || [];
@@ -1334,12 +1470,12 @@ function renderHealth(){
 }
 
 // ─── Performance ───────────────────────────────────────────────────────
-function initPerformance(){
-  loadPerf();
-  setInterval(function(){ if(S.page==='performance') loadPerf(); }, 5000);
+function initPerformance(signal){
+  loadPerf(signal);
+  startPagePoll('performance', loadPerf, 5000);
 }
-function loadPerf(){
-  api('performance').then(function(d){S.perf=d; renderPerformance();}).catch(function(){});
+function loadPerf(signal){
+  return api('performance', {signal:signal}).then(function(d){S.perf=d; renderPerformance();}).catch(function(){});
 }
 function renderPerformance(){
   var p = S.perf || {};
@@ -1406,9 +1542,11 @@ function renderPerformance(){
 }
 
 // ─── Timeline ──────────────────────────────────────────────────────────
-function initTimeline(){
-  api('timeline?limit=50').then(function(d){S.timelines=d; renderTimelineList();}).catch(function(){});
-  setInterval(function(){ if(S.page==='timeline') api('timeline?limit=50').then(function(d){S.timelines=d; renderTimelineList();}).catch(function(){}); }, 10000);
+function initTimeline(signal){
+  api('timeline?limit=50', {signal:signal}).then(function(d){S.timelines=d; renderTimelineList();}).catch(function(){});
+  startPagePoll('timeline', function(signal){
+    return api('timeline?limit=50', {signal:signal}).then(function(d){S.timelines=d; renderTimelineList();}).catch(function(){});
+  }, 10000);
 }
 function renderTimelineList(){
   var list = S.timelines.slice();
@@ -1427,7 +1565,7 @@ function renderTimelineList(){
   var tb = $('#tl-tbody');
   if(tb) tb.innerHTML = html;
   $$('a[data-id]').forEach(function(a){
-    a.addEventListener('click', function(e){e.preventDefault(); S._tlSelected=a.dataset.id; renderTimelineDetail();});
+    pageOn(a, 'click', function(e){e.preventDefault(); S._tlSelected=a.dataset.id; renderTimelineDetail();});
   });
   if(S._tlSelected) renderTimelineDetail();
 }
@@ -1438,9 +1576,9 @@ function renderTimelineDetail(){
   d.innerHTML = '<div class="chart-card"><div class="head"><h3>Timeline '+escapeHTML(t.id)+'</h3><button id="tl-close">Close</button></div>'+
     '<div class="timeline">'+renderTimelineSteps(t.steps||[], 0)+'</div></div>';
   var cl = $('#tl-close');
-  if(cl) cl.addEventListener('click', function(){S._tlSelected=null; d.innerHTML='';});
+  if(cl) pageOn(cl, 'click', function(){S._tlSelected=null; d.innerHTML='';});
   $$('#tl-detail .t-step').forEach(function(s){
-    s.addEventListener('click', function(e){e.stopPropagation(); s.classList.toggle('open');});
+    pageOn(s, 'click', function(e){e.stopPropagation(); s.classList.toggle('open');});
   });
 }
 function renderTimelineSteps(steps, depth){
@@ -1468,14 +1606,22 @@ function renderTimelineSteps(steps, depth){
 // ─── Architecture ─────────────────────────────────────────────────────
 var archZoom = 1, archPanX = 0, archPanY = 0;
 var archDragging = false, archLastX = 0, archLastY = 0;
+var _archGlobalListenersBound = false;
 
-function initArchitecture(){
-  loadArchitecture();
-  setInterval(function(){ if(S.page==='architecture') loadArchitecture(); }, 5000);
+function applyArchTransform(){
+  var vp = $('#arch-viewport');
+  var zLabel = $('#arch-zoom-label');
+  if(vp) vp.style.transform = 'translate('+archPanX+'px,'+archPanY+'px) scale('+archZoom+')';
+  if(zLabel) zLabel.textContent = Math.round(archZoom*100)+'%';
+}
+
+function initArchitecture(signal){
+  loadArchitecture(signal);
+  startPagePoll('architecture', loadArchitecture, 5000);
   setupArchControls();
 }
-function loadArchitecture(){
-  api('architecture').then(function(d){S.arch=d; renderArchitecture();}).catch(function(){});
+function loadArchitecture(signal){
+  return api('architecture', {signal:signal}).then(function(d){S.arch=d; renderArchitecture();}).catch(function(){});
 }
 
 function setupArchControls(){
@@ -1488,19 +1634,12 @@ function setupArchControls(){
   var zOut = $('#arch-zoom-out');
   var zReset = $('#arch-zoom-reset');
   var zLabel = $('#arch-zoom-label');
-  if(zIn) zIn.addEventListener('click', function(){ archZoom = Math.min(archZoom*1.2, 3); applyArchTransform(); });
-  if(zOut) zOut.addEventListener('click', function(){ archZoom = Math.max(archZoom/1.2, 0.3); applyArchTransform(); });
-  if(zReset) zReset.addEventListener('click', function(){ archZoom=1; archPanX=0; archPanY=0; applyArchTransform(); });
-
-  function applyArchTransform(){
-    if(vp){
-      vp.style.transform = 'translate('+archPanX+'px,'+archPanY+'px) scale('+archZoom+')';
-      if(zLabel) zLabel.textContent = Math.round(archZoom*100)+'%';
-    }
-  }
+  if(zIn) pageOn(zIn, 'click', function(){ archZoom = Math.min(archZoom*1.2, 3); applyArchTransform(); });
+  if(zOut) pageOn(zOut, 'click', function(){ archZoom = Math.max(archZoom/1.2, 0.3); applyArchTransform(); });
+  if(zReset) pageOn(zReset, 'click', function(){ archZoom=1; archPanX=0; archPanY=0; applyArchTransform(); });
 
   // Mouse wheel zoom
-  wrap.addEventListener('wheel', function(e){
+  pageOn(wrap, 'wheel', function(e){
     e.preventDefault();
     var delta = e.deltaY < 0 ? 1.1 : 1/1.1;
     archZoom = Math.max(0.3, Math.min(archZoom*delta, 3));
@@ -1508,29 +1647,36 @@ function setupArchControls(){
   }, {passive:false});
 
   // Drag to pan
-  wrap.addEventListener('mousedown', function(e){
+  pageOn(wrap, 'mousedown', function(e){
     archDragging = true;
     archLastX = e.clientX;
     archLastY = e.clientY;
     vp.classList.add('no-transition');
   });
-  document.addEventListener('mousemove', function(e){
-    if(!archDragging) return;
-    archPanX += e.clientX - archLastX;
-    archPanY += e.clientY - archLastY;
-    archLastX = e.clientX;
-    archLastY = e.clientY;
-    applyArchTransform();
-  });
-  document.addEventListener('mouseup', function(){
-    if(archDragging){
-      archDragging = false;
-      if(vp) vp.classList.remove('no-transition');
-    }
-  });
+  // The drag listeners live on document, so bind them once for the lifetime
+  // of the dashboard. Rebinding on each navigation leaked closures over old
+  // viewport nodes and made one mouse gesture update multiple stale views.
+  if(!_archGlobalListenersBound){
+    document.addEventListener('mousemove', function(e){
+      if(!archDragging || S.page!=='architecture') return;
+      archPanX += e.clientX - archLastX;
+      archPanY += e.clientY - archLastY;
+      archLastX = e.clientX;
+      archLastY = e.clientY;
+      applyArchTransform();
+    });
+    document.addEventListener('mouseup', function(){
+      if(archDragging){
+        archDragging = false;
+        var currentVp = $('#arch-viewport');
+        if(currentVp) currentVp.classList.remove('no-transition');
+      }
+    });
+    _archGlobalListenersBound = true;
+  }
 
   // Touch support
-  wrap.addEventListener('touchstart', function(e){
+  pageOn(wrap, 'touchstart', function(e){
     if(e.touches.length===1){
       archDragging = true;
       archLastX = e.touches[0].clientX;
@@ -1538,7 +1684,7 @@ function setupArchControls(){
       if(vp) vp.classList.add('no-transition');
     }
   }, {passive:true});
-  wrap.addEventListener('touchmove', function(e){
+  pageOn(wrap, 'touchmove', function(e){
     if(!archDragging || e.touches.length!==1) return;
     archPanX += e.touches[0].clientX - archLastX;
     archPanY += e.touches[0].clientY - archLastY;
@@ -1546,7 +1692,7 @@ function setupArchControls(){
     archLastY = e.touches[0].clientY;
     applyArchTransform();
   }, {passive:true});
-  wrap.addEventListener('touchend', function(){
+  pageOn(wrap, 'touchend', function(){
     archDragging = false;
     if(vp) vp.classList.remove('no-transition');
   });
@@ -1921,22 +2067,22 @@ function renderSpanTimeline(target){
   return html;
 }
 
-function initEvents(){
-  loadEvents();
+function initEvents(signal){
+  loadEvents(signal);
   var s = $('#ev-search');
-  if(s) s.addEventListener('input', function(){S.eventFilter.q=s.value; renderEvents(); s.focus();});
+  if(s) pageOn(s, 'input', function(){S.eventFilter.q=s.value; renderEvents(); s.focus();});
   var fo = $('#ev-failed-only');
-  if(fo) fo.addEventListener('change', function(){S.eventFilter.failedOnly=fo.checked; renderEvents();});
+  if(fo) pageOn(fo, 'change', function(){S.eventFilter.failedOnly=fo.checked; renderEvents();});
   var src = $('#ev-source');
   // The source filter is applied server-side, so switching it reloads
   // rather than filtering the page's current slice: the newest 200
   // workflow executions are not necessarily in the newest 200 signals.
-  if(src) src.addEventListener('change', function(){S.eventFilter.source=src.value; loadEvents();});
-  setInterval(function(){ if(S.page==='events') loadEvents(); }, 10000);
+  if(src) pageOn(src, 'change', function(){S.eventFilter.source=src.value; loadEvents(currentPageSignal());});
+  startPagePoll('events', loadEvents, 10000);
 }
-function loadEvents(){
+function loadEvents(signal){
   var src = S.eventFilter.source||'';
-  api('events?limit=200'+(src?'&source='+encodeURIComponent(src):'')).then(function(d){
+  return api('events?limit=200'+(src?'&source='+encodeURIComponent(src):''), {signal:signal}).then(function(d){
     S.eventsMeta = d;
     // Merge: keep live WS rows that are newer than the API snapshot, then
     // prepend the snapshot's rows. WS rows carry the same shape, so a
@@ -2009,7 +2155,7 @@ function renderEvents(){
     // Clicking a row opens the per-listener breakdown below the table.
     $$('#ev-tbody tr[data-id]').forEach(function(tr){
       tr.style.cursor = 'pointer';
-      tr.addEventListener('click', function(){
+      pageOn(tr, 'click', function(){
         var id = Number(tr.getAttribute('data-id'));
         S.eventSel = (S.eventSel===id) ? null : id;
         renderEvents();
@@ -2044,7 +2190,7 @@ function renderEvents(){
       dhtml += '</div></div>';
       detail.innerHTML = dhtml;
       var cl = $('#ev-close');
-      if(cl) cl.addEventListener('click', function(){S.eventSel=null; detail.innerHTML='';});
+      if(cl) pageOn(cl, 'click', function(){S.eventSel=null; detail.innerHTML='';});
     } else {
       detail.innerHTML = '';
     }
@@ -2074,15 +2220,15 @@ function renderEvents(){
 // generates hundreds of range requests, so a per-request table would show
 // the same film several hundred times and answer no useful question. The
 // server aggregates; this renders that aggregate.
-function initVideo(){
-  loadVideo();
+function initVideo(signal){
+  loadVideo(signal);
   // Two seconds rather than the ten used elsewhere: bandwidth is the
   // point of this page, and a rate that updates every ten seconds reads
   // as stale while a video is visibly playing.
-  setInterval(function(){ if(S.page==='video') loadVideo(); }, 2000);
+  startPagePoll('video', loadVideo, 2000);
 }
-function loadVideo(){
-  api('video').then(function(d){ S.video = d; renderVideo(); }).catch(function(){});
+function loadVideo(signal){
+  return api('video', {signal:signal}).then(function(d){ S.video = d; renderVideo(); }).catch(function(){});
 }
 
 // fmtRate renders a byte rate. It is separate from fmtBytes because a
@@ -2175,18 +2321,26 @@ function currentTheme(){
 function setTheme(t){
   document.documentElement.setAttribute('data-theme', t);
   try{ localStorage.setItem('breeze-theme', t); }catch(e){}
-  // Charts hold no colour state of their own, so they need a repaint.
+  // Repaint from the data already in memory. A theme switch is purely
+  // presentational; it must not trigger fresh API traffic or race a page
+  // navigation just to redraw charts/canvases.
   try{
     if(S.page==='overview') renderOverview();
-    else if(S.page==='performance') loadPerf();
-    else if(S.page==='cache') loadCache();
-    else if(S.page==='fleet') loadFleet();
+    else if(S.page==='performance') renderPerformance();
+    else if(S.page==='cache') renderCache();
+    else if(S.page==='fleet'){
+      renderFleetCards(S.fleet.services, S.fleet.incidents);
+      renderFleetTopology(S.fleet.topology, S.fleet.services, S.fleet.playback);
+      renderFleetTraces(S.fleet.traces);
+    }
   }catch(e){}
 }
 
 function initTheme(){
   var btn = document.getElementById('theme-toggle');
   if(!btn) return;
+  // The theme toggle sits outside #breeze-app and belongs to the dashboard
+  // shell for its entire lifetime, not to whichever page is currently active.
   btn.addEventListener('click', function(){
     setTheme(currentTheme()==='dark' ? 'light' : 'dark');
   });

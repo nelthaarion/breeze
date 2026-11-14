@@ -8,9 +8,8 @@
 </div>
 <div style="margin-bottom:12px"><input id="log-search" placeholder="Search logs..." style="max-width:400px"></div>
 <div class="log-viewer" id="log-viewer"></div>
-<script>window.__breezeDashPage='logs';</script>
 <script data-spa-run="always">
-if(window.BreezeDash) BreezeDash.initPage('logs');
-BreezeDash.initPage('logs');
+window.__breezeDashPage='logs';
+if(window.BreezeDash) { window.BreezeDash.initPage('logs'); window.__breezeDashPage=null; }
 </script>
 {{end}}

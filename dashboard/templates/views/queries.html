@@ -20,6 +20,7 @@
   </section>
 </div>
 <script data-spa-run="always">
-BreezeDash.initPage('queries');
+window.__breezeDashPage='queries';
+if(window.BreezeDash) { window.BreezeDash.initPage('queries'); window.__breezeDashPage=null; }
 </script>
 {{end}}

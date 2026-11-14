@@ -9,9 +9,8 @@
   </div>
 </div>
 <div id="tl-detail"></div>
-<script>window.__breezeDashPage='timeline';</script>
 <script data-spa-run="always">
-if(window.BreezeDash) BreezeDash.initPage('timeline');
-BreezeDash.initPage('timeline');
+window.__breezeDashPage='timeline';
+if(window.BreezeDash) { window.BreezeDash.initPage('timeline'); window.__breezeDashPage=null; }
 </script>
 {{end}}

@@ -374,6 +374,20 @@ async function main() {
   eq('prevented forms issue no late requests', calls.length, 0);
   sandbox.FormData = function FormData() {};
 
+  // Cancellation is not an application error: a stopped poll/page request
+  // must not trigger error UI or retry callbacks.
+  let abortErrorCalls = 0;
+  sandbox.fetch = function(){
+    const error = new Error('cancelled'); error.name = 'AbortError';
+    return Promise.reject(error);
+  };
+  try {
+    await breeze.fetch('/cancelled', null, {onError:function(){ abortErrorCalls++; }});
+  } catch (error) {
+    check('cancelled fetch propagates AbortError', error && error.name === 'AbortError');
+  }
+  eq('cancelled fetch does not call application onError', abortErrorCalls, 0);
+
   // ── Report ────────────────────────────────────────────────────────────────
   if (failures.length) {
     console.log('FAIL');

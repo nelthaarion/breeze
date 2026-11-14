@@ -122,6 +122,7 @@ class Element {
     const i = ref ? this.childNodes.indexOf(ref) : -1;
     if (i === -1) this.childNodes.push(node); else this.childNodes.splice(i, 0, node);
     node.parentNode = this;
+    if (doc && doc._scriptInserted) doc._scriptInserted(node, this);
     return node;
   }
 
@@ -322,17 +323,38 @@ function matchesOne(el, sel) {
 
 const doc = {
   nodeType: 9,
+  readyState: 'loading',
   activeElement: null,
+  baseURI: 'https://example.test/',
+  scriptRequests: [],
+  scriptBehavior: null,
+  _listeners: new Map(),
   createElement(tag) { return String(tag).toLowerCase() === 'template' ? new TemplateElement() : new Element(tag); },
   createTextNode(t) { return new Text(t); },
   getElementById(id) { return doc.body ? (doc.body.querySelector('#' + id) || (doc.body.id === id ? doc.body : null)) : null; },
   querySelector(sel) { return doc.body ? doc.body.querySelector(sel) : null; },
   querySelectorAll(sel) { return doc.body ? doc.body.querySelectorAll(sel) : []; },
-  addEventListener() {},
-  removeEventListener() {},
+  addEventListener(type, fn) { const list=doc._listeners.get(type)||[]; list.push(fn); doc._listeners.set(type,list); },
+  removeEventListener(type, fn) { const list=doc._listeners.get(type)||[]; const i=list.indexOf(fn); if(i!==-1) list.splice(i,1); },
+  dispatchEvent(event) { (doc._listeners.get(event.type)||[]).slice().forEach(function(fn){fn.call(doc,event);}); return true; },
 };
 doc.body = new Element('body');
 doc.body.setAttribute('id', 'body');
+doc.head = new Element('head');
+doc.scriptTypes = [];
+doc.pendingScripts = [];
+doc._scriptInserted = function(node, parent){
+  if(parent !== doc.head || node.tagName !== 'SCRIPT' || !node.getAttribute('src')) return;
+  const src = node.getAttribute('src');
+  doc.scriptRequests.push(src);
+  doc.scriptTypes.push(node.getAttribute('type'));
+  const outcome = doc.scriptBehavior ? doc.scriptBehavior(src, doc.scriptRequests.length) : 'load';
+  if(outcome === 'manual'){ doc.pendingScripts.push(node); return; }
+  setTimeout(function(){
+    if(outcome === 'error') { if(node.onerror) node.onerror(new Error('load failed')); }
+    else if(node.onload) node.onload();
+  }, 0);
+};
 
 const location = { origin: 'https://example.test', protocol: 'https:', host: 'example.test', pathname: '/', search: '', hash: '', href: 'https://example.test/' };
 const history = { state: null, scrollRestoration: 'auto', replaceState() {}, pushState() {} };
@@ -342,14 +364,39 @@ const window = {
   addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; },
 };
 
+class FakeAbortController {
+  constructor() {
+    const listeners = [];
+    this.signal = {
+      aborted: false,
+      addEventListener(type, fn) { if(type === 'abort') listeners.push(fn); },
+      removeEventListener(type, fn) {
+        if(type !== 'abort') return;
+        const i = listeners.indexOf(fn);
+        if(i !== -1) listeners.splice(i, 1);
+      },
+    };
+    this._listeners = listeners;
+  }
+  abort() {
+    if(this.signal.aborted) return;
+    this.signal.aborted = true;
+    this._listeners.forEach(function(fn){ fn(); });
+  }
+}
+
+const quietConsole = Object.assign({}, console, {
+  error: function(){ /* expected failure-path assertions stay quiet */ },
+});
+
 const sandbox = {
   window, document: doc, history, location,
   fetch: () => Promise.resolve({ ok: true, status: 200, headers: { get: () => null }, text: () => Promise.resolve('') }),
   CustomEvent: class { constructor(t, i) { this.type = t; this.detail = (i || {}).detail; } },
-  AbortController: class { constructor() { this.signal = {}; } abort() {} },
+  AbortController: FakeAbortController,
   HTMLFormElement: function HTMLFormElement() {},
   WebSocket: function WebSocket() {},
-  console,
+  console: quietConsole,
   setTimeout, clearTimeout, setInterval, clearInterval,
   requestAnimationFrame: (fn) => setTimeout(fn, 0),
   URL, URLSearchParams, FormData: function FormData() {},
@@ -381,9 +428,25 @@ check('runtime exposes Breeze.onDestroy', typeof (Breeze && Breeze.onDestroy) ==
 
 const app = new Element('div');
 app.setAttribute('id', 'breeze-app');
+const initialServerNode = new Element('a');
+initialServerNode.setAttribute('id', 'initial-server-node');
+initialServerNode.setAttribute('title', 'server-owned-before-first-swap');
+initialServerNode.appendChild(new Text('old'));
+app.appendChild(initialServerNode);
 doc.body.appendChild(app);
+doc.readyState = 'interactive';
+doc.dispatchEvent({type:'DOMContentLoaded'});
+// Simulate a client widget mutating an attribute after the initial server DOM
+// has been recorded but before the first SPA navigation.
+initialServerNode.setAttribute('class', 'client-open');
 
 function main() {
+  // 0. The one-time initial snapshot removes server attributes omitted by the
+  // first fragment without mistaking later client-owned state for server data.
+  breeze.swap(app, '<a id="initial-server-node">new</a>');
+  eq('first patch removes a server-owned attribute', app.querySelector('#initial-server-node').getAttribute('title'), null);
+  eq('first patch preserves a client-owned class added after initial capture', app.querySelector('#initial-server-node').getAttribute('class'), 'client-open');
+
   // 1. An element that survives a render is the same node, not a replacement.
   breeze.swap(app, '<ul><li>one</li></ul>');
   const ul = app.querySelector('ul');
@@ -442,6 +505,13 @@ function main() {
   breeze.swap(app, '<ul><li data-key="b">B</li><li data-key="a">A</li></ul>');
   const order = app.querySelectorAll('li');
   check('keyed reorder moves the same nodes', order[0] === b && order[1] === a);
+
+  // A same-tag element with a different explicit id is a different control;
+  // preserving the old node would also preserve its stale listeners/state.
+  breeze.swap(app, '<input id="old-control" value="old">');
+  const oldControl = app.querySelector('#old-control');
+  breeze.swap(app, '<input id="new-control" value="new">');
+  check('different explicit IDs replace the node', app.querySelector('#new-control') !== oldControl);
 
   // 7. data-spa-static marks a subtree the runtime must not touch, for DOM
   // owned by something else (a chart library, an editor widget).
@@ -621,15 +691,17 @@ async function reactivity() {
   // tag inside that view. The fragment carries the SERVER's copy of the data;
   // reading it back over the value just set would silently revert the update
   // and leave the next mutation rendering stale data.
-  breeze.swap(app, '<div id="sd"></div>');
-  const sd = app.querySelector('#sd');
-  setTag('__breeze_tmpl__', {
+  const embeddedTemplates = {
     counter: '<b>{{.count}}</b>',
     boxed:   '<b>{{.count}}</b>',
     // Mimics a server-rendered view: content plus its own data tag, carrying
     // the server's (now older) copy of the same field.
-    withtag: '<b>{{.count}}</b><script id="__breeze_data__" type="application/json">{"count":1}<\/script>',
-  });
+    withtag: '<b>{{.count}}</b><script id="__breeze_data__" type="application/json">{"count":1}</script>',
+  };
+  const embeddedTemplateJSON = JSON.stringify(embeddedTemplates).replace(/<\/script/gi, '<\\/script');
+  await breeze.swap(app, '<div id="sd"></div><script id="__breeze_tmpl__" type="application/json">' +
+    embeddedTemplateJSON + '</script>');
+  const sd = app.querySelector('#sd');
   const unbindSd = breeze.bind(sd, 'withtag');
   await breeze.setData({ count: 42 }, sd, 'withtag');
   eq('setData survives the view\'s own embedded data tag', breeze.data().count, 42);
@@ -639,7 +711,89 @@ async function reactivity() {
   eq('the next mutation renders from the new value', sd.querySelector('b').textContent, '43');
   unbindSd();
 
-  // 20. A poll whose region is replaced keeps refreshing the live node. Same
+  // 20. Route data is hydrated before mount callbacks, without a timeout.
+  setTag('__breeze_data__', { route: 'old' });
+  let mountedRoute = '';
+  sandbox.window.readRouteDuringMount = function(){ mountedRoute = breeze.data().route; };
+  let watcherSawPatchedDOM = false;
+  const unwatchRoute = breeze.watch(function(data){
+    if(data && data.route === 'new') watcherSawPatchedDOM = !!app.querySelector('#route-ready');
+  });
+  await breeze.swap(app, '<div id="route-ready" data-spa-mount="readRouteDuringMount"></div>' +
+    '<script id="__breeze_data__" type="application/json">{"route":"new"}</script>');
+  eq('onMount sees new route data synchronously', mountedRoute, 'new');
+  check('watchers run after the new DOM has been patched', watcherSawPatchedDOM);
+  unwatchRoute();
+
+  // A debounced mutation from the outgoing route must be superseded by the
+  // incoming data snapshot, not notify watchers a second time after the swap.
+  let routeNotifications = 0;
+  let latestRoute = '';
+  const unwatchPending = breeze.watch(function(data){
+    routeNotifications++;
+    latestRoute = data && data.route;
+  });
+  breeze.data().outgoingMutation = true;
+  await breeze.swap(app, '<div id="route-debounce"></div>' +
+    '<script id="__breeze_data__" type="application/json">{"route":"debounced-new"}</script>');
+  await tick();
+  eq('outgoing route debounce is cancelled on data hydration', routeNotifications, 1);
+  eq('only the incoming route snapshot reaches watchers', latestRoute, 'debounced-new');
+  unwatchPending();
+
+  // 21. Script manager deduplicates by URL, removes executed nodes, preserves
+  // non-executable JSON tags, and fires scriptsready only after all loads.
+  doc.scriptRequests.length = 0;
+  let scriptsReady = 0;
+  const onScriptsReady = function(ev){ if(ev.detail && ev.detail.target === app) scriptsReady++; };
+  sandbox.window.addEventListener = function(type, fn){ if(type === 'breeze:scriptsready') doc._scriptsReady = fn; };
+  sandbox.window.addEventListener('breeze:scriptsready', onScriptsReady);
+  sandbox.window.dispatchEvent = function(ev){ if(ev.type === 'breeze:scriptsready' && doc._scriptsReady) doc._scriptsReady(ev); return true; };
+  await breeze.swap(app, '<script type="text/javascript" src="/assets/one.js#first"></script>' +
+    '<script type="text/javascript; charset=utf-8" src="/assets/one.js#second"></script>' +
+    '<script type="application/ld+json" id="route-json">{"ok":true}</script>' +
+    '<script data-spa-run="always">window.__inlineRuns=(window.__inlineRuns||0)+1;</script>' +
+    '<script src="/assets/two.js"></script>');
+  eq('same-fragment duplicate external URL loads once', doc.scriptRequests.length, 2);
+  eq('external scripts load in document order', doc.scriptRequests.join(','), '/assets/one.js#first,/assets/two.js');
+  eq('processed script nodes do not accumulate in the app', app.querySelectorAll('script').filter(function(x){ return x.getAttribute('src') || x.getAttribute('data-spa-run'); }).length, 0);
+  check('non-executable JSON script remains in the fragment', !!app.querySelector('#route-json'));
+  await breeze.swap(app, '<script type="application/javascript" src="/assets/one.js#another-fragment"></script>');
+  eq('already-loaded external URL is not fetched again', doc.scriptRequests.length, 2);
+  eq('loaded scripts are not retained in the document head', doc.head.querySelectorAll('script').length, 0);
+  await breeze.swap(app, '<script src="/assets/three.js"></script>');
+  eq('scriptsready fires once for each completed script-bearing swap', scriptsReady, 3);
+
+  // 22. A failed external request is evicted and can be retried on navigation.
+  doc.scriptRequests.length = 0;
+  let attempt = 0;
+  doc.scriptBehavior = function(){ attempt++; return attempt === 1 ? 'error' : 'load'; };
+  await breeze.swap(app, '<script src="/assets/retry.js"></script>');
+  await breeze.swap(app, '<script src="/assets/retry.js"></script>');
+  eq('failed external script can be retried', doc.scriptRequests.length, 2);
+  doc.scriptBehavior = null;
+
+  // 23. A newer swap invalidates the old script chain; scripts remaining in
+  // the previous fragment must not execute after the newer page wins.
+  doc.scriptRequests.length = 0;
+  let releaseFirst;
+  doc.scriptBehavior = function(_src, n){
+    if(n === 1) return 'hold';
+    return 'load';
+  };
+  const oldSwap = breeze.swap(app, '<script src="/assets/slow.js"></script>' +
+    '<script data-spa-run="always">window.__staleInline=true;</script>');
+  await new Promise(function(resolve){ setTimeout(resolve, 0); });
+  const newSwap = breeze.swap(app, '<script src="/assets/current.js"></script>');
+  // Resolve the intentionally held first external script after the new swap.
+  await new Promise(function(resolve){ setTimeout(resolve, 0); });
+  const held = doc.head.querySelector('script');
+  if(held && held.getAttribute('src') === '/assets/slow.js' && held.onload) held.onload();
+  await Promise.all([oldSwap, newSwap]);
+  check('stale fragment inline code is skipped', sandbox.window.__staleInline !== true);
+  doc.scriptBehavior = null;
+
+  // 24. A poll whose region is replaced keeps refreshing the live node. Same
   // stale-node failure as a binding, reached through a different trigger.
   setTag('__breeze_data__', { count: 1 });
   breeze.swap(app, '<div id="pollme">start</div>');
@@ -658,10 +812,109 @@ async function reactivity() {
   const after = app.querySelector('#pollme');
   check('poll region really was replaced', after !== before);
   await new Promise((r) => setTimeout(r, 20));
+  breeze.stop('#pollme');
   breeze.stop(after);
   breeze.stop(before);
   check('poll refreshed the live region, not the detached one',
     after.textContent.indexOf('tick') !== -1, 'got ' + JSON.stringify(after.textContent));
+
+  // 25. Fixed-delay polling never overlaps a slow response, and stopping by
+  // selector aborts the active request rather than allowing a late swap.
+  breeze.swap(app, '<div id="pollslow">initial</div>');
+  let slowCalls = 0, inFlight = 0, maxInFlight = 0;
+  let lastSignal = null;
+  sandbox.fetch = function(_url, options){
+    slowCalls++;
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    lastSignal = options && options.signal;
+    return new Promise(function(resolve, reject){
+      const timer = setTimeout(function(){
+        inFlight--;
+        resolve({
+          ok:true, status:200, headers:{get:()=>null},
+          text:()=>Promise.resolve('<b>slow '+slowCalls+'</b>'),
+        });
+      }, 20);
+      if(lastSignal && lastSignal.addEventListener) lastSignal.addEventListener('abort', function(){
+        clearTimeout(timer);
+        inFlight--;
+        const error = new Error('aborted'); error.name = 'AbortError';
+        reject(error);
+      });
+    });
+  };
+  breeze.poll('/slow', '#pollslow', 2);
+  await new Promise((r)=>setTimeout(r, 48));
+  breeze.stop('#pollslow');
+  const stoppedCalls = slowCalls;
+  await new Promise((r)=>setTimeout(r, 28));
+  eq('slow poll requests never overlap', maxInFlight, 1);
+  check('slow poll performed multiple sequential ticks', slowCalls >= 2);
+  eq('stopping by selector prevents later requests', slowCalls, stoppedCalls);
+  check('stopping by selector aborts the in-flight fetch', !!(lastSignal && lastSignal.aborted));
+
+  // 26. A poll owner can cancel the whole loop through options.signal. The
+  // poll's internal controller is linked to the owner signal, not substituted
+  // for it, so the active fetch is aborted and no future tick is scheduled.
+  breeze.swap(app, '<div id=\"pollexternal\">initial</div>');
+  let ownerCalls = 0;
+  let ownerFetchSignal = null;
+  sandbox.fetch = function(_url, options){
+    ownerCalls++;
+    ownerFetchSignal = options && options.signal;
+    return new Promise(function(_resolve, reject){
+      if(ownerFetchSignal && ownerFetchSignal.addEventListener){
+        ownerFetchSignal.addEventListener('abort', function(){
+          const error = new Error('aborted'); error.name = 'AbortError'; reject(error);
+        });
+      }
+    });
+  };
+  const owner = new FakeAbortController();
+  breeze.poll('/owner', '#pollexternal', 5, {signal: owner.signal});
+  await tick();
+  check('poll creates its own cancellable fetch signal', !!ownerFetchSignal && ownerFetchSignal !== owner.signal);
+  owner.abort();
+  check('owner signal aborts the active poll fetch', !!(ownerFetchSignal && ownerFetchSignal.aborted));
+  const callsAfterOwnerAbort = ownerCalls;
+  await new Promise((r)=>setTimeout(r, 15));
+  eq('owner cancellation prevents another poll tick', ownerCalls, callsAfterOwnerAbort);
+
+  // 27. Executable JavaScript MIME types may include MIME parameters; they
+  // must still be handled as scripts, while data-script types remain in DOM.
+  await breeze.swap(app, '<script type=\"application/javascript; charset=utf-8\" data-spa-run=\"always\">window.__mimeScriptRan=true;</script>' +
+    '<script type=\"importmap\" id=\"route-importmap\">{"imports":{}}</script>');
+  eq('parameterized JavaScript MIME script is processed', app.querySelectorAll('script').filter(function(x){ return x.getAttribute('data-spa-run'); }).length, 0);
+  check('non-executable import map remains in the DOM', !!app.querySelector('#route-importmap'));
+  doc.scriptTypes.length = 0;
+  await breeze.swap(app, '<script type=\"module; charset=utf-8\" src=\"/assets/module.js\"></script>');
+  eq('module MIME parameters are normalized on the executed script node', doc.scriptTypes[0], 'module');
+
+  // 28. A route may already be patched while its external script is still
+  // loading. Store mutations during that interval must invalidate the INCOMING
+  // route cache entry, not the old address-bar URL.
+  doc.scriptBehavior = function(){ return 'manual'; };
+  let routeFetches = 0;
+  const routeHTML = '<div id="cache-route-content"></div>' +
+    '<script id="__breeze_data__" type="application/json">{"routeValue":1}</script>' +
+    '<script src="/assets/cache-route.js"></script>';
+  sandbox.fetch = function(url){
+    routeFetches++;
+    return Promise.resolve({ok:true,status:200,headers:{get:function(){return null;}},text:function(){return Promise.resolve(routeHTML);}});
+  };
+  breeze.invalidateAll();
+  const pendingNavigation = breeze.navigate('/cache-route');
+  check('public navigate returns an awaitable Promise', !!pendingNavigation && typeof pendingNavigation.then === 'function');
+  await tick();
+  check('route navigation waits for its external script', doc.pendingScripts.length === 1);
+  breeze.data().routeValue = 2;
+  await tick();
+  doc.pendingScripts[0].onload();
+  await pendingNavigation;
+  doc.scriptBehavior = null;
+  await breeze.navigate('/cache-route');
+  eq('mount/script mutation invalidates the incoming route cache', routeFetches, 2);
 }
 
 async function run() {

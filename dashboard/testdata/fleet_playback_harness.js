@@ -192,8 +192,19 @@ El.prototype.setAttribute = function (k, v) {
 El.prototype.getAttribute = function (k) {
   return (this._attrs && this._attrs[k] !== undefined) ? this._attrs[k] : null;
 };
-El.prototype.addEventListener = function (ev, fn) {
-  (this._handlers[ev] = this._handlers[ev] || []).push(fn);
+El.prototype.addEventListener = function (ev, fn, options) {
+  const handlers = (this._handlers[ev] = this._handlers[ev] || []);
+  if (handlers.indexOf(fn) < 0) handlers.push(fn);
+  const signal = options && options.signal;
+  if (signal) {
+    if (signal.aborted) this.removeEventListener(ev, fn);
+    else signal.addEventListener('abort', () => this.removeEventListener(ev, fn), {once:true});
+  }
+};
+El.prototype.removeEventListener = function (ev, fn) {
+  const handlers = this._handlers[ev] || [];
+  const index = handlers.indexOf(fn);
+  if (index >= 0) handlers.splice(index, 1);
 };
 
 El.prototype.dispatch = function (ev) {
@@ -419,7 +430,8 @@ const sandbox = {
   Math: Math, JSON: JSON, Promise: Promise, Array: Array, Object: Object,
   String: String, Number: Number, Boolean: Boolean, Set: Set, Map: Map,
   isNaN: isNaN, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat,
-  Infinity: Infinity, NaN: NaN, Error: Error, RegExp: RegExp
+  Infinity: Infinity, NaN: NaN, Error: Error, RegExp: RegExp,
+  AbortController: AbortController
 };
 // Date.now must follow the fake clock: the response-leg beat and the glow
 // phase both read it, and a real clock would make those untestable.
@@ -477,6 +489,8 @@ async function buildRow() {
   // Playback's own re-renders read the stored topology, so it must be
   // populated for the animation assertions to be about anything.
   F.S.fleet.topology = makeTopology();
+  // Topology animation is intentionally scoped to the active Fleet page.
+  F.S.page = 'fleet';
   F.toggleFleetTrace(row, traceResponse.trace_id);
 
   // The detail fetch resolves through fetch -> .json() -> .then(render), so
@@ -677,47 +691,81 @@ async function main() {
     eq('meta reports zero', registry['#fleet-topology-meta'].textContent, '0 nodes · 0 edges');
   }
 
-  // 8. The page refreshes itself, and re-visiting it does not stack pollers.
-  //
-  // Two separate defects lived here. Fleet View had no self-refresh at all,
-  // so data only changed when the user switched tabs and initFleet re-ran.
-  // Adding one naively then armed a fresh interval on *every* visit, with
-  // none ever cleared: five visits meant five pollers interleaving calls to
-  // loadFleet() and trampling the shared cursor/traces state between them.
-  console.log('\n[8] exactly one poller, however many times the page is opened');
+  // 8. Page-owned Fleet listeners are removed on exit and rebound on return.
+  console.log('\n[8] Fleet controls survive page exit and revisit');
+  {
+    const tag = new El('select');
+    const next = new El('button');
+    registry['#fleet-tag'] = tag;
+    registry['#fleet-next-page'] = next;
+    F.S.page = 'overview';
+    windowStub.BreezeDash.initPage('fleet');
+    eq('filter has one listener on first visit', tag.boundEvents().filter((e) => e === 'change').length, 1);
+    eq('next page has one listener on first visit', next.boundEvents().filter((e) => e === 'click').length, 1);
+
+    windowStub.BreezeDash.initPage('overview');
+    eq('filter listener is removed on exit', tag.dispatch('change'), 0);
+    eq('next-page listener is removed on exit', next.dispatch('click'), 0);
+
+    windowStub.BreezeDash.initPage('fleet');
+    eq('filter listener is rebound on revisit', tag.dispatch('change'), 1);
+    eq('next-page listener is rebound on revisit', next.dispatch('click'), 1);
+  }
+
+  // 9. The page refreshes itself, and re-visiting it does not stack pollers.
+  // The implementation uses a fixed-delay setTimeout loop (not setInterval)
+  // so a slow request cannot overlap its successor. Re-init replaces the
+  // previous pending tick rather than creating another active poller.
+  console.log('\n[9] exactly one poller, however many times the page is opened');
   {
     registry['#fleet-traces'] = new El('div');
     registry['#fleet-cards'] = new El('div');
-    const before = intervalsArmed;
+    const beforeActive = timers.size;
     F.S.page = 'fleet';
     F.initFleet();
-    const afterFirst = intervalsArmed;
-    check('opening the page arms a refresh', afterFirst > before,
-      'armed ' + (afterFirst - before));
-    eq('exactly one poller for the first visit', afterFirst - before, 1);
+    for (let i = 0; i < 25; i++) await Promise.resolve();
+    eq('opening the page keeps one active refresh timer', timers.size, beforeActive);
 
-    for (let i = 0; i < 5; i++) F.initFleet();
-    eq('re-opening arms no further pollers', intervalsArmed, afterFirst);
+    for (let i = 0; i < 5; i++) {
+      F.initFleet();
+      for (let j = 0; j < 25; j++) await Promise.resolve();
+    }
+    eq('re-opening keeps exactly one pending poll', timers.size, beforeActive);
+
+    function latestTimer() {
+      let latest = null;
+      for (const entry of timers.entries()) {
+        if (!latest || entry[0] > latest[0]) latest = entry;
+      }
+      return latest;
+    }
+    async function firePollTick() {
+      const entry = latestTimer();
+      if (!entry) return false;
+      timers.delete(entry[0]);
+      entry[1].fn();
+      for (let i = 0; i < 25; i++) await Promise.resolve();
+      return true;
+    }
 
     // The poller must actually fetch, not just exist.
-    const poll = intervalFns[intervalFns.length - 1];
     F.S.fleet.loading = false;
     let fetched = false;
     const realFetch = sandbox.fetch;
     sandbox.fetch = function (u) { fetched = true; return realFetch(u); };
     windowStub.fetch = sandbox.fetch;
-    poll();
+    await firePollTick();
     check('poll tick actually refreshes', fetched);
     sandbox.fetch = realFetch;
     windowStub.fetch = realFetch;
 
-    // A tick landing while a previous load is still in flight must not fire
-    // a second overlapping request against the same shared cursor.
+    // A tick landing while a previous load is in flight must not issue a
+    // second request against the same shared cursor.
     F.S.fleet.loading = true;
     let reentered = false;
     sandbox.fetch = function (u) { reentered = true; return realFetch(u); };
     windowStub.fetch = sandbox.fetch;
-    poll();
+    await firePollTick();
     check('poll skips while a load is in flight', reentered === false);
     sandbox.fetch = realFetch;
     windowStub.fetch = realFetch;
@@ -728,20 +776,20 @@ async function main() {
     let polledElsewhere = false;
     sandbox.fetch = function (u) { polledElsewhere = true; return realFetch(u); };
     windowStub.fetch = sandbox.fetch;
-    poll();
+    await firePollTick();
     check('poll does nothing when another page is open', polledElsewhere === false);
     sandbox.fetch = realFetch;
     windowStub.fetch = realFetch;
     F.S.page = 'fleet';
   }
 
-  // 9. The zero-state placeholder is removed once traces arrive.
+  // 10. The zero-state placeholder is removed once traces arrive.
   //
   // reconcileList only owns nodes carrying [data-key], so a placeholder
   // written straight into innerHTML was invisible to it and survived every
   // later render — and because rows insert before firstChild, live traces
   // rendered *above* a stale "no traces yet" message.
-  console.log('\n[9] zero-state clears when traces arrive');
+  console.log('\n[10] zero-state clears when traces arrive');
   {
     const body = new El('div');
     registry['#fleet-traces'] = body;
@@ -775,7 +823,7 @@ async function main() {
   // and mid-playback there was no way to tell an outstanding call from one
   // that had already returned. Both legs are asserted by their endpoints,
   // because "two lines were drawn" is also true of a duplicate.
-  console.log('\n[10] each edge draws both a request and a response leg');
+  console.log('\n[11] each edge draws both a request and a response leg');
   {
     const topo = makeTopology();
     F.S.fleet.playback = null;
@@ -817,7 +865,7 @@ async function main() {
   // Aggregate percentiles show when no trace is open; the moment one is,
   // the labels switch to that trace's own measured hop durations — which is
   // the number a reader actually wants while stepping through an incident.
-  console.log('\n[11] hop timings are labelled inline and follow the open trace');
+  console.log('\n[12] hop timings are labelled inline and follow the open trace');
   {
     const topo = makeTopology();
     F.S.fleet.playback = null;

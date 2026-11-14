@@ -6,9 +6,8 @@
   <button id="cache-clear-prefix">Clear Prefix</button>
 </div>
 <div class="chart-card"><div class="head"><h3>Hit Ratio Over Time</h3></div><canvas id="chart-cache" style="width:100%;height:200px;display:block"></canvas></div>
-<script>window.__breezeDashPage='cache';</script>
 <script data-spa-run="always">
-if(window.BreezeDash) BreezeDash.initPage('cache');
-BreezeDash.initPage('cache');
+window.__breezeDashPage='cache';
+if(window.BreezeDash) { window.BreezeDash.initPage('cache'); window.__breezeDashPage=null; }
 </script>
 {{end}}

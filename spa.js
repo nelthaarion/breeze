@@ -36,94 +36,226 @@
 
    // ── Smart script execution ─────────────────────────────────────────────
    //
-   // Rules (applied inside swap() after every fragment insert):
+   // External scripts are loaded once per effective URL/type/security tuple.
+   // The registry stores the in-flight Promise, not a boolean: concurrent
+   // navigations share one request, and a failed request is evicted so a later
+   // navigation can retry it. Executed script elements are removed after load
+   // so route changes cannot leave an ever-growing collection of script tags.
    //
-   //   External scripts (src="..."):
-   //     Execute only once. A module-level Set tracks loaded URLs.
-   //     If already loaded, the <script> element is removed so it doesn't
-   //     appear in the DOM twice but its side-effects are not repeated.
-   //
-   //   Inline scripts (no src):
-   //     data-spa-run="always" → execute on every swap (the explicit opt-in).
-   //     data-spa-run="once"   → execute once per page lifecycle (tracked by Set).
-   //     no attribute          → never re-execute after the initial page load.
-   //     The attribute is checked case-insensitively.
-   //
-   //   Module scripts (type="module"):
-   //     Always external-style de-duplication for src modules.
-   //     Inline modules execute only on initial page load (browser de-dupes them
-   //     anyway for the src case; we honour the same for inline).
-   //
-   //   Execution order:
-   //     Scripts are processed in document order (forEach preserves DOM order).
-   //     Each eligible script is cloned and appended; the old node is removed.
+   // Inline scripts run only with an explicit data-spa-run="always|once".
+   // Non-JavaScript script elements (JSON, JSON-LD, import maps, etc.) are data
+   // and are left untouched. Scripts are processed in document order; an
+   // external script is awaited before the next eligible script is processed.
 
-   // URLs of external scripts already executed (survives across navigations).
-   var _loadedScripts = new Set();
-   // IDs/src of inline once-scripts already run (keyed by data-spa-id or content hash).
-   var _onceScripts   = new Set();
+   var _scriptRegistry = new Map();
+   var _onceScripts = new Set();
+   var _scriptRunTokens = new WeakMap();
 
-   // Simple djb2-style hash for content-keying inline once-scripts.
    function _hashStr(s) {
       var h = 5381;
       for (var i = 0; i < s.length; i++) h = (h * 33) ^ s.charCodeAt(i);
       return (h >>> 0).toString(36);
    }
 
-   // Execute scripts inside el after a swap. el is the element whose innerHTML
-   // was just replaced. Scripts already in the document head are not affected.
+   function _scriptType(type) {
+      // MIME parameters do not change a script's execution model.
+      return (type || '').toLowerCase().split(';', 1)[0].trim();
+   }
+
+   function _isExecutableScript(type) {
+      // Import maps and JSON data types deliberately remain non-executable
+      // and are not removed by the runner.
+      type = _scriptType(type);
+      if (!type || type === 'module') return true;
+      return /^(?:text|application)\/(?:java|ecma)script$/.test(type) ||
+             /^(?:text|application)\/x-(?:java|ecma)script$/.test(type) ||
+             type === 'text/jscript';
+   }
+
+   function _scriptURL(src) {
+      try {
+         var url = new URL(src, document.baseURI || window.location.href);
+         // URL fragments are not sent in HTTP requests and do not distinguish
+         // script resources; excluding them avoids loading the same file twice.
+         url.hash = '';
+         return url.href;
+      } catch (e) { return src; }
+   }
+
+   function _scriptKey(script, src) {
+      var type = _scriptType(script.getAttribute('type'));
+      // All executable classic-JavaScript MIME aliases share one execution
+      // model. Modules remain separate because their scope/dependency semantics
+      // differ from classic scripts.
+      type = type === 'module' ? 'module' : 'classic';
+      return [
+         type,
+         src,
+         script.getAttribute('integrity') || '',
+         (script.getAttribute('crossorigin') || '').toLowerCase(),
+         (script.getAttribute('referrerpolicy') || '').toLowerCase(),
+      ].join('\u0000');
+   }
+
+   function _cloneScript(old) {
+      var fresh = document.createElement('script');
+      Array.from(old.attributes).forEach(function (a) { fresh.setAttribute(a.name, a.value); });
+      // The HTML parser recognizes the module execution mode by its exact
+      // keyword, not by a MIME value with parameters. _scriptType accepts the
+      // normalized essence for consistent routing/registry identity, so make
+      // the actual replacement node match that same execution model.
+      if (_scriptType(old.getAttribute('type')) === 'module') {
+         fresh.setAttribute('type', 'module');
+      }
+      fresh.textContent = old.textContent || '';
+      return fresh;
+   }
+
+   function _removeNode(node) {
+      if (node && node.parentNode) node.parentNode.removeChild(node);
+   }
+
+   function _reportScriptError(el, script, error) {
+      console.error('Breeze script load failed:', script, error);
+      window.dispatchEvent(new CustomEvent('breeze:scripterror', {
+         detail: { target: el, src: script.getAttribute('src') || '', error: error }
+      }));
+   }
+
+   function _loadExternalScript(old, target, isCurrent) {
+      var src = _scriptURL(old.getAttribute('src') || '');
+      var key = _scriptKey(old, src);
+
+      function load() {
+         var pending = _scriptRegistry.get(key);
+         if (pending) {
+            return pending.then(function () {
+               _removeNode(old);
+            }, function (error) {
+               // A concurrent navigation requested the same URL while its
+               // first load was in flight. An active waiter gets one real
+               // retry; a superseded route must not spend bandwidth retrying.
+               if (isCurrent && !isCurrent()) throw error;
+               return load();
+            });
+         }
+
+         var fresh = _cloneScript(old);
+         // Dynamic classic scripts are async by default. We intentionally
+         // serialize route scripts in source order, so opt out of that default.
+         if (_scriptType(old.getAttribute('type')) !== 'module') {
+            fresh.async = false;
+            fresh.removeAttribute && fresh.removeAttribute('async');
+         }
+
+         var parent = document.head || document.documentElement || document.body;
+         var request = new Promise(function (resolve, reject) {
+            fresh.onload = function () { resolve(); };
+            fresh.onerror = function () { reject(new Error('Unable to load ' + src)); };
+            parent.appendChild(fresh);
+         }).then(function () {
+            _removeNode(fresh);
+         }, function (error) {
+            _removeNode(fresh);
+            throw error;
+         });
+
+         _scriptRegistry.set(key, request);
+         // Failed entries must not poison future navigation attempts.
+         request.catch(function () {
+            if (_scriptRegistry.get(key) === request) _scriptRegistry.delete(key);
+         });
+         return request.then(function () { _removeNode(old); });
+      }
+
+      return load().then(function () {
+         return true;
+      }, function (error) {
+         _removeNode(old);
+         if (!isCurrent || isCurrent()) _reportScriptError(target, old, error);
+         return false;
+      });
+   }
+
    function _runScripts(el) {
-      var scripts = el.querySelectorAll('script');
+      if (!el || !el.querySelectorAll) return Promise.resolve();
+
+      var token = (_scriptRunTokens.get(el) || 0) + 1;
+      _scriptRunTokens.set(el, token);
+      var scripts = Array.prototype.slice.call(el.querySelectorAll('script'));
+      var seenExternal = new Set();
+      var errors = [];
+      var chain = Promise.resolve();
+
+      function isCurrent() { return _scriptRunTokens.get(el) === token; }
+
       scripts.forEach(function (old) {
-         var src     = old.getAttribute('src');
-         var type    = (old.getAttribute('type') || '').toLowerCase().trim();
-         var spaRun  = (old.getAttribute('data-spa-run') || '').toLowerCase().trim();
-         var isModule = type === 'module';
+         chain = chain.then(function () {
+            if (!isCurrent() || !old.parentNode) return;
 
-         // ── External script ──────────────────────────────────────────────
-         if (src) {
-         var key = src;
-         if (_loadedScripts.has(key)) {
-            // Already loaded — remove the stale node, do not re-execute.
-            old.parentNode && old.parentNode.removeChild(old);
-            return;
-         }
-         _loadedScripts.add(key);
-         var s = document.createElement('script');
-         Array.from(old.attributes).forEach(function (a) { s.setAttribute(a.name, a.value); });
-         old.parentNode.replaceChild(s, old);
-         return;
-         }
+            var type = _scriptType(old.getAttribute('type'));
+            if (!_isExecutableScript(type)) return;
 
-         // ── Inline script ────────────────────────────────────────────────
-         var content = old.textContent || '';
+            var src = old.getAttribute('src');
+            if (src) {
+               var normalized = _scriptURL(src);
+               var key = _scriptKey(old, normalized);
+               if (seenExternal.has(key)) {
+                  _removeNode(old);
+                  return;
+               }
+               seenExternal.add(key);
+               return _loadExternalScript(old, el, isCurrent).then(function (loaded) {
+                  if (!loaded) errors.push(new Error('Failed to load ' + normalized));
+                  if (!isCurrent()) return;
+               });
+            }
 
-         if (spaRun === 'always') {
-         // Explicit always — execute unconditionally.
-         var s = document.createElement('script');
-         Array.from(old.attributes).forEach(function (a) { s.setAttribute(a.name, a.value); });
-         s.textContent = content;
-         old.parentNode.replaceChild(s, old);
-         return;
-         }
+            var spaRun = (old.getAttribute('data-spa-run') || '').toLowerCase().trim();
+            if (spaRun !== 'always' && spaRun !== 'once') {
+               // The browser already ran inline scripts on the initial full
+               // page load. A fragment must opt in before it can execute again.
+               _removeNode(old);
+               return;
+            }
 
-         if (spaRun === 'once') {
-         var key = old.getAttribute('data-spa-id') || _hashStr(content);
-         if (_onceScripts.has(key)) {
-            old.parentNode && old.parentNode.removeChild(old);
-            return;
-         }
-         _onceScripts.add(key);
-         var s = document.createElement('script');
-         Array.from(old.attributes).forEach(function (a) { s.setAttribute(a.name, a.value); });
-         s.textContent = content;
-         old.parentNode.replaceChild(s, old);
-         return;
-         }
+            var content = old.textContent || '';
+            var onceKey = old.getAttribute('data-spa-id') || _hashStr(type + '\u0000' + content);
+            if (spaRun === 'once' && _onceScripts.has(onceKey)) {
+               _removeNode(old);
+               return;
+            }
 
-         // No data-spa-run attribute (including inline modules):
-         // Remove from DOM; do not execute. The initial page-load already ran it.
-         old.parentNode && old.parentNode.removeChild(old);
+            var fresh = _cloneScript(old);
+            if (spaRun === 'once') _onceScripts.add(onceKey);
+
+            if (type === 'module') {
+               return new Promise(function (resolve, reject) {
+                  fresh.onload = resolve;
+                  fresh.onerror = function () { reject(new Error('Inline module execution failed')); };
+                  old.parentNode.replaceChild(fresh, old);
+               }).then(function () {
+                  _removeNode(fresh);
+               }, function (error) {
+                  _removeNode(fresh);
+                  if (spaRun === 'once') _onceScripts.delete(onceKey);
+                  errors.push(error);
+                  _reportScriptError(el, old, error);
+               });
+            }
+
+            // Classic inline code executes synchronously when the replacement
+            // node enters the document; removing it immediately is safe.
+            old.parentNode.replaceChild(fresh, old);
+            _removeNode(fresh);
+         });
+      });
+
+      return chain.then(function () {
+         if (!isCurrent()) return;
+         window.dispatchEvent(new CustomEvent('breeze:scriptsready', {
+            detail: { target: el, errors: errors }
+         }));
       });
    }
 
@@ -198,6 +330,9 @@
       if (!a || !b || a.nodeType !== b.nodeType) return false;
       if (a.nodeType !== 1) return true;
       if ((a.tagName || '') !== (b.tagName || '')) return false;
+      var oldID = a.getAttribute && a.getAttribute('id');
+      var newID = b.getAttribute && b.getAttribute('id');
+      if ((oldID || newID) && oldID !== newID) return false;
       // Static-ness is part of compatibility, not just a skip-flag. If the old
       // node is static and the new one is not, reusing it would strand a node
       // this runtime is forbidden to patch at a position the server now wants
@@ -219,31 +354,53 @@
       var names = [], attrs = _attrArray(node), i;
       for (i = 0; i < attrs.length; i++) names.push(attrs[i].name);
       _ownedAttrs.set(node, names);
+      // A static subtree is never patched, so walking its descendants only
+      // adds startup work and WeakMap entries that can never be consulted.
+      if (_isStatic(node)) return;
       var kids = node.childNodes || [];
       for (i = 0; i < kids.length; i++) _recordOwned(kids[i]);
+   }
+
+   // The runtime is injected immediately after <body>, before #breeze-app is
+   // parsed. Capture the initial server-owned attributes once the document is
+   // complete, before users can interact with controls. This one-time pass is
+   // important: a lazy first-patch snapshot would mistake client-side state
+   // (e.g. a class added by a widget before the first navigation) for a
+   // server-owned attribute and remove it when the next fragment omits it.
+   function _primeInitialOwnedAttrs() {
+      var app = document.getElementById('breeze-app');
+      if (app) _recordOwned(app);
+   }
+   if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _primeInitialOwnedAttrs, { once: true });
+   } else {
+      _primeInitialOwnedAttrs();
    }
 
    // Copy only the attributes that actually differ. Rewriting an attribute
    // that already holds the right value is not free: it can restart a CSS
    // transition or invalidate layout for no reason.
    //
-   // Removal is limited to attributes a previous render declared. An element
-   // this runtime has never rendered (the server's initial page load, before
-   // any swap) starts with nothing recorded, so its attributes are added to
-   // and updated but never removed on the first patch; from then on the
-   // recorded set is accurate.
+   // Removal is limited to attributes a previous render declared. The initial
+   // app subtree is primed once at DOMContentLoaded; nodes introduced later are
+   // recorded when inserted, with a lazy fallback for detached patch targets.
+   // This preserves first-swap removals without a full-tree scan per navigation.
    function _patchAttrs(oldEl, newEl) {
-      var newAttrs = _attrArray(newEl), declared = [], i, a;
+      var newAttrs = _attrArray(newEl), declared = new Set(), i, a;
+      var owned = _ownedAttrs.get(oldEl);
+      if (!owned) {
+         owned = _attrArray(oldEl).map(function (attr) { return attr.name; });
+         _ownedAttrs.set(oldEl, owned);
+      }
       for (i = 0; i < newAttrs.length; i++) {
          a = newAttrs[i];
-         declared.push(a.name);
+         declared.add(a.name);
          if (oldEl.getAttribute(a.name) !== a.value) oldEl.setAttribute(a.name, a.value);
       }
-      var owned = _ownedAttrs.get(oldEl) || [];
       for (i = 0; i < owned.length; i++) {
-         if (declared.indexOf(owned[i]) === -1) oldEl.removeAttribute(owned[i]);
+         if (!declared.has(owned[i])) oldEl.removeAttribute(owned[i]);
       }
-      _ownedAttrs.set(oldEl, declared);
+      _ownedAttrs.set(oldEl, newAttrs.map(function (attr) { return attr.name; }));
    }
 
    function _patchNode(oldNode, newNode) {
@@ -259,49 +416,44 @@
 
    function _patchChildren(oldParent, newParent) {
       var newKids = _childArray(newParent);
-      var oldKids = _childArray(oldParent);
-      var keyed = {}, i, k;
+      var keyed = null, i;
 
-      for (i = 0; i < oldKids.length; i++) {
-         k = _nodeKey(oldKids[i]);
-         if (k) keyed[k] = oldKids[i];
+      function keyedNodes() {
+         if (keyed) return keyed;
+         keyed = new Map();
+         var oldChildren = oldParent.childNodes || [];
+         for (var n = 0; n < oldChildren.length; n++) {
+            var oldChild = oldChildren[n];
+            var oldKey = _nodeKey(oldChild);
+            if (oldKey) keyed.set(oldKey, oldChild);
+         }
+         return keyed;
       }
 
       var cursor = 0;
       for (i = 0; i < newKids.length; i++) {
          var newNode = newKids[i];
          var key = _nodeKey(newNode);
-         var live = _childArray(oldParent);
-         var atCursor = live[cursor] || null;
+         // childNodes is live. Indexing it avoids allocating a new array on
+         // every iteration while still observing keyed moves/inserts.
+         var atCursor = oldParent.childNodes[cursor] || null;
          var match = null;
 
          if (key) {
-            if (keyed[key] && _sameType(keyed[key], newNode)) {
-               match = keyed[key];
-               keyed[key] = null;
+            var keyedMatch = keyedNodes().get(key);
+            if (keyedMatch && _sameType(keyedMatch, newNode)) {
+               match = keyedMatch;
+               keyed.delete(key);
             }
          } else if (atCursor && !_nodeKey(atCursor) && _sameType(atCursor, newNode)) {
-            // Unkeyed nodes match strictly by position, so a reorder without
-            // data-key reads as a content update rather than a move. That is
-            // the documented trade-off: add data-key for real move semantics.
             match = atCursor;
          }
 
          if (match) {
             if (match !== atCursor) oldParent.insertBefore(match, atCursor);
             _patchNode(match, newNode);
-            // A reused node can start matching a mount selector it did not
-            // match before, because patching just changed its attributes
-            // (a class or data-* the new render added). Checking only this
-            // node is enough: its descendants get their own visit through
-            // the recursion, so a subtree scan here would be quadratic.
-            // _mountEl is keyed per element+rule, so nodes that already
-            // mounted are not re-entered.
             _mountSelf(match);
          } else {
-            // insertBefore moves newNode out of the parsed tree into the live
-            // document; only now is it genuinely inserted, which is why mount
-            // hooks belong here and not in swap().
             oldParent.insertBefore(newNode, atCursor);
             _recordOwned(newNode);
             _runMounts(newNode);
@@ -309,15 +461,17 @@
          cursor++;
       }
 
-      var leftover = _childArray(oldParent).slice(cursor);
-      for (i = 0; i < leftover.length; i++) {
-         _runDestroys(leftover[i]);
-         oldParent.removeChild(leftover[i]);
+      // Remove leftovers from the cursor forward without materialising yet
+      // another child array. The live collection shrinks as nodes are removed.
+      while ((oldParent.childNodes || []).length > cursor) {
+         var leftover = (oldParent.childNodes || [])[cursor];
+         _runDestroys(leftover);
+         oldParent.removeChild(leftover);
       }
    }
 
-   function _patch(oldEl, html) {
-      _patchChildren(oldEl, _parseHTML(html));
+   function _patch(oldEl, newTree) {
+      _patchChildren(oldEl, newTree);
    }
 
    // ── Component lifecycle: onMount / onDestroy ───────────────────────────
@@ -439,27 +593,26 @@
       };
    }
 
-   // Patch el's children from html, then run scripts with smart de-duplication.
-   //
-   // _refreshStateTags runs FIRST, before _runScripts, for two reasons:
-   //   1. It relocates any __breeze_data__/__breeze_tmpl__/__breeze_i18n__
-   //      tags found in the fragment out to <body>, removing them from el's
-   //      subtree. _runScripts treats any <script> without a data-spa-run
-   //      attribute as a stale inline script and deletes it — running it
-   //      first would strip these JSON tags before they could ever be read.
-   //   2. Any content script in the fragment that calls breeze.* at its own
-   //      top level (e.g. breeze.bind(...)) must see this route's data, not
-   //      whatever the previously displayed route left behind.
+   // Prepare route state before patching so every onMount/data-spa-mount hook
+   // sees the new route's data synchronously. Watchers and bindings are notified
+   // only after the DOM patch has completed, avoiding a render against old DOM.
    function swap(el, html) {
+      if (!el) return Promise.resolve();
+      var newTree = _parseHTML(html);
+      var stateChange = _prepareStateTags(newTree);
+
       if (window.__BREEZE_NO_PATCH__ === true) {
          _runDestroys(el);
-         el.innerHTML = html;
+         while (el.firstChild) el.removeChild(el.firstChild);
+         el.appendChild(newTree);
+         _recordOwned(el);
          _runMounts(el);
       } else {
-         _patch(el, html);
+         _patch(el, newTree);
       }
-      _refreshStateTags(el);
-      _runScripts(el);
+
+      _finishStateTags(stateChange);
+      return _runScripts(el);
    }
 
    // ── Core fetch helper ──────────────────────────────────────────────────
@@ -473,6 +626,7 @@
          method:      options.method  || 'GET',
          body:        options.body    || undefined,
          credentials: 'same-origin',
+         signal: options.signal,
          headers: Object.assign(
             { 'X-Breeze-Fragment': 'true' },
             options.headers || {}
@@ -486,7 +640,7 @@
          return html;
          }
 
-         if (el) { swap(el, html); }
+         if (el) { await swap(el, html); }
          if (options.onSuccess) { options.onSuccess(html, el); }
 
          window.dispatchEvent(new CustomEvent('breeze:update', {
@@ -495,47 +649,119 @@
 
          return html;
       } catch (e) {
-         if (options.onError) { options.onError(e, el); }
+         // Cancellation is a lifecycle decision, not an application failure.
+         // In particular, a stopped poll or superseded page request must not
+         // invoke a caller's error UI (toast, retry prompt, etc.).
+         if (options.onError && (!e || e.name !== 'AbortError')) { options.onError(e, el); }
          throw e;
       }
    }
 
    // ── Polling ────────────────────────────────────────────────────────────
 
-   var _polls = new WeakMap();
+   var _pollsByNode = new WeakMap();
+   var _pollsByKey = new Map();
+
+   function _pollKey(target, el) {
+      if (typeof target === 'string') return 'selector:' + target;
+      if (target == null) return 'default';
+      var locator = _bindLocator(el || target);
+      return locator ? 'locator:' + locator : null;
+   }
+
+   function _stopPollRecord(record) {
+      if (!record || record.stopped) return;
+      record.stopped = true;
+      if (record.timer !== null) clearTimeout(record.timer);
+      record.timer = null;
+      if (record.controller) record.controller.abort();
+      record.controller = null;
+      if (record.externalSignal && record.externalAbort) {
+         record.externalSignal.removeEventListener('abort', record.externalAbort);
+      }
+      record.externalAbort = null;
+      if (record.key && _pollsByKey.get(record.key) === record) _pollsByKey.delete(record.key);
+   }
 
    function breezePoll(url, target, intervalMs, options) {
       var el = resolveEl(target);
       if (!el) { console.warn('breeze.poll: target not found', target); return; }
-      breezeStop(el);
 
-      // Resolve the region again on every tick rather than capturing the node
-      // once. _patch is allowed to replace a node outright (see _sameType) or
-      // drop it as leftover, and a poll holding the original then fetches
-      // forever and patches a node no longer in the document — updates that
-      // are real, correct, and invisible. _bindLocator/_bindTarget give the
-      // poll the same keyed re-resolution bindings use.
-      // A string/null target is re-resolved by resolveEl on every tick; an
-      // element target is tracked by identity with a locator to recover from
-      // replacement.
+      var key = _pollKey(target, el);
+      if (key && _pollsByKey.has(key)) _stopPollRecord(_pollsByKey.get(key));
       var site = _makeSite((target && typeof target !== 'string') ? el : target);
+      var externalSignal = options && options.signal;
+      var record = {
+         key: key,
+         site: site,
+         timer: null,
+         controller: null,
+         stopped: false,
+         interval: Math.max(1, Number(intervalMs) || 5000),
+         current: el,
+         externalSignal: externalSignal || null,
+         externalAbort: null,
+      };
+      if (key) _pollsByKey.set(key, record);
+      _pollsByNode.set(el, record);
 
-      breezeGet(url, el, options);
-      var id = setInterval(function () {
-         var live = _bindTarget(site);
-         // The region is gone for good: stop, instead of polling the network
-         // on behalf of a node nobody can see.
-         if (live === null) { clearInterval(id); return; }
-         breezeGet(url, live, options);
-      }, intervalMs || 5000);
-      _polls.set(el, id);
+      if (externalSignal) {
+         if (externalSignal.aborted) {
+            _stopPollRecord(record);
+            return function stop() { _stopPollRecord(record); };
+         }
+         record.externalAbort = function () { _stopPollRecord(record); };
+         externalSignal.addEventListener('abort', record.externalAbort, { once: true });
+      }
+
+      function schedule() {
+         if (record.stopped) return;
+         record.timer = setTimeout(tick, record.interval);
+      }
+
+      function tick() {
+         if (record.stopped) return;
+         var live = _bindTarget(record.site);
+         if (live === null) { _stopPollRecord(record); return; }
+         record.current = live;
+         _pollsByNode.set(live, record);
+
+         var controller = new AbortController();
+         record.controller = controller;
+         var requestOptions = Object.assign({}, options || {}, { signal: controller.signal });
+         breezeGet(url, live, requestOptions).catch(function (error) {
+            if (!error || error.name !== 'AbortError') return;
+         }).finally(function () {
+            if (record.controller === controller) record.controller = null;
+            // Fixed-delay scheduling: at most one request is in flight, and
+            // time spent fetching is not followed by a burst of overdue ticks.
+            if (!record.stopped) schedule();
+         });
+      }
+
+      tick();
+      return function stop() { _stopPollRecord(record); };
    }
 
    function breezeStop(target) {
-      var el = resolveEl(target);
-      if (!el) return;
-      var id = _polls.get(el);
-      if (id !== undefined) { clearInterval(id); _polls.delete(el); }
+      var record = null;
+      if (typeof target === 'string') {
+         record = _pollsByKey.get('selector:' + target) ||
+                  _pollsByKey.get('locator:' + target) || null;
+         if (!record) {
+            var found = document.querySelector(target);
+            if (found) record = _pollsByNode.get(found) || null;
+         }
+      } else if (target == null) {
+         record = _pollsByKey.get('default') || null;
+      } else {
+         record = _pollsByNode.get(target) || null;
+         if (!record) {
+            var key = _pollKey(target, target);
+            if (key) record = _pollsByKey.get(key) || null;
+         }
+      }
+      if (record) _stopPollRecord(record);
    }
 
    // ── SPA navigation ─────────────────────────────────────────────────────
@@ -598,6 +824,16 @@
       } catch (e) {
          return url;
       }
+   }
+
+   // During the async part of a navigation the address bar is still on the
+   // previous route, but mounts/scripts already belong to the incoming one.
+   // Keep its cache key scoped to that swap so a data mutation in onMount or
+   // an awaited route script invalidates the fragment currently being shown.
+   var _pendingRouteCache = null;
+   function _currentRouteCacheKey() {
+      return _pendingRouteCache ? _pendingRouteCache.key :
+         _normalizeUrl(window.location.pathname + window.location.search);
    }
 
    function _cacheRoute(key, html) {
@@ -720,7 +956,14 @@
          if (seq !== _navSeq) return;
 
          var target = getAppTarget();
-         swap(target, html);
+         var pendingRoute = { key: key };
+         _pendingRouteCache = pendingRoute;
+         try {
+            await swap(target, html);
+         } finally {
+            if (_pendingRouteCache === pendingRoute) _pendingRouteCache = null;
+         }
+         if (seq !== _navSeq) return;
 
          if (push) { history.pushState({ breezeUrl: url, scrollY: 0 }, '', url); }
 
@@ -902,7 +1145,7 @@
          },
          body: body,
       }).then(function (res) {
-         return res.text().then(function (html) {
+         return res.text().then(async function (html) {
          if (!res.ok) {
             // Server error — fall back to a real navigation so the user sees it.
             window.location.href = actionHref;
@@ -916,12 +1159,18 @@
          // fresh immediately after.
          _invalidateCache();
          _syncAuthEpoch(res);
-         swap(target, html);
-         if (_isCacheable(res)) _cacheRoute(_normalizeUrl(actionPath), html);
-         history.pushState({ breezeUrl: actionHref, scrollY: 0 }, '', actionHref);
-         window.scrollTo(0, 0);
-         window.dispatchEvent(new CustomEvent('breeze:navigate', { detail: { url: actionPath } }));
-         _runHooks('afterSubmit', { form: form, url: actionPath, html: html });
+         var pendingRoute = { key: _normalizeUrl(actionPath) };
+         _pendingRouteCache = pendingRoute;
+         try {
+            await swap(target, html);
+            if (_isCacheable(res)) _cacheRoute(pendingRoute.key, html);
+            history.pushState({ breezeUrl: actionHref, scrollY: 0 }, '', actionHref);
+            window.scrollTo(0, 0);
+            window.dispatchEvent(new CustomEvent('breeze:navigate', { detail: { url: actionPath } }));
+            _runHooks('afterSubmit', { form: form, url: actionPath, html: html });
+         } finally {
+            if (_pendingRouteCache === pendingRoute) _pendingRouteCache = null;
+         }
          });
       }).catch(function () {
          // Network failure — fall back to normal browser submit.
@@ -1108,7 +1357,7 @@
       if (_renderTimer) return;
       _renderTimer = setTimeout(function () {
          _renderTimer = null;
-         _invalidateRoute(window.location.pathname + window.location.search);
+         _invalidateRoute(_currentRouteCacheKey());
          _notifyWatchers(_store);
          _renderBindings();
       }, 0);
@@ -1159,42 +1408,46 @@
       }
    }
 
-   // Called by swap() after every fragment insert (navigation, breeze.fetch,
-   // poll, render, form submit). If the fragment carries fresh
-   // __breeze_data__ / __breeze_i18n__ / __breeze_tmpl__ tags — every view
-   // now embeds these, see execView on the server — the corresponding
-   // client-side caches are dropped and the store is rehydrated from the
-   // new tag. Previously these tags were only ever injected into full page
-   // loads and lived outside #breeze-app, so breeze.data() silently froze
-   // at whatever the very first page load contained and never reflected
-   // the route actually on screen after an SPA navigation.
-   function _refreshStateTags(el) {
-      var sawData = false;
-      ['__breeze_data__', '__breeze_i18n__', '__breeze_tmpl__'].forEach(function (id) {
-         var fresh = el.querySelector('#' + id);
+   // State tags are extracted from the detached fragment before any new nodes
+   // are mounted. This makes breeze.data() route-correct inside onMount without
+   // setTimeout. Cache invalidation is selective; an ordinary fragment update
+   // does not discard unrelated template/i18n caches.
+   function _prepareStateTags(newTree) {
+      var state = { data: false, i18n: false, tmpl: false };
+      [
+         ['__breeze_data__', 'data'],
+         ['__breeze_i18n__', 'i18n'],
+         ['__breeze_tmpl__', 'tmpl'],
+      ].forEach(function (entry) {
+         var fresh = newTree.querySelector('#' + entry[0]);
          if (!fresh) return;
-         var existing = document.getElementById(id);
-         if (existing && existing !== fresh) existing.parentNode.removeChild(existing);
-         // Relocate to <body> so exactly one canonical instance exists and it
-         // survives later swaps that don't happen to touch this tag.
+         var existing = document.getElementById(entry[0]);
+         if (existing && existing !== fresh && existing.parentNode) {
+            existing.parentNode.removeChild(existing);
+         }
          document.body.appendChild(fresh);
-         if (id === '__breeze_data__') sawData = true;
+         state[entry[1]] = true;
       });
 
-      _i18nCache = null;
-      _tmplCache = null;
-
-      // Rehydrating from the tag is right for a fragment that arrived from the
-      // server on its own (navigation, fetch, poll, submit): the tag is then
-      // the newest copy of the data. It is wrong for a swap this store just
-      // caused. Server-rendered views embed __breeze_data__ carrying the
-      // SERVER's copy, so a setData() that renders a view would read that
-      // stale copy straight back over the value just set — silently undoing
-      // the update, and leaving the next mutation to render old data. The tag
-      // is still relocated above (it has to become the canonical one); only
-      // reading it back over a newer in-memory store is suppressed.
-      if (sawData && _storeRenderDepth === 0) {
+      if (state.i18n) _i18nCache = null;
+      if (state.tmpl) _tmplCache = null;
+      if (state.data && _storeRenderDepth === 0) {
+         // A mutation of the previous route may already have queued a
+         // debounced watcher/render pass. The new route snapshot supersedes
+         // that pending pass; let _finishStateTags deliver one notification
+         // against the new DOM instead of notifying twice with mixed routes.
+         if (_renderTimer !== null) {
+            clearTimeout(_renderTimer);
+            _renderTimer = null;
+         }
+         // Hydrate synchronously before _patchChildren can run any mount hook.
          _store = _makeReactive(_readDataTag(), _onStoreChange);
+      }
+      return state;
+   }
+
+   function _finishStateTags(state) {
+      if (state.data && _storeRenderDepth === 0) {
          _notifyWatchers(_store);
          _renderBindings();
       }
@@ -1425,7 +1678,7 @@
    }
 
    // Depth of swaps caused by the store rather than by the server. Read by
-   // _refreshStateTags to decide whether a fragment's data tag is newer than
+   // _prepareStateTags to decide whether a fragment's data tag is newer than
    // the store or older than it. Incremented around each swap rather than
    // around the whole render so it is still accurate for the server path,
    // whose swap happens later, inside a promise callback.
@@ -1433,7 +1686,7 @@
 
    function _swapFromStore(el, html) {
       _storeRenderDepth++;
-      try { swap(el, html); } finally { _storeRenderDepth--; }
+      try { return swap(el, html); } finally { _storeRenderDepth--; }
    }
 
    function _rerender(name, data, target) {
@@ -1442,11 +1695,14 @@
 
       if (sources[name] !== undefined) {
          var html = _evalTmpl(sources[name], data, sources, 0);
-         if (el) { _swapFromStore(el, html); }
+         var swapped = el ? _swapFromStore(el, html) : Promise.resolve();
+         // Preserve the historical event contract: the DOM patch is
+         // synchronous, so breeze:render fires immediately after it. Script
+         // readiness has its own breeze:scriptsready event and Promise.
          window.dispatchEvent(new CustomEvent('breeze:render', {
-         detail: { name: name, target: target, html: html, local: true }
+            detail: { name: name, target: target, html: html, local: true }
          }));
-         return Promise.resolve(html);
+         return swapped.then(function () { return html; });
       }
 
       function postRender(body) {
@@ -1484,11 +1740,11 @@
 
       return pending.then(function(out) {
          if (!out.ok) { console.error('breeze.render error:', out.html); return out.html; }
-         if (el) { _swapFromStore(el, out.html); }
+         var swapped = el ? _swapFromStore(el, out.html) : Promise.resolve();
          window.dispatchEvent(new CustomEvent('breeze:render', {
             detail: { name: name, target: target, html: out.html, local: false }
          }));
-         return out.html;
+         return swapped.then(function () { return out.html; });
       });
    }
 
@@ -1543,8 +1799,8 @@
       fetch:    breezeGet,
       poll:     breezePoll,
       stop:     breezeStop,
-      swap:     function(target, html) { swap(resolveEl(target), html); },
-      navigate: function(url) { navigate(url, true); },
+      swap:     function(target, html) { return swap(resolveEl(target), html); },
+      navigate: function(url) { return navigate(url, true); },
 
       data: function(key) {
          if (_store === null) _store = _makeReactive(_readDataTag(), _onStoreChange);
@@ -1553,7 +1809,7 @@
 
       setData: function(newData, target, name) {
          _store = _makeReactive(newData, _onStoreChange);
-         _invalidateRoute(window.location.pathname + window.location.search);
+         _invalidateRoute(_currentRouteCacheKey());
          _notifyWatchers(_store);
          _renderBindings();
          if (name) { return _rerender(name, _store, target); }
@@ -1634,7 +1890,7 @@
       // on non-GET SPA form submissions; exposed here for manual use when a
       // mutation happens through some path the framework can't see (e.g. a
       // fetch() call you make yourself).
-      invalidate:    function(url) { _invalidateRoute(url || (window.location.pathname + window.location.search)); },
+      invalidate:    function(url) { _invalidateRoute(url || _currentRouteCacheKey()); },
       invalidateAll: function()    { _invalidateCache(); },
 
       // Delegated event binding: attaches once to document and matches

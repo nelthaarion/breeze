@@ -2,9 +2,8 @@
 <div class="cards" id="health-cards" style="margin-bottom:16px"></div>
 <div class="health-grid" id="health-grid"></div>
 <div style="margin-top:14px"><button id="health-refresh">Re-run checks</button></div>
-<script>window.__breezeDashPage='health';</script>
 <script data-spa-run="always">
-if(window.BreezeDash) BreezeDash.initPage('health');
-BreezeDash.initPage('health');
+window.__breezeDashPage='health';
+if(window.BreezeDash) { window.BreezeDash.initPage('health'); window.__breezeDashPage=null; }
 </script>
 {{end}}

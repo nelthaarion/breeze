@@ -34,8 +34,8 @@ func BenchmarkRouterLookupREST244(b *testing.B) {
 	r, paths := trieRESTTable()
 	req := &HTTPRequest{Method: GET}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for i := 0; b.Loop(); i++ {
 		req.Path = paths[i%len(paths)]
 		rt, params, _ := r.lookup(req)
 		if rt == nil {

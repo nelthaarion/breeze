@@ -11,9 +11,8 @@
     </table>
   </div>
 </div>
-<script>window.__breezeDashPage='routes';</script>
 <script data-spa-run="always">
-if(window.BreezeDash) BreezeDash.initPage('routes');
-BreezeDash.initPage('routes');
+window.__breezeDashPage='routes';
+if(window.BreezeDash) { window.BreezeDash.initPage('routes'); window.__breezeDashPage=null; }
 </script>
 {{end}}

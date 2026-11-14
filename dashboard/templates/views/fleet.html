@@ -14,6 +14,8 @@
   <div class="table-head"><h3>Merged cross-service timeline</h3><span id="fleet-summary"></span></div>
   <div id="fleet-detail" style="padding:18px"></div>
 </div>
-<script>window.__breezeDashPage='fleet';</script>
-<script data-spa-run="always">if(window.BreezeDash) BreezeDash.initPage('fleet');</script>
+<script data-spa-run="always">
+window.__breezeDashPage='fleet';
+if(window.BreezeDash) { window.BreezeDash.initPage('fleet'); window.__breezeDashPage=null; }
+</script>
 {{end}}

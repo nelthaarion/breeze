@@ -108,6 +108,26 @@ func TestSPARuntimeSyntax(t *testing.T) {
 	}
 }
 
+// TestDashboardPagePolling verifies the dashboard's page-owned poll loop in
+// isolation: a slow request cannot overlap the next tick, and leaving the page
+// cancels the outstanding fetch and prevents another timer from being queued.
+func TestDashboardPagePolling(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed; skipping dashboard polling tests")
+	}
+
+	harness := filepath.Join("testdata", "dashboard_poll_harness.js")
+	if _, err := os.Stat(harness); err != nil {
+		t.Fatalf("dashboard poll harness missing: %v", err)
+	}
+
+	out, err := exec.Command(node, harness, filepath.Join("dashboard", "templates", "public", "dashboard.js")).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "PASS") {
+		t.Fatalf("dashboard poll harness failed:\n%s", out)
+	}
+}
+
 // TestSPARuntimeInvariants pins the specific defects this code has regressed
 // on before. Each assertion is a property of the source that a future edit
 // could silently undo, and that the behavioural harness cannot observe
@@ -145,12 +165,21 @@ func TestSPARuntimeInvariants(t *testing.T) {
 		{"binding passes share one server render", "var _renderBatch = null;"},
 		{"click delegation checks the target is an element", "if (!e.target || e.target.nodeType !== 1) return;"},
 		{"breeze.on tolerates a non-element target", "if (node && node.nodeType !== 1) node = node.parentElement;"},
-		{"swap patches the DOM instead of rebuilding it", "_patch(el, html);"},
+		{"swap patches the DOM instead of rebuilding it", "_patch(el, newTree);"},
 		{"the patcher can be turned off if it ever regresses", "if (window.__BREEZE_NO_PATCH__ === true) {"},
+		{"initial server-owned attributes are captured once after the app is parsed", "document.addEventListener('DOMContentLoaded', _primeInitialOwnedAttrs, { once: true });"},
 		{"attribute removal is limited to what a render declared", "var _ownedAttrs = new WeakMap();"},
 		{"static subtrees are treated as incompatible, not just skipped", "return _isStatic(a) === _isStatic(b);"},
 		{"mounts run where nodes are really inserted", "_runMounts(newNode);"},
-		{"destroys run where nodes are really removed", "_runDestroys(leftover[i]);"},
+		{"destroys run where nodes are really removed", "_runDestroys(leftover);"},
+		{"state tags are hydrated before DOM mounts", "var stateChange = _prepareStateTags(newTree);"},
+		{"watchers are notified after the DOM patch", "_finishStateTags(stateChange);"},
+		{"script execution is awaitable", "return _runScripts(el);"},
+		{"external scripts share in-flight loads", "var _scriptRegistry = new Map();"},
+		{"failed external scripts can be retried", "_scriptRegistry.delete(key);"},
+		{"executed route scripts are removed", "_removeNode(fresh);"},
+		{"polls use fixed-delay scheduling", "function schedule() {"},
+		{"polls can abort an in-flight request", "if (record.controller) record.controller.abort();"},
 	}
 
 	for _, c := range mustContain {
@@ -169,5 +198,38 @@ func TestSPARuntimeInvariants(t *testing.T) {
 	// into the page as text.
 	if strings.Contains(js, "</script") {
 		t.Error("runtime contains a </script> sequence, which would close the tag breezeRuntime wraps it in")
+	}
+}
+
+// TestDashboardViewInitialization ensures every routable view has one SPA
+// bootstrap script and that the hard-load marker cannot survive after the
+// already-loaded dashboard runtime has consumed it during navigation.
+func TestDashboardViewInitialization(t *testing.T) {
+	pages := []string{
+		"overview", "routes", "api", "requests", "queries", "cache", "logs",
+		"health", "performance", "timeline", "architecture", "events", "video", "fleet",
+	}
+	for _, page := range pages {
+		t.Run(page, func(t *testing.T) {
+			path := filepath.Join("dashboard", "templates", "views", page+".html")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read view: %v", err)
+			}
+			src := string(data)
+			count := func(needle string) int { return strings.Count(src, needle) }
+			if got := count("<script data-spa-run=\"always\">"); got != 1 {
+				t.Errorf("expected exactly one SPA init script, got %d", got)
+			}
+			if got := count("window.__breezeDashPage='" + page + "';"); got != 1 {
+				t.Errorf("expected exactly one page marker, got %d", got)
+			}
+			if got := count("window.BreezeDash.initPage('" + page + "');"); got != 1 {
+				t.Errorf("expected exactly one guarded init call, got %d", got)
+			}
+			if !strings.Contains(src, "window.__breezeDashPage=null;") {
+				t.Error("SPA navigation must clear the hard-load bootstrap marker")
+			}
+		})
 	}
 }

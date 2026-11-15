@@ -307,8 +307,8 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 				// framing ambiguity across intermediaries with different policies.
 				return 0, fmt.Errorf("duplicate content-length")
 			}
-			cl64, err := strconv.ParseInt(val, 10, 64)
-			if err != nil || cl64 < 0 || cl64 > int64(^uint(0)>>1) {
+			cl64, err := strconv.ParseInt(val, 10, strconv.IntSize)
+			if err != nil || cl64 < 0 {
 				return 0, fmt.Errorf("invalid content-length")
 			}
 			contentLength = int(cl64)

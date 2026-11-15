@@ -2,7 +2,6 @@ package breeze
 
 import (
 	"crypto/subtle"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +9,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/rpc"
 )

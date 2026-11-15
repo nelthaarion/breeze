@@ -3,7 +3,6 @@ package breeze
 import (
 	"bytes"
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"os"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/goccy/go-json"
 )
 
 // bodyOpenTag matches the opening <body ...> tag (with or without

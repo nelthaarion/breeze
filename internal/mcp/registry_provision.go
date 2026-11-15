@@ -34,7 +34,6 @@ package mcp
 // design rather than a policy someone has to remember to enforce.
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -43,6 +42,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // registryFileName is the file, kept next to the orchestrator's own binary.

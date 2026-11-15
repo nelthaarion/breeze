@@ -6,9 +6,10 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/internal/mcp"
 	"github.com/nelthaarion/breeze/v2/internal/mcpcmd"

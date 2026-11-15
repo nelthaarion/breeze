@@ -29,11 +29,12 @@ package mcp
 // degraded" is "show me those three".
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/diag"
 )

@@ -18,11 +18,12 @@ package mcp
 // to what a person looking at the dashboard could see, except that payloads are left out.
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
 	"strings"
+
+	"github.com/goccy/go-json"
 )
 
 // signalSources are the sources the observability collector records, mirrored from

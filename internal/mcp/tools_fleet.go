@@ -34,12 +34,13 @@ package mcp
 // fails loudly here instead of silently decoding into zero values.
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/goccy/go-json"
 )
 
 func registerFleetTools(s *Server) {

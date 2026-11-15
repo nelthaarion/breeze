@@ -21,11 +21,12 @@ package mcp
 // Both tools are reads of endpoints the dashboard already uses.
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // fleetNow is the clock silence is measured against. A variable so a test can fix it.

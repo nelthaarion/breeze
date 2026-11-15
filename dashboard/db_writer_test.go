@@ -1,12 +1,13 @@
 package dashboard
 
 import (
-	"encoding/json"
 	"errors"
 	"net/url"
 	"reflect"
 	"sync/atomic"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 )

@@ -60,12 +60,13 @@ package breeze
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // --- Routing -----------------------------------------------------------------
@@ -497,7 +498,7 @@ func BenchmarkZZPipelineDispatch(b *testing.B) {
 
 // BenchmarkZZJSONMapHandler is the shape cmd/main.go's handlers use:
 // json.Marshal over a freshly built map. The map allocates, its keys hash, and
-// encoding/json walks it by reflection, sorting the keys before writing them.
+// github.com/goccy/go-json walks it by reflection, sorting the keys before writing them.
 func BenchmarkZZJSONMapHandler(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
@@ -509,7 +510,7 @@ func BenchmarkZZJSONMapHandler(b *testing.B) {
 }
 
 // BenchmarkZZJSONStructHandler marshals the same payload from a struct.
-// encoding/json caches a per-type encoder, so a struct skips both the map
+// github.com/goccy/go-json caches a per-type encoder, so a struct skips both the map
 // allocation and the key sort while staying ordinary idiomatic Go.
 func BenchmarkZZJSONStructHandler(b *testing.B) {
 	type user struct {

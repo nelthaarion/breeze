@@ -14,10 +14,11 @@ package mcp
 // call that should have generated files becomes a failed result.
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/internal/generator"
 )

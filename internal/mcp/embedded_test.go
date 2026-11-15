@@ -1,10 +1,11 @@
 package mcp
 
 import (
-	"encoding/json"
 	"net"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/diag"
 	"github.com/nelthaarion/breeze/v2/rpc"

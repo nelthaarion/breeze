@@ -25,7 +25,6 @@ package mcp_test
 // started once, rather than leaking an event loop per test.
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -36,6 +35,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 	"github.com/nelthaarion/breeze/v2/client"

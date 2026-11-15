@@ -2,12 +2,13 @@ package aggregator
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/dashboard"
 	"github.com/nelthaarion/breeze/v2/fleet"

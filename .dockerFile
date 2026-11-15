@@ -1,4 +1,4 @@
-FROM golang:1.27-alpine
+FROM golang:alpine
 
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 

@@ -1,7 +1,7 @@
 package aggregator
 
 import (
-	"encoding/json"
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/events"
 	"github.com/nelthaarion/breeze/v2/fleet"

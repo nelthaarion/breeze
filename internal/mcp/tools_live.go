@@ -24,12 +24,13 @@ package mcp
 // misleading answer available.
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/diag"
 	"github.com/nelthaarion/breeze/v2/internal/livesource"

@@ -11,7 +11,6 @@ package mcp_test
 // no spans, so the failing trace stops at auth-service.
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 	"github.com/nelthaarion/breeze/v2/dashboard"

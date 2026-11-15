@@ -26,8 +26,9 @@ package mcp
 // every transport, so nothing is unreachable — only less convenient to reach by hand.
 
 import (
-	"encoding/json"
 	"net/http"
+
+	"github.com/goccy/go-json"
 )
 
 // featuresPath is where the convenience endpoint lives.

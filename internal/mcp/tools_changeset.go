@@ -15,10 +15,11 @@ package mcp
 // course before anything lands.
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 func registerChangeSetTools(s *Server) {

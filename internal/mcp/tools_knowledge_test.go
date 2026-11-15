@@ -25,11 +25,12 @@ package mcp
 // test, which the CLI cannot express at all — see addRelationshipField.
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/internal/generator"
 	"github.com/nelthaarion/breeze/v2/scalar"

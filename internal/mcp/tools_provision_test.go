@@ -20,13 +20,14 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // fakeDocker records the commands it was given and answers them plausibly.

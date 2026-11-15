@@ -2,8 +2,9 @@ package fleet
 
 import (
 	"bytes"
-	"encoding/json"
 	"strings"
+
+	"github.com/goccy/go-json"
 )
 
 const MaxCapturedPayloadBytes = 64 << 10

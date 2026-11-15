@@ -15,7 +15,6 @@ package mcp
 // that would make the tool useless for the thing it exists for.
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 func registerVerificationTools(s *Server) {

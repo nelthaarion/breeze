@@ -21,7 +21,6 @@ package mcp
 // returned: a driver error is exactly the kind of message that echoes it.
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -30,6 +29,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/internal/generator"
 )

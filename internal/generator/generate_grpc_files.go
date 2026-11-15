@@ -238,14 +238,14 @@ func generatePbGo(modulePath string, iface *grpcInterface, structs []*grpcStruct
 package %s
 
 import (
-        "encoding/json"
+        "github.com/goccy/go-json"
         "fmt"
 
         "google.golang.org/grpc/encoding"
 )
 
 // Register a custom gRPC codec that overrides the default "proto" codec.
-// We use encoding/json instead of encoding/gob because:
+// We use github.com/goccy/go-json instead of encoding/gob because:
 //   1. JSON is faster for small messages (gob includes type info per message)
 //   2. JSON doesn't require type registration
 //   3. JSON is human-readable for debugging

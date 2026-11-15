@@ -13,10 +13,11 @@ package mcp
 // numbers are compared as numbers.
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // mustJSON encodes tool arguments the way the JSON-RPC layer would deliver them.

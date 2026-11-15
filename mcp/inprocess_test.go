@@ -13,7 +13,6 @@ package mcp_test
 // what the assertions are about, not the individual results.
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -22,6 +21,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 	"github.com/nelthaarion/breeze/v2/dashboard"

@@ -39,9 +39,10 @@ package mcp
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/goccy/go-json"
 )
 
 // hostAccessFlags are the docker flags that let a container reach the host, or let a
@@ -212,7 +213,7 @@ func (o *dockerOptions) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// unknownJSONField extracts the field name from encoding/json's unknown-field error.
+// unknownJSONField extracts the field name from github.com/goccy/go-json's unknown-field error.
 //
 // The error is unexported and carries no structure, so its text is parsed. That is
 // fragile in principle and safe in practice: the fallback is returning the raw error,

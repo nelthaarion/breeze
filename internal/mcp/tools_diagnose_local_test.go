@@ -8,11 +8,12 @@ package mcp_test
 // answer, or the second copy of the rules has quietly become a different tool.
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/internal/mcp"
 )

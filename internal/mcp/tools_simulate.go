@@ -30,12 +30,13 @@ package mcp
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/client"
 )

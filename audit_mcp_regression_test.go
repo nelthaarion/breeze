@@ -14,7 +14,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"log"
 	"net"
 	"os"
@@ -22,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 func TestStructuredPathArgumentIsRefusedNotDropped(t *testing.T) {

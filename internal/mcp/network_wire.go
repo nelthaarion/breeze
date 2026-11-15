@@ -15,11 +15,12 @@ package mcp
 // dispatcher's own -32700 — the correct error, and the one stdio would produce.
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/goccy/go-json"
 )
 
 // codeTransport is the JSON-RPC error code used for a transport-level refusal.

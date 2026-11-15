@@ -6,7 +6,6 @@ package mcp
 // notification. Handle is the seam the stdio transport uses in production.
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 type wireResponse struct {

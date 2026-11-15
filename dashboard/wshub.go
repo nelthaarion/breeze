@@ -1,9 +1,10 @@
 package dashboard
 
 import (
-	"encoding/json"
 	"sync"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 )

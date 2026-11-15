@@ -1,9 +1,10 @@
 package contracts
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/fleet"
 	"github.com/nelthaarion/breeze/v2/scalar"

@@ -21,13 +21,14 @@ package breeze
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/rpc"
 	"github.com/nelthaarion/breeze/v2/scalar"

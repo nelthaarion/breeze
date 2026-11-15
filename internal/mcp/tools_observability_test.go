@@ -13,7 +13,6 @@ package mcp_test
 // attached, which is the state the "not wired" answers are about.
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
@@ -22,6 +21,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 	"github.com/nelthaarion/breeze/v2/dashboard"

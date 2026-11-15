@@ -2,10 +2,11 @@ package aggregator
 
 import (
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 	"github.com/nelthaarion/breeze/v2/fleet"

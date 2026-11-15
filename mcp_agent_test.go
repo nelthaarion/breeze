@@ -18,10 +18,11 @@ package breeze
 // "the agent saw what a client would have seen" is checked rather than assumed.
 
 import (
-	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/scalar"
 )

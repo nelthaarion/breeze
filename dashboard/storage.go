@@ -1,11 +1,12 @@
 package dashboard
 
 import (
-	"encoding/json"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // Storage is the interface for persisting dashboard state across restarts.

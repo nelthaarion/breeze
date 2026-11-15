@@ -3,9 +3,10 @@ package mcp
 // mode_test.go — Part 9: mode is required, and app-runtime is structurally safe.
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // TestModeHasNoDefault is the central assertion of Part 9. Every construction path

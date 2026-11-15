@@ -22,9 +22,10 @@ package mcp
 // argumentNames for why that is a categorical guarantee rather than a redaction list.
 
 import (
-	"encoding/json"
 	"sort"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // EventKind is what happened. A closed set, so a consumer can switch on it.

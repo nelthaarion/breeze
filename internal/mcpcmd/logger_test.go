@@ -17,13 +17,14 @@ package mcpcmd
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/internal/mcp"
 )

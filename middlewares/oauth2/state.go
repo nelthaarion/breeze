@@ -1,8 +1,9 @@
 package oauth2
 
 import (
-	"encoding/json"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 )

@@ -2,12 +2,13 @@ package dashboard
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 	"github.com/nelthaarion/breeze/v2/events"

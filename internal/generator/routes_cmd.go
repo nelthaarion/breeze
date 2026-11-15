@@ -11,7 +11,6 @@ package generator
 // output says so rather than implying it is the whole routing table.
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -23,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/goccy/go-json"
 )
 
 type routeEntry struct {

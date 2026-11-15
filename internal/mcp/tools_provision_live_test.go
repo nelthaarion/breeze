@@ -17,13 +17,14 @@ package mcp
 // establish either, because it would be asserting against itself.
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // liveOrchestrator returns an orchestrator with real Docker, or skips.

@@ -16,7 +16,6 @@ package mcp_test
 // really report red. A stub would only prove the mirror types match themselves.
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +27,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 	"github.com/nelthaarion/breeze/v2/client"

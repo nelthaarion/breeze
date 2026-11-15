@@ -41,7 +41,8 @@ package breeze
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+
+	"github.com/goccy/go-json"
 
 	"fmt"
 	"log"

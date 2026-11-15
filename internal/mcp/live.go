@@ -25,7 +25,6 @@ package mcp
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -33,6 +32,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/client"
 	"github.com/nelthaarion/breeze/v2/internal/livesource"

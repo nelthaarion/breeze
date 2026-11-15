@@ -13,10 +13,11 @@ package mcp
 // on every provision, because no caller asked for it.
 
 import (
-	"encoding/json"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // TestProvisionRefusesEveryHostAccessOption is the request half.

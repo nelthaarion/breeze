@@ -7,10 +7,11 @@ package breeze
 // error-handling function was called.
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // runChainFor builds a one-route app, dispatches a request through the real chain

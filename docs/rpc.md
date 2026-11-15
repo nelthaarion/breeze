@@ -182,7 +182,7 @@ Both transports go through `Server.Handle`, so dispatch, middleware, batching an
 the error codes are shared. Only framing differs — one JSON value per line, because
 that is what the peer writes.
 
-Newline framing is safe here because `encoding/json` escapes literal newlines inside
+Newline framing is safe here because `github.com/goccy/go-json` escapes literal newlines inside
 strings as `\n`, so a marshalled JSON value never contains a bare newline. A line is
 therefore always a whole message.
 

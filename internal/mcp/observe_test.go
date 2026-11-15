@@ -13,13 +13,14 @@ package mcp
 // what a logger actually received.
 
 import (
-	"encoding/json"
 	"net/http"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // recorder is a Logger that keeps what it was given.

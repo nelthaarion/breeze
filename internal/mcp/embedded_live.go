@@ -28,8 +28,9 @@ package mcp
 // it did, and reads that service over HTTP.
 
 import (
-	"encoding/json"
 	"strings"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/internal/livesource"
 )

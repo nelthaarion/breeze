@@ -21,10 +21,11 @@ package aggregator
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/fleet"
 )

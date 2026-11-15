@@ -2,13 +2,14 @@ package oauth2
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // tokenResponse is the standard RFC 6749 token endpoint response. Providers

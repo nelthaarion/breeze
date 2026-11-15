@@ -23,12 +23,13 @@ package wstransport
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/client"
 	"github.com/nelthaarion/breeze/v2/fleet"

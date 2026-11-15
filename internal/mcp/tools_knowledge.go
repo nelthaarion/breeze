@@ -17,12 +17,13 @@ package mcp
 // when asked.
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/goccy/go-json"
 
 	"gopkg.in/yaml.v3"
 

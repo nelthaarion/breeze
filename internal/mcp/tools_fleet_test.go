@@ -21,7 +21,6 @@ package mcp_test
 // has the root breeze package importing mcp.
 
 import (
-	"encoding/json"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -29,6 +28,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 	"github.com/nelthaarion/breeze/v2/client"

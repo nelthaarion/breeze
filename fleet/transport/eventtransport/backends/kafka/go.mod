@@ -1,9 +1,10 @@
-module  github.com/nelthaarion/breeze/v2/fleet/transport/eventtransport/backends/kafka
+module github.com/nelthaarion/breeze/v2/fleet/transport/eventtransport/backends/kafka
 
-go 1.27.3
+go 1.27.4
 
 require (
-	 github.com/nelthaarion/breeze/v2 v2.0.2
+	github.com/goccy/go-json v0.12.0
+	github.com/nelthaarion/breeze/v2 v2.3.1
 	github.com/segmentio/kafka-go v0.4.49
 )
 
@@ -12,4 +13,4 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 )
 
-replace  github.com/nelthaarion/breeze/v2 => ../../../../../
+replace github.com/nelthaarion/breeze/v2 => ../../../../../

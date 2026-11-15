@@ -12,11 +12,12 @@ package mcp
 // and the bound is a property of the store.
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // newChangeSetFixture writes the smallest thing a change set can be opened over.

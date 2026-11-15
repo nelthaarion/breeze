@@ -4,12 +4,13 @@ package mcp
 // most: that it cannot disagree with the handshake.
 
 import (
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // fetchFeatures calls GET /mcp/features and returns the status and decoded body.

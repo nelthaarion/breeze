@@ -11,13 +11,14 @@ package rpc
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"errors"
 	"io"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // newStdioFixture returns a stdio server over the given input, with two methods

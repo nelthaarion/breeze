@@ -28,13 +28,14 @@ package main
 // is the half that can be asserted without holding a port.
 
 import (
-	"encoding/json"
 	"net"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/golang-jwt/jwt/v5"
 

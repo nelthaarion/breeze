@@ -16,7 +16,6 @@ package mcp
 // assert.
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,6 +24,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // withWorkspace confines the process to roots for the duration of one test.

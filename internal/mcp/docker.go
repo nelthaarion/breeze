@@ -35,12 +35,13 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // Docker timeouts, per operation. They differ because the operations do: a build

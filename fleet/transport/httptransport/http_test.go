@@ -3,12 +3,13 @@ package httptransport
 import (
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/fleet"
 )

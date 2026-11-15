@@ -24,11 +24,12 @@ package generator
 // keeping reflection out of generated accessors is untouched.
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/goccy/go-json"
 )
 
 // jsonSchemaDialect is the dialect the emitted schema declares.

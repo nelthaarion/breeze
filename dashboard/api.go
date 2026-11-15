@@ -18,7 +18,7 @@ import (
 )
 
 // jsonUnmarshal is a small wrapper around go-json so we don't pull in
-// encoding/json (which is slower) on the login hot path.
+// github.com/goccy/go-json (which is slower) on the login hot path.
 func jsonUnmarshal(body []byte, v any) error {
 	return json.Unmarshal(body, v)
 }

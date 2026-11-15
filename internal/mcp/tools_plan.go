@@ -22,7 +22,6 @@ package mcp
 // at all.
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
@@ -30,6 +29,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/goccy/go-json"
 
 	"gopkg.in/yaml.v3"
 

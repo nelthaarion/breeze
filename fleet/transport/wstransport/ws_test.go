@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -12,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/fleet"
 )

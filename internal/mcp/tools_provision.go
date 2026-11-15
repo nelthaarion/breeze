@@ -36,7 +36,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +43,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/client"
 	"github.com/nelthaarion/breeze/v2/internal/generator"

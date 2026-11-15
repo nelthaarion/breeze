@@ -15,7 +15,6 @@ package mcp
 // of something it should have been reusing.
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -23,6 +22,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // newTestNetwork builds a network server over the real tool registry with a known

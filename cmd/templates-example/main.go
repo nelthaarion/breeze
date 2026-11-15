@@ -13,12 +13,13 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2"
 	middleware "github.com/nelthaarion/breeze/v2/middlewares"

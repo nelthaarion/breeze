@@ -10,11 +10,12 @@ package mcp
 // that is wrong.
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/rpc"
 )

@@ -8,12 +8,13 @@ package mcp
 // three.
 
 import (
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // scopedServer builds a network server with a known token and scope, plus an httptest

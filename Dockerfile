@@ -9,8 +9,8 @@
 # build time, so the image stops matching the base layer it claims to use.
 # It is also the version govulncheck reports against, so a stale pin here
 # reports stdlib vulnerabilities that the pinned toolchain has fixed.
-ARG GO_VERSION=1.27.3
-FROM golang:${GO_VERSION}-alpine AS build
+
+FROM golang:alpine AS build
 
 # Fail the build loudly if go.mod ever requires a newer toolchain than the pin
 # above, instead of silently downloading one at build time.

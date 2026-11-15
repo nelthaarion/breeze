@@ -20,9 +20,10 @@ package mcp
 // property holds.
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/nelthaarion/breeze/v2/internal/generator"
 )

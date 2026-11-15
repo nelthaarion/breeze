@@ -183,7 +183,14 @@ func promoteRequest(req *HTTPRequest, data []byte, maxBodies ...int64) error {
 //   - internMethod returns a package-level constant for the seven known methods.
 func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int64) (int, error) {
 	// ── Find header boundary ───────────────────────────────────────────────
-	headerEnd := bytes.Index(data, crlfcrlf)
+	// Never scan beyond the configured header budget. The input may also
+	// contain a large body or a large unterminated prefix, neither of which
+	// should make header-boundary detection proportional to the whole buffer.
+	scanLen := len(data)
+	if scanLen > maxRequestHeaderBytes {
+		scanLen = maxRequestHeaderBytes
+	}
+	headerEnd := bytes.Index(data[:scanLen], crlfcrlf)
 	if headerEnd < 0 {
 		if len(data) > maxRequestHeaderBytes {
 			return 0, ErrHeadersTooLarge
@@ -355,10 +362,12 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 
 	consumed := headerEnd + 4
 	if contentLength > 0 {
-		total := consumed + contentLength
-		if len(data) < total {
+		// Check before adding: Content-Length can be int-sized while the
+		// header offset makes the sum overflow int and panic on slicing.
+		if contentLength > len(data)-consumed {
 			return 0, nil // body not fully received yet
 		}
+		total := consumed + contentLength
 		req.Body = data[consumed:total]
 		consumed = total
 	}

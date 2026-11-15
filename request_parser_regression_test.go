@@ -1,6 +1,7 @@
 package breeze
 
 import (
+	"strconv"
 	"testing"
 )
 
@@ -47,5 +48,28 @@ func TestParseHTTPRequestPostBody(t *testing.T) {
 	}
 	if string(req.Body) != "hello" {
 		t.Fatalf("body=%q", req.Body)
+	}
+}
+
+func TestParseHTTPRequestHugeContentLengthIsIncomplete(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	raw := []byte("POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: " + strconv.Itoa(maxInt) + "\r\n\r\n")
+
+	req, consumed, err := ParseHTTPRequest(raw)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if req != nil || consumed != 0 {
+		t.Fatalf("got req=%v consumed=%d, want incomplete request", req, consumed)
+	}
+}
+
+func TestParseHTTPRequestOversizedUnterminatedHeaders(t *testing.T) {
+	raw := make([]byte, maxRequestHeaderBytes+1)
+	copy(raw, "GET / HTTP/1.1\r\nHost: example.com\r\n")
+
+	_, _, err := ParseHTTPRequest(raw)
+	if err != ErrHeadersTooLarge {
+		t.Fatalf("err = %v, want ErrHeadersTooLarge", err)
 	}
 }

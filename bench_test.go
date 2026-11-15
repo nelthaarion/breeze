@@ -59,6 +59,7 @@ package breeze
 // building under `go test ./...`.
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -312,6 +313,20 @@ func BenchmarkZZParseBrowserHeaders(b *testing.B) {
 			b.Fatal("header keys not lowercased")
 		}
 		releaseRequest(req)
+	}
+}
+
+// BenchmarkZZParseOversizedHeaderNoTerminator measures bounded rejection work.
+// Before the scan is capped, work scales with the whole input; afterwards it
+// stops at maxRequestHeaderBytes.
+func BenchmarkZZParseOversizedHeaderNoTerminator(b *testing.B) {
+	raw := bytes.Repeat([]byte{'A'}, maxRequestHeaderBytes*16)
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _, err := parsePooledRequest(raw, true)
+		if err != ErrHeadersTooLarge {
+			b.Fatalf("err = %v, want ErrHeadersTooLarge", err)
+		}
 	}
 }
 

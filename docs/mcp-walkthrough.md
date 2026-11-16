@@ -120,7 +120,7 @@ Every tool belongs to exactly one of eight categories:
 | `planning` | previews changes, holds change sets open |
 | `knowledge` | maintains and searches `llms.txt`, suggests next steps |
 | `verification` | runs the Go toolchain — and therefore project code |
-| `runtime` | reads live state from a running service — over HTTP, or straight from memory when the endpoint is embedded in that service — routes, errors, logs, performance, and `breeze_diagnose_service`, which returns every subsystem's own diagnostic report; also what the observability collector recorded (`breeze_get_signals`: failed jobs, listeners, queries, workflows) and whether its dependencies are up (`breeze_get_health`) |
+| `runtime` | reads live state from a running service — over HTTP, or straight from memory when the endpoint is embedded in that service — routes, errors, logs, performance, and `breeze_diagnose_service`, which returns every subsystem's own diagnostic report; also what the observability collector recorded (`breeze_get_signals`: failed event listeners, workflows, video requests), whether its dependencies are up (`breeze_get_health`), where the time went inside a request (`breeze_get_timeline`) and the SQL the application reported (`breeze_get_queries`) |
 | `fleet` | reads a Fleet Aggregator: traces, topology, contract violations, which services are alive (`breeze_get_services`) and what every service in a trace logged (`breeze_get_trace_logs`) |
 | `provisioning` | drives Docker: builds images, starts and removes containers. Also `breeze_migrate`, which applies database migrations: it changes live infrastructure the same way, so it is withheld the same way |
 
@@ -203,9 +203,10 @@ curl -H "Authorization: Bearer $BREEZE_MCP_TOKEN" \
   "tools": ["breeze_diagnose_service", "breeze_explain_incident",
             "breeze_get_contract_violations", "breeze_get_health",
             "breeze_get_logs", "breeze_get_performance", "breeze_get_recent_errors",
-            "breeze_get_routes", "breeze_get_services", "breeze_get_signals",
-            "breeze_get_topology", "breeze_get_trace", "breeze_get_trace_logs",
-            "breeze_get_traces", "breeze_query_openapi", "breeze_simulate_request"],
+            "breeze_get_queries", "breeze_get_routes", "breeze_get_services",
+            "breeze_get_signals", "breeze_get_timeline", "breeze_get_topology",
+            "breeze_get_trace", "breeze_get_trace_logs", "breeze_get_traces",
+            "breeze_query_openapi", "breeze_simulate_request"],
   "note": "This endpoint is a convenience for humans and external tooling. …"
 }
 ```
@@ -696,7 +697,8 @@ its own registry describes the tool, not the service you asked about, and its sc
 requires the URL. A test holds the direct read and the dashboard's endpoint to the same answer.
 
 The dashboard-reading tools do the same: `breeze_get_routes`, `breeze_get_recent_errors`,
-`breeze_get_logs`, `breeze_get_performance`, `breeze_get_signals` and `breeze_get_health`. Called on an
+`breeze_get_logs`, `breeze_get_performance`, `breeze_get_signals`, `breeze_get_health`,
+`breeze_get_timeline` and `breeze_get_queries`. Called on an
 embedded endpoint with no `service_url`, they read the dashboard's collector in memory, and the
 answer says `"service_url": "(this process)"`. The dashboard must be installed in the process (`breeze
 add dashboard`); it does not need credentials, and without one the tool says so and names the fix. Each
@@ -871,3 +873,60 @@ service hosting it, labelled separately from that service's `control_port` and
 See `internal/mcp/tools_provision.go` for the tool reference; this section gains a
 worked walkthrough alongside `cmd/mcp-example`.
 
+
+
+## Timelines, queries and what each can and cannot say
+
+Two tools answer questions the others cannot, and both are bounded by what the dashboard is given, which
+each answer says.
+
+`breeze_get_timeline` reads where the time went inside one request: without an `id`, the timelines the
+dashboard holds, newest first, each with its total and the step that took the longest by itself; with an
+`id` (a request record's `timeline_id`), that request's steps as a tree, each with its duration, its own
+time less its children's, and its share of the request. Two limits are in every answer:
+
+- A timeline is recorded only for a request that ran while a browser had the dashboard open. The
+  recorder has to be attached before the handler runs, when nobody can know the request will be slow, and
+  attaching one to every request would allocate on the path the dashboard keeps free of allocation. A
+  slow request nobody was watching has no timeline, so an empty list is not evidence that nothing was
+  slow, and a `timeline_id` on a request record does not promise a timeline. `breeze_get_routes` has each
+  route's average and maximum latency from the exact counts.
+- The framework records one step itself, `Request Received`, spanning the whole request. A finer
+  breakdown exists only where application code records one with the dashboard's `TimelineRecorder` (the
+  context value `breeze.dashboard.timeline`), so a one-step timeline says how long a request took and
+  nothing about where.
+
+A step's metadata is carried only where it is a number or a boolean; the keys of the rest are listed
+as omitted, because it is whatever the recording code put there, and a SQL statement or a token is as
+likely as a row count.
+
+`breeze_get_queries` reads the dashboard's query monitor: each statement with its duration, rows, the
+file and line it was issued from, and whether it was slow or failed, slowest first, with how many of the
+window were slow and failed. It is the only place queries are kept. `breeze_get_signals` does not carry
+them: a query pushed to the dashboard reaches the collector as an event named `database.query` under the
+source `events`, with no statement and no duration, and a statement that failed is not marked failed
+there. Only what the application's data layer pushes with `Collector.PushQuery` is in the monitor; the
+framework and the code `breeze add` generates push nothing, so an empty answer says the data layer is not
+wired to the dashboard and not that no query ran. A query's arguments are held by the monitor and are
+never served or carried; the statement is cut at 400 bytes.
+
+Of the observability sources, only `events` (the event bus bridge), `workflow` and `http` (video
+requests) have a producer in the framework. `router`, `cache`, `database`, `scheduler`, `websocket`,
+`oauth2` and `plugin` hold only what an application records into them, and the tool says so when one of
+them is empty.
+
+## Fleet: addresses, tombstones, and a service the aggregator cannot read
+
+A heartbeat carries `dashboard_url`, the address of the service's dashboard with its base path
+(`http://orders:3000/dashboard`), and the aggregator reads that service's logs there to stitch them into
+a trace. `breeze add fleet` generates `DashboardURL: fleetEnv("FLEET_DASHBOARD_URL", "")`. A service that
+sends none falls back to the host of its `openapi_url` with `/dashboard` appended, as before, so a fleet
+that has not been regenerated reads as it always did. The address goes through the same allowlist guard
+either way, because the aggregator sends its service token to it.
+
+The registry forgets a service after twenty times the TTL of silence. It now keeps a tombstone for a day
+(at most 256): `GET /fleet/api/services?forgotten=1` appends them with the status `forgotten`, and
+`breeze_get_services` asks for them, lists them after the live services, counts them apart and says when
+each was last heard from. Without the parameter the list is what it was, since the Fleet UI draws every
+row of it as a live service. `breeze_get_services` also names the live services that advertise neither a
+dashboard address nor an OpenAPI address, because their lines are missing from `breeze_get_trace_logs`.

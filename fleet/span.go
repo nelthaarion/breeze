@@ -204,4 +204,12 @@ type Heartbeat struct {
 	// than the default /openapi.json.
 	OpenAPIHash string `json:"openapi_hash,omitempty"`
 	OpenAPIURL  string `json:"openapi_url,omitempty"`
+
+	// DashboardURL is where this service's dashboard is, base path included
+	// ("http://orders:3000/dashboard"): the aggregator reads the service's logs there to stitch
+	// them into a trace. It is carried explicitly because the only address a heartbeat had was
+	// OpenAPIURL, and the aggregator derived the dashboard from it by assuming the same origin
+	// under /dashboard. That made one field do two jobs, and a service that serves no OpenAPI
+	// document, or moved its dashboard, had no address at all and could not be log-stitched.
+	DashboardURL string `json:"dashboard_url,omitempty"`
 }

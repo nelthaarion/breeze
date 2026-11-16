@@ -6,6 +6,118 @@ All changes made to the Breeze framework.
 
 ## [Unreleased]
 
+### `breeze_get_timeline`: where the time went inside a request
+
+An agent chasing a slow route could read how long a request took (`breeze_get_routes`) and nothing about where
+inside it. The dashboard already held a timeline per request, with no tool to read it. `breeze_get_timeline` lists
+the timelines held, newest first, each with its total and the step that took the longest by itself, and with an `id`
+(a request record's `timeline_id`) returns that request's steps as a tree: each step's duration, its own time less its
+children's, and its share of the request. It is served from memory on an embedded endpoint like the other live tools,
+and the in-process reader now takes a path with a parameter (`/timeline/:id`), bound as the router binds it.
+
+Two things about timelines decided what the tool may claim, and its notes say both. A timeline is recorded only for a
+request that ran while a browser had the dashboard open, because the recorder is attached before the handler runs,
+when nobody can know the request will be slow; so an empty list is not evidence that nothing was slow, and a request
+record carries a `timeline_id` whether or not a timeline exists. And the framework records one step itself, `Request
+Received`: the phases the dashboard README lists (middleware, authentication, cache, ORM, serialisation) exist only
+where application code records them, so a one-step timeline says how long a request took and nothing about where. The
+README now says so. The recorder also lists each nested step twice (inside its parent and in the flat list), which
+would count a step's time again beside the parent that contains it; the tool rebuilds the tree. A step's metadata is
+carried only where it is a number or a boolean, because it is whatever the recording code put there, and the keys of
+the rest are listed as omitted.
+
+### `breeze_get_queries`, and what `breeze_get_signals` does not hold
+
+The dashboard keeps a query monitor (`/queries`) that no tool read, and the obvious place to read queries was
+`breeze_get_signals source=database`. It holds none. A query pushed to the dashboard reaches the observability
+collector as an event named `database.query` under the source `events`, with no statement, no duration, and, for a
+statement that failed, `failed: false`; the record with the SQL goes to a connected browser and is stored nowhere
+else. Of the ten sources the collector can name, only `events` (the bus bridge), `workflow` and `http` (video
+requests) have a producer in the framework; the signals tool described database queries, scheduler jobs, WebSocket
+activity, OAuth2 flows, cache operations and plugin calls, and the seven sources with no producer now say so when
+one of them is empty, and the description says what is recorded.
+
+`breeze_get_queries` reads the monitor: each statement with its duration, rows, file and line, and whether it was slow
+or failed, slowest first, with how many of the window were slow and failed. The monitor holds only what the
+application's data layer pushes with `Collector.PushQuery`; the framework and the code `breeze add` generates push
+nothing, so an empty answer says the data layer is not wired up and not that no query ran. Arguments are held by the
+monitor and neither served by its endpoint nor carried; a statement is cut at 400 bytes, at a character.
+
+Looked at and not given a tool: `/cache` (`RecordCacheHit` has no caller outside its own test, so its numbers are
+always zero, and its `keys` is hits plus misses; a tool would turn "not measured" into "0% hit rate"), `/video`
+(`AttachVideo` is called by one example and by no generated code), and `/capabilities` (one boolean).
+
+### The generated logging block feeds the dashboard's http log tab
+
+`LoggingMiddleware` writes to stdout and nowhere else, so a generated service with a dashboard had an empty http log
+tab however many requests it served, and `breeze_get_logs` returned no entries. With a dashboard in the project the
+block now passes the middleware a writer that keeps the stdout line and also pushes it to the tab
+(`breeze add dashboard` after logging reports that logging needs re-running, as it does for rate limiting). The
+dashboard collector is looked up when a line is written, not when the middleware is built, because the logging block
+runs before the dashboard's. Measured on the one shared vCPU of the sandbox, the extra cost per request line was
+3.1 to 3.7 µs and eight allocations, nearly all in `maskLine`, which rebuilt a map of the masked keys, split the
+line, lower-cased every token and joined it again for every line. A line that is already what that join would produce
+and has no token that could be a secret now returns as it is, and anything the check is unsure of takes the old path
+(a non-ASCII token with a `=` or `:` always does, since the Kelvin sign lower-cases to a `k`): 0.46 µs and one
+allocation, and 40,000 generated lines come out identical to the original function's.
+
+Separately, a generated project that already registers `LoggingMiddleware` in `main.go` and then runs `breeze add
+logging` logs every request twice. That is unchanged and is in the report for a decision.
+
+### A service can be restarted straight after it served a request
+
+A server that closes a connection first keeps it in TIME_WAIT for about a minute, and the listener did not set
+`SO_REUSEADDR`, so a service restarted inside that minute got `bind: address already in use`. The generated `main.go`
+dropped the error `Run` returns, printed "Breeze listening on :3000" before the bind, and exited with status 0: from
+outside, a service that never opened its port, for as long as the harness cared to wait. (It also explains an app
+that "did not open its ports for 40 s" twice in a dozen starts: the starts that followed a run that served requests.)
+`RunOn` now sets `SO_REUSEADDR` everywhere but Windows, where it lets another process bind a port that is already
+being listened on and a port in TIME_WAIT does not refuse a listener; it does not let two servers share a port, which
+is `SO_REUSEPORT`. The `api` and `views` scaffolds now `log.Fatalf` the error. The test serves a request the server
+closes, stops it and binds the same port at once; without the option it fails with the bind error.
+
+### The client's plain-TCP dial is bounded by DialTimeout
+
+`gnetplus`'s `DialContext` is `net.Dial` followed by `EnrollContext`, and `net.Dial` has no timeout, so for plain TCP
+`Config.DialTimeout` and `Config.Timeout` did nothing toward a host that drops the SYN: a call took 2 minutes 15
+seconds with `Timeout` at 2 seconds, one unreachable service holding the fleet aggregator's schema fetch and its log
+fan-out, and the tracer's exporter, for that long. That is why `TestLogFanoutRespectsAllowlistWithoutIngestToken` took
+133 seconds once and 0.6 another time: its heartbeat names `10.1.2.3`, which a network may refuse at once or drop. The
+dial is now made with a `net.Dialer{Timeout: DialTimeout}` and the connection enrolled, as the TLS path already did. A
+test builds a listener whose accept queue is full, which is what a dropped SYN looks like, and fails after 8 seconds
+without the fix.
+
+### Fleet: an explicit dashboard address, and tombstones for forgotten services
+
+A heartbeat had one address, `openapi_url`, and the aggregator derived a service's dashboard from it by assuming the
+same origin under `/dashboard`: one field did two jobs, and a service that serves no OpenAPI document or moved its
+dashboard could not be log-stitched. The heartbeat now carries `dashboard_url` (base path included), the registry
+stores it, and the log fan-out prefers it and falls back to the derived address, so a fleet that has not been
+regenerated reads as it did. It is normalised (credentials, query and fragment dropped, a non-http address refused)
+and goes through the same allowlist guard, since the aggregator sends its service token to it. `breeze add fleet`
+generates `DashboardURL: fleetEnv("FLEET_DASHBOARD_URL", "")`.
+
+The registry forgets a service silent for twenty times the TTL, after which it was indistinguishable from one that
+never existed. It now keeps a tombstone for a day, at most 256: `GET /fleet/api/services?forgotten=1` appends them with
+the status `forgotten` and when they were last heard from (without the parameter the list is unchanged, because the
+Fleet UI draws every row as a live service), and `breeze_get_services` lists them after the live ones, counts them
+apart, and names the live services that advertise neither address, whose lines are missing from `breeze_get_trace_logs`.
+
+### `breeze_makemigration` can be staged in a change set
+
+A migration pair is two files in the working tree, so it belongs in a change set like any generated file: staged calls
+write nothing until the commit, two staged migrations are numbered one after the other, and a discarded set writes
+none. `breeze_migrate` is deliberately not stageable: it changes a database, not a tree that can be discarded.
+
+### Three conventions the knowledge tools did not have
+
+`breeze_explain_idiom` now explains how the in-process MCP endpoint reads the dashboard (every live tool it reads, the
+three environment variables, and that the `mcp` package links the generator, about 5 MB more binary), how a fleet
+service advertises its address (`FLEET_DASHBOARD_URL`, `FLEET_OPENAPI_URL`, `FLEET_SERVICE_TTL`, the tools that depend
+on them), and what the dashboard counts versus keeps (`/dashboard/api/traffic`, the `counting` field). They are not
+checked by `check_idioms`, and say so. A test holds the first to the table of tools the embedded endpoint reads, so a
+live tool added without documentation fails it.
+
 ### The fleet aggregator's service TTL is configurable
 
 `cmd/fleet-aggregator` had no environment variable for the interval after which a silent service is reported

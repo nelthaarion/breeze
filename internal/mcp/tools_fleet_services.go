@@ -38,6 +38,9 @@ const (
 	fleetStatusUp       = "up"
 	fleetStatusDegraded = "degraded"
 	fleetStatusDown     = "down"
+	// fleetStatusForgotten is a tombstone: a service the registry swept after twenty times the TTL of
+	// silence. The aggregator lists those only when asked.
+	fleetStatusForgotten = "forgotten"
 )
 
 // ── mirrors of the aggregator's JSON ─────────────────────────────────────────
@@ -52,6 +55,10 @@ type fleetService struct {
 	Status            string   `json:"status"`
 	LastHeartbeatUnix int64    `json:"last_heartbeat_unix"`
 	OpenAPIURL        string   `json:"openapi_url,omitempty"`
+	// DashboardURL is where the service says its dashboard is, which is where the aggregator reads its
+	// logs. A service with neither this nor OpenAPIURL cannot be log-stitched.
+	DashboardURL    string `json:"dashboard_url,omitempty"`
+	ForgottenAtUnix int64  `json:"forgotten_at_unix,omitempty"`
 }
 
 // fleetTraceLogLine mirrors aggregator.TraceLog: a dashboard log line, attributed.
@@ -88,13 +95,16 @@ type serviceRow struct {
 }
 
 type servicesReport struct {
-	AggregatorURL string       `json:"aggregator_url"`
-	Total         int          `json:"total"`
-	Up            int          `json:"up"`
-	Degraded      int          `json:"degraded"`
-	Down          int          `json:"down"`
-	Services      []serviceRow `json:"services"`
-	Notes         []string     `json:"notes,omitempty"`
+	AggregatorURL string `json:"aggregator_url"`
+	// Total counts the services the registry holds. Forgotten counts the tombstones listed after them,
+	// which are not in Total.
+	Total     int          `json:"total"`
+	Up        int          `json:"up"`
+	Degraded  int          `json:"degraded"`
+	Down      int          `json:"down"`
+	Forgotten int          `json:"forgotten"`
+	Services  []serviceRow `json:"services"`
+	Notes     []string     `json:"notes,omitempty"`
 }
 
 func getServicesTool() *tool {
@@ -106,8 +116,12 @@ func getServicesTool() *tool {
 			"first. This is the tool that shows a service is dead: a down service exports no spans, " +
 			"so a failing trace stops at its caller and breeze_get_topology and breeze_explain_incident " +
 			"can only name the caller. The registry forgets a service after it has been silent for " +
-			"twenty times the aggregator's service TTL (five minutes by default), so a service missing " +
-			"from this list may have died long ago, not never existed.",
+			"twenty times the aggregator's service TTL (five minutes by default); a forgotten service " +
+			"is listed after the live ones with the status 'forgotten' and when it was last heard from, " +
+			"for a day and at most 256 of them, so one missing from the live part may have died minutes " +
+			"ago and not never existed. Services the aggregator cannot read logs from (they advertise " +
+			"neither a dashboard URL nor an OpenAPI URL) are named, because their logs are missing from " +
+			"breeze_get_trace_logs.",
 		schema: objectSchema(fleetProps(nil), "aggregator_url"),
 		run: func(raw json.RawMessage) toolCallResult {
 			var a fleetArgs
@@ -121,19 +135,26 @@ func getServicesTool() *tool {
 
 func getServices(a fleetArgs) toolCallResult {
 	var services []fleetService
-	if err := fetchLiveJSON(a.request("/services", "fleet aggregator"), &services); err != nil {
+	req := a.request("/services", "fleet aggregator")
+	req.path += "?forgotten=1"
+	if err := fetchLiveJSON(req, &services); err != nil {
 		return liveResultError("reading the service registry", err)
 	}
 
 	report := servicesReport{
 		AggregatorURL: a.AggregatorURL,
-		Total:         len(services),
 		Services:      make([]serviceRow, 0, len(services)),
 	}
 
 	now := fleetNow()
-	var down []string
+	var down, unreachable []string
 	for _, s := range services {
+		if s.Status != fleetStatusForgotten {
+			report.Total++
+			if s.DashboardURL == "" && s.OpenAPIURL == "" {
+				unreachable = append(unreachable, s.Name)
+			}
+		}
 		row := serviceRow{fleetService: s}
 		if s.LastHeartbeatUnix > 0 {
 			if silent := now.Unix() - s.LastHeartbeatUnix; silent > 0 {
@@ -148,12 +169,15 @@ func getServices(a fleetArgs) toolCallResult {
 		case fleetStatusDown:
 			report.Down++
 			down = append(down, s.Name)
+		case fleetStatusForgotten:
+			report.Forgotten++
 		}
 		report.Services = append(report.Services, row)
 	}
 
-	// Worst first: this is read to find what is wrong, so what is wrong goes on top.
-	rank := map[string]int{fleetStatusDown: 0, fleetStatusDegraded: 1, fleetStatusUp: 2}
+	// Worst first: this is read to find what is wrong, so what is wrong goes on top. A tombstone is
+	// not a live service and goes after all of them.
+	rank := map[string]int{fleetStatusDown: 0, fleetStatusDegraded: 1, fleetStatusUp: 2, fleetStatusForgotten: 3}
 	sort.SliceStable(report.Services, func(i, j int) bool {
 		ri, rj := rank[report.Services[i].Status], rank[report.Services[j].Status]
 		if ri != rj {
@@ -180,8 +204,21 @@ func getServices(a fleetArgs) toolCallResult {
 		report.Notes = append(report.Notes, "degraded means the service is heartbeating and reporting an error "+
 			"rate above the aggregator's threshold: it is alive and failing, which is read from its own logs.")
 	}
+	if report.Forgotten > 0 {
+		report.Notes = append(report.Notes, fmt.Sprintf("%d forgotten service(s) are listed after the live ones: the registry swept "+
+			"them after twenty times its service TTL of silence, and silent_seconds is how long ago each was last heard from. "+
+			"Not running is the likeliest reading, and a service that is meant to be is a fault; one that was retired is not.", report.Forgotten))
+	}
+	if len(unreachable) > 0 {
+		report.Notes = append(report.Notes, "The aggregator cannot read logs from "+strings.Join(unreachable, ", ")+": they advertise neither "+
+			"a dashboard URL nor an OpenAPI URL in their heartbeat, so their lines are missing from breeze_get_trace_logs and "+
+			"breeze_explain_incident. Set FLEET_DASHBOARD_URL on those services (breeze add fleet generates the setting).")
+	}
 
 	summary := fmt.Sprintf("%d service(s): %d up, %d degraded, %d down", report.Total, report.Up, report.Degraded, report.Down)
+	if report.Forgotten > 0 {
+		summary += fmt.Sprintf(", %d forgotten", report.Forgotten)
+	}
 	if len(down) > 0 {
 		shown := down
 		if len(shown) > 5 {

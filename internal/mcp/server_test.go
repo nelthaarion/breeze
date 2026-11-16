@@ -223,7 +223,7 @@ func TestToolRegistryCovers(t *testing.T) {
 		"breeze_get_topology", "breeze_get_traces", "breeze_get_trace",
 		"breeze_get_contract_violations", "breeze_explain_incident",
 		"breeze_get_services", "breeze_get_trace_logs",
-		"breeze_get_signals", "breeze_get_health",
+		"breeze_get_signals", "breeze_get_health", "breeze_get_timeline", "breeze_get_queries",
 
 		// Category G — verification against the toolchain and a live service.
 		"breeze_verify_project", "breeze_run_benchmarks", "breeze_get_test_coverage",

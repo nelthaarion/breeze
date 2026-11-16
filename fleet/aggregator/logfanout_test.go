@@ -10,6 +10,7 @@ import (
 
 	"github.com/goccy/go-json"
 
+	"github.com/nelthaarion/breeze/v2"
 	"github.com/nelthaarion/breeze/v2/dashboard"
 	"github.com/nelthaarion/breeze/v2/fleet"
 )
@@ -334,5 +335,45 @@ func TestLogEndpointsOnlyIncludesTraceServices(t *testing.T) {
 	}
 	if got["gateway"] != "http://gateway:8080/dashboard" {
 		t.Errorf("gateway endpoint = %q", got["gateway"])
+	}
+}
+
+// TestLogEndpointsPreferTheDashboardURLAHeartbeatCarries: an explicit address wins, the one derived
+// from the OpenAPI URL is still what a service that sent none gets, and the allowlist guard applies
+// to both, since the fetch sends the service token to whichever it is.
+func TestLogEndpointsPreferTheDashboardURLAHeartbeatCarries(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ServiceToken = "shared-secret"
+	cfg.FetchAllowedHosts = []string{"10.0.0.1:3000", "10.0.0.2:3000", "10.0.0.3:3000", "10.0.0.5:3000"}
+	a := installWithStore(breeze.NewRouter(), cfg, nil)
+	defer a.Close(context.Background())
+
+	for _, hb := range []fleet.Heartbeat{
+		{Service: "explicit", DashboardURL: "http://10.0.0.1:3000/admin/", OpenAPIURL: "http://10.0.0.1:3000/openapi.json"},
+		{Service: "derived", OpenAPIURL: "http://10.0.0.2:3000/openapi.json"},
+		{Service: "dashboard-only", DashboardURL: "http://10.0.0.3:3000/dashboard"},
+		{Service: "not-an-address", DashboardURL: "javascript:alert(1)"},
+		{Service: "credentials", DashboardURL: "http://user:pw@10.0.0.5:3000/dashboard?x=1#frag"},
+		{Service: "off-allowlist", DashboardURL: "http://10.9.9.9:3000/dashboard"},
+	} {
+		_ = a.AcceptHeartbeat(hb)
+	}
+
+	eps := a.logEndpoints([]string{"explicit", "derived", "dashboard-only", "not-an-address", "credentials", "off-allowlist"})
+	want := map[string]string{
+		"explicit":       "http://10.0.0.1:3000/admin",     // the moved dashboard, not /dashboard on the same host
+		"derived":        "http://10.0.0.2:3000/dashboard", // the fallback, as before
+		"dashboard-only": "http://10.0.0.3:3000/dashboard", // no OpenAPI document needed
+		"credentials":    "http://10.0.0.5:3000/dashboard", // userinfo, query and fragment dropped
+	}
+	for name, base := range want {
+		if eps[name] != base {
+			t.Errorf("%s: endpoint %q, want %q", name, eps[name], base)
+		}
+	}
+	for _, name := range []string{"not-an-address", "off-allowlist"} {
+		if eps[name] != "" {
+			t.Errorf("%s: got endpoint %q, want none", name, eps[name])
+		}
 	}
 }

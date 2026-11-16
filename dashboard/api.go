@@ -565,15 +565,26 @@ func (c *Collector) requestsPayload(q query) []RequestRecord {
 }
 
 func (c *Collector) handleQueries(ctx *breeze.Context) error {
-	n := atoiDefault(ctx.Query("limit"), 200)
+	return ctx.JSON(c.queriesPayload(ctx))
+}
+
+// queriesPayload is what the queries endpoint serves: the most recent queries within the limit
+// (the window that is searched, not the number returned), oldest first, narrowed to the slow ones
+// and to those whose statement contains q.
+//
+// Only what the application pushed is here. The framework does not record a query itself: the
+// application's data layer has to call PushQuery, so an empty list says that nothing was pushed.
+// The arguments of a query are held and are deliberately not served.
+func (c *Collector) queriesPayload(params query) []queryEvent {
+	n := atoiDefault(params.Query("limit"), 200)
 	if n < 1 {
 		n = 1
 	}
 	if n > c.cfg.MaxQueries {
 		n = c.cfg.MaxQueries
 	}
-	slowOnly := ctx.Query("slow") == "1" || strings.EqualFold(ctx.Query("slow"), "true")
-	search := strings.TrimSpace(ctx.Query("q"))
+	slowOnly := params.Query("slow") == "1" || strings.EqualFold(params.Query("slow"), "true")
+	search := strings.TrimSpace(params.Query("q"))
 	all := c.Queries(n)
 	searchLower := strings.ToLower(search)
 	out := make([]queryEvent, 0, len(all))
@@ -590,7 +601,7 @@ func (c *Collector) handleQueries(ctx *breeze.Context) error {
 			Slow: q.Slow, Error: q.Error,
 		})
 	}
-	return ctx.JSON(out)
+	return out
 }
 
 func (c *Collector) handleCache(ctx *breeze.Context) error {
@@ -695,18 +706,36 @@ func (c *Collector) performancePayload() map[string]any {
 }
 
 func (c *Collector) handleTimelineList(ctx *breeze.Context) error {
-	n := atoiDefault(ctx.Query("limit"), 50)
-	return ctx.JSON(c.Timelines(n))
+	return ctx.JSON(c.timelineListPayload(ctx))
+}
+
+// timelineListPayload is what the timeline endpoint serves: the most recent timelines within
+// the limit, oldest first.
+//
+// A timeline exists only for a request that ran while a browser had the dashboard open
+// (Middleware attaches the recorder before the handler runs, and only then), so an empty list
+// is the ordinary answer of a dashboard nobody was watching, not a sign that nothing was slow.
+func (c *Collector) timelineListPayload(q query) []Timeline {
+	return c.Timelines(atoiDefault(q.Query("limit"), 50))
 }
 
 func (c *Collector) handleTimelineGet(ctx *breeze.Context) error {
-	id := ctx.Param("id")
+	t, ok := c.timelineByID(ctx.Param("id"))
+	if !ok {
+		return jsonError(ctx, 404, "timeline not found")
+	}
+	return ctx.JSON(t)
+}
+
+// timelineByID is what the timeline/:id endpoint serves: the timeline of one request, found by
+// the id of that request.
+func (c *Collector) timelineByID(id string) (Timeline, bool) {
 	for _, t := range c.Timelines(0) {
 		if t.ID == id {
-			return ctx.JSON(t)
+			return t, true
 		}
 	}
-	return jsonError(ctx, 404, "timeline not found")
+	return Timeline{}, false
 }
 
 func (c *Collector) handleArchitecture(ctx *breeze.Context) error {

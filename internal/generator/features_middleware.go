@@ -48,14 +48,54 @@ func registerRecovery() {
 	})
 }
 
+// loggingToDashboardBody is the logging block of a project that has a dashboard.
+//
+// LoggingMiddleware writes to stdout and nowhere else, so on its own the dashboard's http log tab
+// stays empty however many requests are served, and so does what reads it: the Logs page and the
+// MCP tool breeze_get_logs. The middleware's Output is the seam, and the writer keeps the stdout
+// line it always printed.
+//
+// DashboardCollector is looked up when a line is written and not when the middleware is built:
+// setupLogging runs before setupDashboard, so the collector does not exist yet, and capturing it
+// here would bind the writer to nil for the life of the process.
+const loggingToDashboardBody = `func setupLogging(app *breeze.Breeze, router *breeze.Router) {
+	// Just inside recovery: a request rejected by rate limiting or auth still
+	// gets logged, which is exactly when you want the line.
+	router.Use(middleware.LoggingMiddlewareWith(middleware.LoggingOptions{Output: requestLog{}}))
+}
+
+// requestLog writes each request line to stdout, as LoggingMiddleware does on its own, and to the
+// dashboard's http log tab.
+type requestLog struct{}
+
+func (requestLog) Write(p []byte) (int, error) {
+	if c := DashboardCollector; c != nil {
+		c.PushLog("http", strings.TrimRight(string(p), "\r\n"), "http")
+	}
+	return os.Stdout.Write(p)
+}`
+
 func registerLogging() {
 	register(&feature{
 		Name:     "logging",
 		Summary:  "per-request method, path, status and duration line",
 		Priority: 20,
 		Imports:  []string{middlewareImport},
+		// With a dashboard in the project the request lines are also written to its http log tab,
+		// which is decided here, so a dashboard added afterwards asks for this to be re-run.
+		DependsOn: []string{"dashboard"},
 		Build: func(fs *flag.FlagSet) func(featureCtx) (featureOutput, error) {
 			return func(ctx featureCtx) (featureOutput, error) {
+				if ctx.HasDashboard {
+					return featureOutput{
+						Imports: []string{osImport, `"strings"`},
+						Body:    loggingToDashboardBody,
+						Notes: []string{
+							"Each request line is also written to the dashboard's http log tab, which GET /dashboard/api/logs?level=http and " +
+								"the MCP tool breeze_get_logs read.",
+						},
+					}, nil
+				}
 				return featureOutput{Body: `func setupLogging(app *breeze.Breeze, router *breeze.Router) {
 	// Just inside recovery: a request rejected by rate limiting or auth still
 	// gets logged, which is exactly when you want the line.

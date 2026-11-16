@@ -55,10 +55,12 @@ const historyFileName = "mcp-history.jsonl"
 
 // stageableTools are the tools a change set will run.
 //
-// Only the three that write files. A read-only tool has nothing to stage — it
+// Only those that write files. A read-only tool has nothing to stage — it
 // would return its answer at stage time and contribute nothing to the commit —
-// and allowing it would suggest otherwise.
-var stageableTools = []string{"breeze_add", "breeze_generate", "breeze_new"}
+// and allowing it would suggest otherwise. breeze_migrate is not here for a
+// different reason: it changes a database, not the working tree, and a change
+// set is a tree that can be discarded.
+var stageableTools = []string{"breeze_add", "breeze_generate", "breeze_makemigration", "breeze_new"}
 
 // stagedCall is one call recorded in a change set.
 type stagedCall struct {
@@ -451,6 +453,20 @@ func stagedRunner(toolName string, args json.RawMessage) (func(dir string) error
 			return nil, err
 		}
 		return func(string) error { return generator.Generate(argv) }, nil
+
+	case "breeze_makemigration":
+		var a makeMigrationArgs
+		if err := decodeArgs(args, &a); err != nil {
+			return nil, fmt.Errorf("arguments for %s: %w", toolName, err)
+		}
+		if a.Dir != "" {
+			return nil, fmt.Errorf("%s cannot set dir inside a change set — the change set decides where the call runs", toolName)
+		}
+		argv, err := a.argv()
+		if err != nil {
+			return nil, err
+		}
+		return func(string) error { return generator.MakeMigration(argv) }, nil
 
 	case "breeze_new":
 		return nil, errors.New("breeze_new cannot be staged: a change set is opened over a project that already exists. " +

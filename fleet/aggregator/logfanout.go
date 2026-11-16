@@ -277,13 +277,13 @@ func (e *fanoutStatusError) Error() string {
 	}
 }
 
-// logEndpoints derives each service's dashboard base URL from its heartbeat.
+// logEndpoints works out each service's dashboard base URL from its heartbeat.
 //
-// The heartbeat already carries openapi_url (§8.1.2) for the schema registry,
-// and a service's dashboard lives alongside it on the same origin. Deriving the
-// address from a field that already exists avoids adding a second one that
-// could disagree with it — and avoids asking operators to configure the same
-// host twice.
+// A heartbeat can carry dashboard_url, the address the service gives for its own dashboard,
+// and that is used when it is there. Before it existed the only address was openapi_url
+// (§8.1.2), carried for the schema registry, and the dashboard was assumed to sit on the
+// same origin under /dashboard; that is still the fallback for a service that sends no
+// dashboard_url, so a fleet that has not been regenerated is read as it always was.
 func (a *Aggregator) logEndpoints(services []string) map[string]string {
 	if len(services) == 0 {
 		return nil
@@ -307,7 +307,7 @@ func (a *Aggregator) logEndpoints(services []string) map[string]string {
 		if _, ok := want[info.Name]; !ok {
 			continue
 		}
-		base := dashboardBaseFromOpenAPI(info.OpenAPIURL)
+		base := dashboardBase(info)
 		if base == "" {
 			continue
 		}
@@ -320,6 +320,31 @@ func (a *Aggregator) logEndpoints(services []string) map[string]string {
 		out[info.Name] = base
 	}
 	return out
+}
+
+// dashboardBase is the address to read a service's logs at: the one its heartbeat gave for its
+// dashboard, or, where it gave none, the one derived from its OpenAPI URL.
+func dashboardBase(info ServiceInfo) string {
+	if base := normalizeDashboardURL(info.DashboardURL); base != "" {
+		return base
+	}
+	return dashboardBaseFromOpenAPI(info.OpenAPIURL)
+}
+
+// normalizeDashboardURL cleans an address a heartbeat gave: an http or https URL with a host, its
+// base path kept, without a query, a fragment, credentials or a trailing slash. Anything else is
+// not an address, and the caller falls back.
+func normalizeDashboardURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.Path = strings.TrimRight(u.Path, "/")
+	u.RawPath = ""
+	return u.String()
 }
 
 // dashboardBaseFromOpenAPI turns "http://host/openapi.json" into

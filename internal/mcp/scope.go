@@ -71,6 +71,8 @@ var toolScopes = map[string]toolScope{
 	"breeze_get_logs":                scopeInProcess,
 	"breeze_get_signals":             scopeInProcess,
 	"breeze_get_health":              scopeInProcess,
+	"breeze_get_timeline":            scopeInProcess,
+	"breeze_get_queries":             scopeInProcess,
 	"breeze_query_openapi":           scopeInProcess,
 	"breeze_diagnose_service":        scopeInProcess,
 	"breeze_get_topology":            scopeInProcess,

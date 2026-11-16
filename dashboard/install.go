@@ -172,7 +172,7 @@ func (c *Collector) PushQuery(sql string, args []any, durationUS int64, rows int
 func (c *Collector) PushLog(level, message, source string) {
 	c.RecordLog(level, LogEntry{
 		Time:    now(),
-		Message: maskLine(c.cfg, message),
+		Message: maskLineWith(c.keysForMasking(), message),
 		Source:  source,
 	})
 }
@@ -208,7 +208,7 @@ func (c *Collector) PushLogCtx(ctx *breeze.Context, level, message, source strin
 	}
 	c.RecordLog(level, LogEntry{
 		Time:    now(),
-		Message: maskLine(c.cfg, message),
+		Message: maskLineWith(c.keysForMasking(), message),
 		Source:  source,
 		TraceID: traceID,
 	})

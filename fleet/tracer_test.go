@@ -598,3 +598,28 @@ func TestTracerConcurrentRecordAndFlush(t *testing.T) {
 		t.Errorf("SpansRecorded = %d, want %d", got, writers*perW)
 	}
 }
+
+// TestHeartbeatCarriesTheDashboardURL: the aggregator reads a service's logs at the address its
+// heartbeat gives for its dashboard, so dropping the field silently turns log stitching off for the
+// service, with nothing failing anywhere.
+func TestHeartbeatCarriesTheDashboardURL(t *testing.T) {
+	rt := newRecordingTransport()
+	tr := New(TracerConfig{
+		Enabled: true, ServiceName: "orders-service", AggregatorURL: "http://a",
+		Transport: rt, FlushInterval: time.Hour, HeartbeatInterval: 10 * time.Millisecond,
+		DashboardURL: "http://orders:3000/admin",
+	})
+	defer closeTracer(t, tr)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(rt.exportedHeartbeats()) == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	hbs := rt.exportedHeartbeats()
+	if len(hbs) == 0 {
+		t.Fatal("no heartbeat within 2s")
+	}
+	if hbs[0].DashboardURL != "http://orders:3000/admin" {
+		t.Errorf("the heartbeat carries DashboardURL %q, want the one configured", hbs[0].DashboardURL)
+	}
+}

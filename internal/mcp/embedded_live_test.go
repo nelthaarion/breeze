@@ -106,6 +106,12 @@ func startLocalFixture(t *testing.T) localFixtureService {
 		coll.RecordLog("error", dashboard.LogEntry{Time: now.Add(-2 * time.Second), Message: liveMarker + " charge failed", Source: "orders", TraceID: liveTraceID})
 		coll.RecordLog("warning", dashboard.LogEntry{Time: now.Add(-1 * time.Second), Message: liveMarker + " unrelated warning", Source: "billing"})
 
+		// Two requests' timelines, made by the real recorder: the tool for them is held to the same
+		// collector over HTTP and in memory like every other.
+		recordLiveTimeline(coll, cfg, liveTimelineOlderID, "/api/orders/older")
+		recordLiveTimeline(coll, cfg, liveTimelineID, "/api/orders")
+		recordLiveQueries(coll)
+
 		router.Handle(breeze.GET, "/api/orders", func(ctx *breeze.Context) error {
 			return ctx.JSON(map[string]any{"orders": []string{"a", "b"}})
 		})
@@ -214,6 +220,10 @@ func liveToolCases() []liveToolCase {
 			// Latency and the time of the check are measured when the check runs.
 			volatile: []string{"latency_us", "checked", "last_check", "last_checked", "latency_ms"}, substantial: hasRows("checks"),
 		},
+		{name: "breeze_get_queries", substantial: hasRows("queries")},
+		{name: "breeze_get_queries", args: map[string]any{"slow": true, "query": "orders"}, substantial: hasRows("queries")},
+		{name: "breeze_get_timeline", substantial: hasRows("timelines")},
+		{name: "breeze_get_timeline", args: map[string]any{"id": liveTimelineID}, substantial: hasRows("steps")},
 		{
 			name: "breeze_get_performance",
 			// Runtime counters move between any two reads; the performance test below compares
@@ -646,6 +656,8 @@ func TestEmbeddedReadsSurviveTheRateLimiterThatRefusesHTTPOnes(t *testing.T) {
 		{name: "breeze_get_performance"},
 		{name: "breeze_get_health"},
 		{name: "breeze_get_signals"},
+		{name: "breeze_get_timeline"},
+		{name: "breeze_get_queries"},
 	} {
 		got, summary, isErr := callLiveToolOn(t, embeddedServer(), tc.name, tc.args)
 		if isErr {

@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/nelthaarion/breeze/v2/internal/generator"
+	"strings"
 )
 
 // fixtureConfig exercises every value explain_project claims to recover: a
@@ -436,6 +437,81 @@ func TestChangeSetCommitAppliesAndRecordsHistory(t *testing.T) {
 	// for rather than this package's reading of it.
 	if len(entries[0].Arguments) == 0 {
 		t.Error("the history entry records no arguments")
+	}
+}
+
+// TestStagedMakemigrationLandsOnCommitAndOnlyThen: a migration pair is two files in the working tree,
+// so it belongs in a change set like any other generated file: nothing is written until the commit,
+// two files are, the second pair is numbered after the first, and a discarded set writes none.
+func TestStagedMakemigrationLandsOnCommitAndOnlyThen(t *testing.T) {
+	project := newFixtureProject(t, "scratch", "docs:\n  enabled: true\n")
+	srv := NewServer("test")
+	migrations := filepath.Join(project, "migrations")
+
+	// The premise: there is nothing there to begin with, or the assertions below prove nothing.
+	if entries, _ := os.ReadDir(migrations); len(entries) != 0 {
+		t.Fatalf("the fixture project already has migrations: %v", entries)
+	}
+
+	stage := func(id, name string) toolCallResult {
+		return srv.tools["breeze_stage_call"].run(mustJSON(t, map[string]any{
+			"change_set": id, "tool": "breeze_makemigration", "arguments": map[string]any{"name": name},
+		}))
+	}
+
+	// Discarded: no file is ever written.
+	dropped := srv.tools["breeze_begin_change_set"].run(mustJSON(t, map[string]any{"project_path": project}))
+	droppedID := dropped.StructuredContent.(changeSetView).ID
+	if res := stage(droppedID, "AddNothing"); res.IsError {
+		t.Fatalf("staging makemigration: %s", res.Content[0].Text)
+	}
+	srv.tools["breeze_discard_change_set"].run(mustJSON(t, map[string]any{"change_set": droppedID}))
+	if entries, _ := os.ReadDir(migrations); len(entries) != 0 {
+		t.Fatalf("a discarded change set left %d files in migrations", len(entries))
+	}
+
+	// Committed: two staged migrations, numbered one after the other, land together.
+	open := srv.tools["breeze_begin_change_set"].run(mustJSON(t, map[string]any{"project_path": project}))
+	view := open.StructuredContent.(changeSetView)
+	id := view.ID
+	// What an agent reads to learn what a change set will run lists it.
+	listed := false
+	for _, name := range view.Stageable {
+		listed = listed || name == "breeze_makemigration"
+	}
+	if !listed {
+		t.Errorf("begin_change_set does not list breeze_makemigration among the stageable tools: %v", view.Stageable)
+	}
+	for _, name := range []string{"CreateOrders", "AddIndexToOrders"} {
+		if res := stage(id, name); res.IsError {
+			t.Fatalf("staging %s: %s", name, res.Content[0].Text)
+		}
+	}
+	if entries, _ := os.ReadDir(migrations); len(entries) != 0 {
+		t.Fatalf("staging wrote %d files before the commit", len(entries))
+	}
+	committed := srv.tools["breeze_commit_change_set"].run(mustJSON(t, map[string]any{"change_set": id}))
+	if committed.IsError {
+		t.Fatalf("commit_change_set: %s", committed.Content[0].Text)
+	}
+	for _, want := range []string{
+		"0001_create_orders.up.sql", "0001_create_orders.down.sql",
+		"0002_add_index_to_orders.up.sql", "0002_add_index_to_orders.down.sql",
+	} {
+		if _, err := os.Stat(filepath.Join(migrations, want)); err != nil {
+			t.Errorf("the commit did not write %s: %v", want, err)
+		}
+	}
+
+	// The dir argument is the change set's to decide, as for the other staged tools.
+	again := srv.tools["breeze_begin_change_set"].run(mustJSON(t, map[string]any{"project_path": project}))
+	againID := again.StructuredContent.(changeSetView).ID
+	defer srv.tools["breeze_discard_change_set"].run(mustJSON(t, map[string]any{"change_set": againID}))
+	res := srv.tools["breeze_stage_call"].run(mustJSON(t, map[string]any{
+		"change_set": againID, "tool": "breeze_makemigration", "arguments": map[string]any{"name": "X", "dir": "/elsewhere"},
+	}))
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "cannot set dir inside a change set") {
+		t.Errorf("a staged makemigration that sets dir was not refused: %v", res.Content)
 	}
 }
 

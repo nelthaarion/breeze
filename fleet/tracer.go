@@ -116,6 +116,9 @@ type TracerConfig struct {
 	OpenAPIHash string
 	OpenAPIURL  string
 
+	// DashboardURL is reported on each heartbeat as Heartbeat.DashboardURL says.
+	DashboardURL string
+
 	// Logger receives the tracer's own diagnostics, matching the dashboard
 	// collector's PushLog(level, message, source) shape so a caller can pass
 	// coll.PushLog directly:
@@ -431,6 +434,8 @@ func (t *Tracer) sendHeartbeat(ctx context.Context) {
 		ErrorRate:   errRate,
 		OpenAPIHash: t.cfg.OpenAPIHash,
 		OpenAPIURL:  t.cfg.OpenAPIURL,
+
+		DashboardURL: t.cfg.DashboardURL,
 	}
 	if err := t.transport.ExportHeartbeat(ctx, t.cfg.AggregatorURL, hb); err != nil {
 		t.exportFails.Add(1)

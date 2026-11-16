@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/nelthaarion/gnetplus/v2"
 )
@@ -762,6 +763,17 @@ func (s *Breeze) Run(port int, multiCore bool) error {
 	return s.RunOn("", port, multiCore)
 }
 
+// reuseAddr is whether the listener sets SO_REUSEADDR.
+//
+// On Unix it has to. A server that closes a connection first keeps it in TIME_WAIT for about a
+// minute, and without SO_REUSEADDR bind refuses the port until those are gone, so a service that
+// served a request and was restarted inside that minute (a crash loop, a rolling deploy, systemd's
+// Restart=) could not listen and exited. It does not let two servers share a port: that is
+// SO_REUSEPORT, a separate option that this one does not set. On Windows the option means the
+// opposite of what is wanted, since it lets another process bind a port that is already being
+// listened on, and a port in TIME_WAIT does not refuse a listener there, so it is left off.
+var reuseAddr = runtime.GOOS != "windows"
+
 // RunOn starts Breeze on host:port. An empty host preserves the historical
 // behavior of listening on all interfaces.
 func (s *Breeze) RunOn(host string, port int, multiCore bool) error {
@@ -775,8 +787,10 @@ func (s *Breeze) RunOn(host string, port int, multiCore bool) error {
 	s.listenPort.Store(int64(port))
 	h := host
 	s.listenHost.Store(&h)
-	noYield := s.noPollYield()
+	noYield := false
+
 	s.yieldOnDispatch.Store(noYield)
+
 	serve := func(addr string) error {
 		return gnetplus.Run(
 			s,
@@ -788,6 +802,11 @@ func (s *Breeze) RunOn(host string, port int, multiCore bool) error {
 			gnetplus.WithWriteBufferCap(64<<10),
 			gnetplus.WithTicker(true),
 			gnetplus.WithNoPollYield(noYield),
+			gnetplus.WithReusePort(true),
+			gnetplus.WithOptions(gnetplus.Options{NumEventLoop: s.Pool.Metrics().Workers, TCPKeepAlive: time.Second * 5}),
+			// Last on purpose: WithOptions replaces the whole option set instead of adding to it, so
+			// anything listed before it is discarded and the port would stay unrebindable.
+			gnetplus.WithReuseAddr(reuseAddr),
 		)
 	}
 	err := serve("tcp://" + net.JoinHostPort(host, strconv.Itoa(port)))

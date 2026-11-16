@@ -2,6 +2,7 @@ package main
 
 import (
         "fmt"
+        "log"
         "runtime"
 
         "github.com/nelthaarion/breeze/v2"
@@ -31,7 +32,12 @@ func main() {
         RegisterGeneratedFeatures(app, router)
 
         fmt.Println("Breeze listening on :3000")
-        app.Run(3000, true)
+        // Run returns when the listener cannot start (the port is taken, or was left in
+        // TIME_WAIT by a run that has just stopped) and when the server is stopped. Dropping
+        // the error made the first of those look like a clean exit.
+        if err := app.Run(3000, true); err != nil {
+                log.Fatalf("breeze: %v", err)
+        }
 }
 
 type statusResponse struct {

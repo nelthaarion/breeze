@@ -204,7 +204,14 @@ func ingestBody(ctx *breeze.Context) ([]byte, bool) {
 }
 
 func (a *Aggregator) services(ctx *breeze.Context) error {
-	writeJSON(ctx, 200, a.registry.Snapshot(time.Now()))
+	now := time.Now()
+	list := a.registry.Snapshot(now)
+	// ?forgotten=1 appends the services the registry swept, as tombstones. Off unless asked: the
+	// Fleet UI draws every row of this list as a live service.
+	if v := ctx.Query("forgotten"); v == "1" || v == "true" {
+		list = append(list, a.registry.Forgotten(now)...)
+	}
+	writeJSON(ctx, 200, list)
 
 	return nil
 }

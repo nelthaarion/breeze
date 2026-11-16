@@ -11,6 +11,7 @@ package mcp_test
 // no spans, so the failing trace stops at auth-service.
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -507,5 +508,110 @@ func TestGetTraceLogsRejectsAMalformedTraceID(t *testing.T) {
 		withFleetCreds(fx.base, map[string]any{"trace_id": "../../etc/passwd"}))
 	if !isErr {
 		t.Fatalf("a trace id that is a path was accepted: %s", summary)
+	}
+}
+
+// stubAggregator serves a fixed list at /fleet/api/services and records what it was asked.
+func stubAggregator(t *testing.T, list string, asked *string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fleet/api/services" {
+			http.NotFound(w, r)
+			return
+		}
+		if asked != nil {
+			*asked = r.URL.RawQuery
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(list))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// TestGetServicesListsForgottenServicesAfterTheLiveOnes: a service the registry swept is absent from
+// the live list, which reads the same as a service that never existed. The tool asks for the tombstones
+// and puts them after everything alive, counted apart.
+func TestGetServicesListsForgottenServicesAfterTheLiveOnes(t *testing.T) {
+	now := time.Now()
+	var asked string
+	base := stubAggregator(t, fmt.Sprintf(`[
+		{"name":"orders","instances":0,"rps":0,"error_rate":0,"status":"forgotten","last_heartbeat_unix":%d,"forgotten_at_unix":%d,"dashboard_url":"http://orders:3000/dashboard"},
+		{"name":"gateway","instances":1,"rps":5,"error_rate":0,"status":"up","last_heartbeat_unix":%d,"dashboard_url":"http://gateway:3000/dashboard"}
+	]`, now.Add(-30*time.Minute).Unix(), now.Add(-25*time.Minute).Unix(), now.Unix()), &asked)
+
+	got, summary, isErr := callLiveTool(t, "breeze_get_services", fleetCreds(base))
+	if isErr {
+		t.Fatalf("breeze_get_services: %s", summary)
+	}
+	if !strings.Contains(asked, "forgotten=1") {
+		t.Errorf("the tool asked the aggregator %q, so it never gets the tombstones", asked)
+	}
+	rows := asRows(t, got["services"])
+	if len(rows) != 2 || rows[0]["name"] != "gateway" || rows[1]["name"] != "orders" || rows[1]["status"] != "forgotten" {
+		t.Fatalf("services = %v, want the live gateway and then the forgotten orders", rows)
+	}
+	if got["total"] != float64(1) || got["forgotten"] != float64(1) {
+		t.Errorf("total/forgotten = %v/%v, want 1/1: a tombstone is not a service the registry holds", got["total"], got["forgotten"])
+	}
+	if silent, _ := rows[1]["silent_seconds"].(float64); silent < 29*60 {
+		t.Errorf("the forgotten service was last heard from 30 minutes ago and silent_seconds says %v", rows[1]["silent_seconds"])
+	}
+	if !strings.Contains(summary, "1 forgotten") || !strings.Contains(joinNotes(got), "forgotten service(s) are listed after the live ones") {
+		t.Errorf("the answer does not say a service was forgotten: %q / %s", summary, joinNotes(got))
+	}
+}
+
+// TestGetServicesNamesTheServicesItCannotReadLogsFrom: a service that advertises no address has its
+// lines missing from every stitched trace, and nothing said so.
+func TestGetServicesNamesTheServicesItCannotReadLogsFrom(t *testing.T) {
+	now := time.Now().Unix()
+	base := stubAggregator(t, fmt.Sprintf(`[
+		{"name":"has-dashboard","instances":1,"rps":1,"error_rate":0,"status":"up","last_heartbeat_unix":%[1]d,"dashboard_url":"http://a:3000/dashboard"},
+		{"name":"has-openapi","instances":1,"rps":1,"error_rate":0,"status":"up","last_heartbeat_unix":%[1]d,"openapi_url":"http://b:3000/openapi.json"},
+		{"name":"has-neither","instances":1,"rps":1,"error_rate":0,"status":"up","last_heartbeat_unix":%[1]d},
+		{"name":"gone","instances":0,"rps":0,"error_rate":0,"status":"forgotten","last_heartbeat_unix":%[1]d}
+	]`, now), nil)
+
+	got, summary, isErr := callLiveTool(t, "breeze_get_services", fleetCreds(base))
+	if isErr {
+		t.Fatalf("breeze_get_services: %s", summary)
+	}
+	notes := joinNotes(got)
+	if !strings.Contains(notes, "cannot read logs from has-neither:") || !strings.Contains(notes, "FLEET_DASHBOARD_URL") {
+		t.Errorf("the notes do not name the service that cannot be log-stitched, or how to fix it:\n%s", notes)
+	}
+	for _, not := range []string{"has-dashboard", "has-openapi", "gone"} {
+		if strings.Contains(notes, "cannot read logs from") && strings.Contains(strings.SplitN(notes, "cannot read logs from", 2)[1], not+",") {
+			t.Errorf("%s is named as unreadable, and it is not: %s", not, notes)
+		}
+	}
+}
+
+// TestGetServicesSeesATombstoneFromARealAggregator is the same over the real wire: an aggregator whose
+// registry swept a service, asked through HTTP by the tool.
+func TestGetServicesSeesATombstoneFromARealAggregator(t *testing.T) {
+	port := freeLivePort(t)
+	router := breeze.NewRouter()
+	app := breeze.New(router, breeze.NewEventLoopWorkerPool(1))
+	agg := aggregator.InstallAggregator(app, router, aggregator.Config{
+		BasePath: "/fleet", IngestToken: fleetIngestToken, Username: fleetUser, Password: fleetPassword,
+	})
+	t.Cleanup(func() { _ = agg.Close(context.Background()) })
+	go func() { _ = app.Run(port, false) }()
+	waitForLivePort(t, port, 15*time.Second)
+
+	reg := agg.Registry()
+	reg.Observe(fleet.Heartbeat{Service: "retired-orders", InstanceID: "o1", DashboardURL: "http://orders:3000/dashboard"}, time.Now().Add(-time.Hour))
+	reg.Observe(fleet.Heartbeat{Service: "gateway", InstanceID: "g1"}, time.Now())
+	reg.Sweep(time.Now())
+
+	got, summary, isErr := callLiveTool(t, "breeze_get_services", fleetCreds("http://127.0.0.1:"+strconv.Itoa(port)))
+	if isErr {
+		t.Fatalf("breeze_get_services: %s", summary)
+	}
+	rows := asRows(t, got["services"])
+	if len(rows) != 2 || rows[1]["name"] != "retired-orders" || rows[1]["status"] != "forgotten" || rows[1]["dashboard_url"] != "http://orders:3000/dashboard" {
+		t.Fatalf("services = %v, want gateway and then the tombstone with what it advertised", rows)
 	}
 }

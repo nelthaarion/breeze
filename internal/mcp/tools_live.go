@@ -43,6 +43,8 @@ func registerLiveTools(s *Server) {
 	s.addTool(getLogsTool())
 	s.addTool(getSignalsTool())
 	s.addTool(getHealthTool())
+	s.addTool(getTimelineTool())
+	s.addTool(getQueriesTool())
 	s.addTool(queryOpenAPITool())
 	s.addTool(diagnoseServiceTool())
 }

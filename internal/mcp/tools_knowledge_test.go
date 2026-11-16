@@ -960,3 +960,49 @@ func sectionOf(document, heading string) string {
 	}
 	return heading + rest
 }
+
+// TestTheEmbeddedEndpointIdiomNamesEveryToolItReads: the idiom is what an agent reads to learn what the
+// in-process endpoint can do, and a live tool added without it would be a capability the documentation
+// does not know about. The table the endpoint reads from is the truth, so the idiom is held to it.
+func TestTheEmbeddedEndpointIdiomNamesEveryToolItReads(t *testing.T) {
+	found, ok := findIdiom("mcp-reads-the-dashboard")
+	if !ok {
+		t.Fatal("the idiom for the in-process endpoint is not documented")
+	}
+	srv := NewServer("test")
+	for name := range localLiveTools {
+		if _, registered := srv.tools[name]; !registered {
+			t.Errorf("%s is in the embedded table and is not a registered tool", name)
+		}
+		if !strings.Contains(found.Why, name) {
+			t.Errorf("the idiom does not mention %s, which the in-process endpoint reads", name)
+		}
+	}
+	for _, want := range []string{"BREEZE_MCP_PORT", "BREEZE_MCP_TOKEN", "BREEZE_MCP_SCOPE", "5 MB", "read-only"} {
+		if !strings.Contains(found.Why, want) {
+			t.Errorf("the idiom does not say %q", want)
+		}
+	}
+	if found.Checked {
+		t.Error("the idiom is marked checked, and no check implements it: a clean check_idioms report would then claim more than it looked at")
+	}
+}
+
+// TestTheFleetIdiomNamesTheSettingsAndToolsAServiceNeeds.
+func TestTheFleetIdiomNamesTheSettingsAndToolsAServiceNeeds(t *testing.T) {
+	found, ok := findIdiom("fleet-advertises-an-address")
+	if !ok {
+		t.Fatal("the idiom for how the aggregator finds a service's logs is not documented")
+	}
+	srv := NewServer("test")
+	for _, want := range []string{"FLEET_DASHBOARD_URL", "FLEET_OPENAPI_URL", "FLEET_SERVICE_TTL", "breeze_get_services", "breeze_get_trace_logs", "breeze_explain_incident"} {
+		if !strings.Contains(found.Why, want) {
+			t.Errorf("the idiom does not mention %s", want)
+		}
+		if strings.HasPrefix(want, "breeze_") {
+			if _, registered := srv.tools[want]; !registered {
+				t.Errorf("the idiom names %s, which is not a tool", want)
+			}
+		}
+	}
+}

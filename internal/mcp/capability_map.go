@@ -65,6 +65,8 @@ var toolCapabilities = map[string]Capability{
 	"breeze_get_logs":          CapRuntime,
 	"breeze_get_signals":       CapRuntime,
 	"breeze_get_health":        CapRuntime,
+	"breeze_get_timeline":      CapRuntime,
+	"breeze_get_queries":       CapRuntime,
 	"breeze_query_openapi":     CapRuntime,
 	"breeze_simulate_request":  CapRuntime,
 	"breeze_diagnose_service":  CapRuntime,

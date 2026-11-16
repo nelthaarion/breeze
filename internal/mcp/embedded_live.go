@@ -58,6 +58,8 @@ var localLiveTools = map[string]func(raw json.RawMessage, src livesource.Reader)
 	"breeze_get_recent_errors": bindReader(getRecentErrors, func(a *recentErrorsArgs) *liveArgs { return &a.liveArgs }),
 	"breeze_get_logs":          bindReader(getLogs, func(a *logsArgs) *liveArgs { return &a.liveArgs }),
 	"breeze_get_signals":       bindReader(getSignals, func(a *signalsArgs) *liveArgs { return &a.liveArgs }),
+	"breeze_get_timeline":      bindReader(getTimeline, func(a *timelineArgs) *liveArgs { return &a.liveArgs }),
+	"breeze_get_queries":       bindReader(getQueries, func(a *queriesArgs) *liveArgs { return &a.liveArgs }),
 }
 
 // bindReader adapts a tool's typed entry point: decode its arguments, point the call at the

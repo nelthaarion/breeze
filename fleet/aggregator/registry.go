@@ -34,6 +34,20 @@ const (
 	StatusUp       = "up"
 	StatusDegraded = "degraded"
 	StatusDown     = "down"
+
+	// StatusForgotten is the status of a tombstone: a service the registry swept after it had been
+	// silent for twenty times the TTL. It is not running as far as the aggregator can tell, and it
+	// is listed only when asked for, so what it was last seen doing outlives its entry.
+	StatusForgotten = "forgotten"
+)
+
+const (
+	// maxTombstones bounds the memory of swept services: a fleet that churns names (a pod per
+	// deploy) would otherwise grow the list for ever.
+	maxTombstones = 256
+	// tombstoneRetention is how long a swept service is remembered. An incident is read within a
+	// day of it, and a service gone for longer is a decommissioning, not a fault.
+	tombstoneRetention = 24 * time.Hour
 )
 
 // degradedErrorRate is the error rate at which a reporting service is shown
@@ -75,17 +89,25 @@ type ServiceInfo struct {
 	// from one place, without either polling services themselves.
 	OpenAPIHash string `json:"openapi_hash,omitempty"`
 	OpenAPIURL  string `json:"openapi_url,omitempty"`
+
+	// DashboardURL is where the service says its dashboard is, from its most recent heartbeat.
+	DashboardURL string `json:"dashboard_url,omitempty"`
+
+	// ForgottenAtUnix is set on a tombstone: when the registry swept the service. For one,
+	// LastHeartbeatUnix is when it was last heard from and Instances is zero.
+	ForgottenAtUnix int64 `json:"forgotten_at_unix,omitempty"`
 }
 
 // instanceState is what the registry remembers about one reporter.
 type instanceState struct {
-	id          string
-	version     string
-	rps         float64
-	errorRate   float64
-	openAPIHash string
-	openAPIURL  string
-	lastSeen    time.Time
+	id           string
+	version      string
+	rps          float64
+	errorRate    float64
+	openAPIHash  string
+	openAPIURL   string
+	dashboardURL string
+	lastSeen     time.Time
 }
 
 // serviceState holds every instance of one service.
@@ -111,12 +133,17 @@ type ServiceRegistry struct {
 	// so the WS hub can push a service_event only when something actually
 	// happened (§8.1.6) instead of every tick.
 	changed bool
+
+	// tombs remembers the services Sweep deleted, by name, so "forgotten, last seen five minutes
+	// ago" can be answered where an absence would otherwise read as "never existed".
+	tombs map[string]ServiceInfo
 }
 
 func NewServiceRegistry(cfg Config) *ServiceRegistry {
 	return &ServiceRegistry{
 		cfg:      cfg.withDefaults(),
 		services: make(map[string]*serviceState),
+		tombs:    make(map[string]ServiceInfo),
 	}
 }
 
@@ -148,6 +175,7 @@ func (r *ServiceRegistry) Observe(hb fleet.Heartbeat, now time.Time) {
 		svc = &serviceState{name: hb.Service, instances: make(map[string]*instanceState, 1)}
 		r.services[hb.Service] = svc
 		r.changed = true
+		delete(r.tombs, hb.Service) // it is back
 	}
 	inst, ok := svc.instances[instanceID]
 	if !ok {
@@ -168,6 +196,7 @@ func (r *ServiceRegistry) Observe(hb fleet.Heartbeat, now time.Time) {
 	inst.errorRate = hb.ErrorRate
 	inst.openAPIHash = hb.OpenAPIHash
 	inst.openAPIURL = hb.OpenAPIURL
+	inst.dashboardURL = hb.DashboardURL
 	inst.lastSeen = now
 }
 
@@ -219,6 +248,7 @@ func (s *serviceState) info(now time.Time, ttl time.Duration) ServiceInfo {
 			// schema the fleet is converging on.
 			info.OpenAPIHash = inst.openAPIHash
 			info.OpenAPIURL = inst.openAPIURL
+			info.DashboardURL = inst.dashboardURL
 		}
 		if !inst.lastSeen.After(cutoff) {
 			// Stale instance: remembered (so a flapping pod is not
@@ -289,8 +319,12 @@ func (r *ServiceRegistry) Sweep(now time.Time) int {
 
 	removed := 0
 	for name, svc := range r.services {
+		var last *instanceState // the most recent of the instances swept, for the tombstone
 		for id, inst := range svc.instances {
 			if !inst.lastSeen.After(cutoff) {
+				if last == nil || inst.lastSeen.After(last.lastSeen) {
+					last = inst
+				}
 				delete(svc.instances, id)
 				removed++
 				r.changed = true
@@ -299,9 +333,59 @@ func (r *ServiceRegistry) Sweep(now time.Time) int {
 		if len(svc.instances) == 0 {
 			delete(r.services, name)
 			r.changed = true
+			if last != nil {
+				r.entomb(name, last, now)
+			}
 		}
 	}
 	return removed
+}
+
+// entomb remembers a swept service. Caller holds the write lock.
+func (r *ServiceRegistry) entomb(name string, last *instanceState, now time.Time) {
+	if len(r.tombs) >= maxTombstones {
+		var oldest string
+		for n, t := range r.tombs {
+			if oldest == "" || t.ForgottenAtUnix < r.tombs[oldest].ForgottenAtUnix {
+				oldest = n
+			}
+		}
+		delete(r.tombs, oldest)
+	}
+	t := ServiceInfo{
+		Name: name, Status: StatusForgotten,
+		LastHeartbeatUnix: last.lastSeen.Unix(), ForgottenAtUnix: now.Unix(),
+		OpenAPIHash: last.openAPIHash, OpenAPIURL: last.openAPIURL, DashboardURL: last.dashboardURL,
+	}
+	if last.version != "" {
+		t.Versions = []string{last.version}
+	}
+	r.tombs[name] = t
+}
+
+// Forgotten returns the services Sweep deleted within the last tombstoneRetention, the most
+// recently heard from first. They are not in Snapshot: the Fleet UI draws every row of that as a
+// live service.
+func (r *ServiceRegistry) Forgotten(now time.Time) []ServiceInfo {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	keep := now.Add(-tombstoneRetention).Unix()
+	out := make([]ServiceInfo, 0, len(r.tombs))
+	for name, t := range r.tombs {
+		if t.ForgottenAtUnix < keep {
+			delete(r.tombs, name)
+			continue
+		}
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].LastHeartbeatUnix != out[j].LastHeartbeatUnix {
+			return out[i].LastHeartbeatUnix > out[j].LastHeartbeatUnix
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 // forgetAfter is how long a silent instance is remembered before being deleted.

@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"net/url"
-	"strconv"
 	"strings"
 	"unsafe"
 )
@@ -169,20 +167,42 @@ func promoteRequest(req *HTTPRequest, data []byte, maxBodies ...int64) error {
 //
 // # Single-pass header parsing
 //
-// The previous version did two full scans of the header block: one pre-scan
-// (indexHeaderValue) to find Content-Length so it could size the copy, and a
-// second scan to build req.Header. This version does one scan that tracks
-// Content-Length inline while building the map, then sets req.Body after.
+// The header block is walked once. Each line is delimited, validated and
+// lowercased in the same pass over its bytes: the name is the run of token
+// bytes up to ':' (keyLower validates and lowercases a byte in one lookup), and
+// the value is the run of acceptable value bytes up to the CRLF (scanValue,
+// sixteen bytes per step). Content-Length, Transfer-Encoding, Connection and
+// Host are noted on the way, and req.Body is set after.
+//
+// A line the fast path does not take outright — anything odd — goes to the
+// original per-line code (parseHeaderLineSlow, parseRequestLineSlow), so
+// malformed and unusual input gets the same verdict and the same error it
+// always did. request_parser_diff_test.go is the proof: it feeds identical
+// bytes to this parser and to a frozen copy of the one it replaced and
+// requires identical results, buffer contents included.
+//
+// # Finding the end of the header block
+//
+// With ownHeaders == true the end of the header block is found first (the copy
+// has to be sized), with a search for CRLFCRLF. With ownHeaders == false that
+// search is skipped when the data ends with CRLFCRLF — a request sent in one
+// piece, or the last of a pipelined batch — because the line loop reaches the
+// blank line anyway (fillInPlace). Anything that is not a clean parse to that
+// blank line is redone on the exact path, which keeps the original order of
+// decisions: first is the head complete, then what is wrong with it.
 //
 // # Other performance decisions
-//   - Manual byte scanner replaces bytes.Split → no [][]byte alloc.
-//   - splitPathQuery uses bytes.IndexByte → no url.Parse overhead.
-//   - lowerHeaderKey lowercases header keys in place, so building req.Header
-//     allocates nothing at all.
-//   - url.ParseQuery copies internally → b2s(query) is transient and safe.
-//   - internMethod returns a package-level constant for the seven known methods.
+//   - Lines are walked, not split: no [][]byte.
+//   - Header names are lowercased in place, so building req.Header allocates
+//     nothing at all.
+//   - A plain query string (no '%', '+', ';', few parameters) is parsed by
+//     parseRequestQuery with one backing array for the values; everything else
+//     goes to net/url. In both cases keys and values are substrings of the
+//     query, not copies, so they live as long as the header block does (net/url
+//     only copies a key or value that has an escape in it).
+//   - internMethod returns a package-level constant for the known methods.
+//   - Malformed requests return package-level errors: no allocation.
 func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int64) (int, error) {
-	// ── Find header boundary ───────────────────────────────────────────────
 	// Never scan beyond the configured header budget. The input may also
 	// contain a large body or a large unterminated prefix, neither of which
 	// should make header-boundary detection proportional to the whole buffer.
@@ -190,6 +210,35 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	if scanLen > maxRequestHeaderBytes {
 		scanLen = maxRequestHeaderBytes
 	}
+
+	// ── Zero-copy: let the parse find the end of the header block ──────────
+	// A parse in place does not need to know where the header block ends
+	// before it starts: the line loop walks every CRLF anyway, and the first
+	// empty line is the end. Searching for CRLFCRLF first is a second pass
+	// over the same bytes (a fifth or more of the whole parse), so it is
+	// skipped here.
+	//
+	// It is only tried when the data ends with CRLFCRLF, which is a request
+	// that was sent in one piece (and the last request of a pipelined batch):
+	// then a blank line is certainly in there, so the parse cannot be wasted
+	// on a head that is still arriving — that would cost several times what
+	// the search for the terminator does, once per read of a fragmented head.
+	// A request with a body, or a head cut short, takes the exact path below.
+	//
+	// Only a request that parses cleanly all the way to its blank line is
+	// answered here; every other outcome — a malformed line, a line the fast
+	// path does not accept — is redone from scratch below, where the original
+	// order of decisions (is the head complete? then what is wrong with it?) is
+	// kept exactly.
+	if !ownHeaders && scanLen >= 4 &&
+		data[scanLen-1] == '\n' && data[scanLen-2] == '\r' && data[scanLen-3] == '\n' && data[scanLen-4] == '\r' {
+		if n, err, handled := fillInPlace(req, data, scanLen, maxBody); handled {
+			return n, err
+		}
+		resetForReparse(req)
+	}
+
+	// ── Find header boundary ───────────────────────────────────────────────
 	headerEnd := bytes.Index(data[:scanLen], crlfcrlf)
 	if headerEnd < 0 {
 		if len(data) > maxRequestHeaderBytes {
@@ -211,40 +260,14 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	}
 
 	// ── Parse request line ─────────────────────────────────────────────────
-	lineEnd := bytes.Index(header, []byte("\r\n"))
+	lineEnd := indexCRLF(header)
 	if lineEnd < 0 {
-		return 0, fmt.Errorf("malformed request line")
+		return 0, errMalformedRequestLine
 	}
-	requestLine := header[:lineEnd]
-
-	s1 := bytes.IndexByte(requestLine, ' ')
-	if s1 <= 0 {
-		return 0, fmt.Errorf("malformed request line")
+	methodBytes, path, query, http10, err := parseRequestLine(header[:lineEnd])
+	if err != nil {
+		return 0, err
 	}
-	s2rel := bytes.IndexByte(requestLine[s1+1:], ' ')
-	if s2rel <= 0 {
-		return 0, fmt.Errorf("malformed request line")
-	}
-	s2 := s1 + 1 + s2rel
-	if s2+1 >= len(requestLine) || bytes.IndexByte(requestLine[s2+1:], ' ') >= 0 {
-		return 0, fmt.Errorf("malformed request line")
-	}
-
-	methodBytes := requestLine[:s1]
-	if !validHTTPToken(methodBytes) {
-		return 0, fmt.Errorf("invalid request method")
-	}
-	rawPath := requestLine[s1+1 : s2]
-	version := b2s(requestLine[s2+1:])
-	if version != "HTTP/1.1" && version != "HTTP/1.0" {
-		return 0, fmt.Errorf("unsupported HTTP version")
-	}
-	for _, c := range rawPath {
-		if c <= 0x20 || c == 0x7f {
-			return 0, fmt.Errorf("invalid request target")
-		}
-	}
-	path, query := splitPathQuery(rawPath)
 
 	if req.Header == nil {
 		req.Header = make(map[string]string, 8)
@@ -253,102 +276,268 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	req.Path = b2s(path)
 
 	if len(query) > 0 {
-		// url.ParseQuery copies all keys/values — b2s(query) is transient.
-		q, err := url.ParseQuery(b2s(query))
+		// Keys and values are substrings of the query where nothing needed
+		// unescaping (see parseRequestQuery), so they live as long as the
+		// header block does, like Path.
+		q, err := parseRequestQuery(b2s(query))
 		if err != nil {
 			return 0, fmt.Errorf("invalid query string: %w", err)
 		}
 		req.Query = q
 	}
 
-	// ── Single-pass header scan ────────────────────────────────────────────
-	// Builds req.Header and extracts Content-Length in one traversal.
-	contentLength := -1
-	hostSeen := false
-	transferEncodingSeen := false
-	connValue := ""
-	headerLines := 0
-	pos := lineEnd + 2 // skip past \r\n of the request line
+	// ── Header lines ───────────────────────────────────────────────────────
+	st, _, err := scanHeaders(req, header, lineEnd+2, false)
+	if err != nil {
+		return 0, err
+	}
+	return finishRequest(req, data, header, lineEnd, headerEnd, &st, http10, maxBody)
+}
 
-	for pos < len(header) {
-		rel := bytes.Index(header[pos:], []byte("\r\n"))
-		end := len(header)
-		if rel >= 0 {
-			end = pos + rel
+// fillInPlace is the zero-copy parse that finds the end of the header block as
+// it goes. handled == false means "no verdict from here": the caller must run
+// the exact path, which also decides every error. handled == true carries the
+// final answer — a request, an incomplete one, or an error that can only
+// arise once the blank line has been seen.
+func fillInPlace(req *HTTPRequest, data []byte, scanLen int, maxBody int64) (consumed int, err error, handled bool) {
+	buf := data[:scanLen]
+
+	lineEnd := indexCRLF(buf)
+	if lineEnd < 0 {
+		// No CRLF at all, so no CRLFCRLF either.
+		return headNotComplete(req, len(data))
+	}
+	methodBytes, path, query, http10, perr := parseRequestLine(buf[:lineEnd])
+	if perr != nil {
+		return 0, nil, false
+	}
+	if req.Header == nil {
+		req.Header = make(map[string]string, 8)
+	}
+	req.Method = internMethod(methodBytes)
+	req.Path = b2s(path)
+	if len(query) > 0 {
+		q, qerr := parseRequestQuery(b2s(query))
+		if qerr != nil {
+			return 0, nil, false
 		}
-		line := header[pos:end]
-		pos = end
-		if rel >= 0 {
-			pos += 2
+		req.Query = q
+	}
+
+	st, status, serr := scanHeaders(req, buf, lineEnd+2, true)
+	switch {
+	case status == scanNeedMore:
+		return headNotComplete(req, len(data))
+	case status == scanFallback, serr != nil:
+		return 0, nil, false
+	}
+
+	// The loop stopped at the blank line: st.pos is where it starts, and the
+	// header block ends with the CRLF just before it.
+	headerEnd := st.pos - 2
+	if headerEnd == lineEnd {
+		return 0, nil, false // a request line and nothing else: the exact path words this error
+	}
+	n, ferr := finishRequest(req, data, buf[:headerEnd], lineEnd, headerEnd, &st, http10, maxBody)
+	return n, ferr, true
+}
+
+// headNotComplete is the answer for a header block that has no blank line in
+// the first scanLen bytes: more bytes are needed, unless there are already
+// more than a header may be. The lines parsed so far are dropped, so the
+// request is left as it was found, which is what the exact path does for an
+// incomplete head. (The keys of those lines were lowercased in place on the
+// way, which is harmless: lowercasing is idempotent, and the same bytes are
+// parsed again once the rest has arrived.)
+func headNotComplete(req *HTTPRequest, dataLen int) (int, error, bool) {
+	resetForReparse(req)
+	if dataLen > maxRequestHeaderBytes {
+		return 0, ErrHeadersTooLarge, true
+	}
+	return 0, nil, true
+}
+
+// resetForReparse returns req to the state it had before a fillInPlace attempt
+// that gave no verdict, so the exact path can start over on it.
+func resetForReparse(req *HTTPRequest) {
+	clear(req.Header)
+	req.Method = ""
+	req.Path = ""
+	req.Query = nil
+	req.Body = nil
+	req.owned = nil
+}
+
+// headScan is what the header loop learned about a request.
+type headScan struct {
+	contentLength int
+	connValue     string
+	lines         int
+	pos           int // offset just past the last header line (see scanHeaders)
+	hostSeen      bool
+	teSeen        bool
+}
+
+const (
+	scanDone     = iota // the header lines were parsed (check err for a rejected one)
+	scanNeedMore        // open: the data ended before the blank line
+	scanFallback        // open: a line that is not plainly well-formed; start over exactly
+)
+
+// scanHeaders parses header lines into req.Header starting at pos.
+//
+// With open == false, buf is exactly the header block and the lines run to its
+// end. Each line is delimited, validated and lowercased in one walk over its
+// bytes (the fast path below); a line that is not plainly well-formed is handed
+// to parseHeaderLineSlow, the original per-line code, so odd input keeps its
+// exact error and its exact meaning.
+//
+// With open == true, buf is whatever has arrived (up to the header budget) and
+// the header block ends at the first empty line, which this loop looks for
+// itself. In that mode the loop only ever accepts what the fast path accepts:
+// running out of data answers scanNeedMore, and a line the fast path does not
+// take answers scanFallback without parsing it, because the exact path is the
+// one that must decide what such a line means. st.pos is then the offset of
+// the empty line.
+func scanHeaders(req *HTTPRequest, buf []byte, pos int, open bool) (st headScan, status int, err error) {
+	st.contentLength = -1
+	n := len(buf)
+
+	for {
+		if open {
+			if pos+1 >= n {
+				return st, scanNeedMore, nil
+			}
+			if buf[pos] == '\r' && buf[pos+1] == '\n' {
+				break
+			}
+		} else if pos >= n {
+			break
 		}
 
-		if len(line) == 0 {
-			return 0, fmt.Errorf("unexpected empty header line")
-		}
-		if line[0] == ' ' || line[0] == '\t' {
-			return 0, fmt.Errorf("obs-fold header is not permitted")
-		}
-		colon := bytes.IndexByte(line, ':')
-		if colon <= 0 || !validHTTPToken(line[:colon]) {
-			return 0, fmt.Errorf("malformed header line")
-		}
+		var key, val string
+		var next int
 
-		key := lowerHeaderKey(line[:colon])
-		valBytes := bytes.TrimSpace(line[colon+1:])
-		if !validHeaderValue(valBytes) {
-			return 0, fmt.Errorf("invalid header value")
+		// Fast path: "name:" OWS value OWS, terminated by CRLF (or, in a closed
+		// block, by its end). The name is the run of token bytes up to the first
+		// byte that is not one (lowercased in place as it is walked); the value
+		// is the run of acceptable value bytes after the optional whitespace.
+		// Anything else — a name that does not end in ':', a stopper inside
+		// the value that is not a CRLF, a value that begins or ends with a
+		// non-ASCII byte (bytes.TrimSpace would apply Unicode rules there) —
+		// is not the fast path's business.
+		ok := false
+		i := pos
+		for i < n {
+			c := keyLower[buf[i]]
+			if c == 0 {
+				break
+			}
+			buf[i] = c
+			i++
 		}
-		val := b2s(valBytes)
+		if i > pos && i < n && buf[i] == ':' {
+			ke := i
+			i++
+			for i < n && (buf[i] == ' ' || buf[i] == '\t') {
+				i++
+			}
+			vs := i
+			i = scanValue(buf, i)
+			terminated := false
+			switch {
+			case i < n && buf[i] == '\r' && i+1 < n && buf[i+1] == '\n':
+				terminated = true
+			case !open && i == n:
+				terminated = true
+			case open && (i == n || i == n-1 && buf[i] == '\r'):
+				return st, scanNeedMore, nil // the line has not fully arrived
+			}
+			if terminated {
+				ve := i
+				for ve > vs && (buf[ve-1] == ' ' || buf[ve-1] == '\t') {
+					ve--
+				}
+				if ve == vs || (buf[vs] < 0x80 && buf[ve-1] < 0x80) {
+					key = b2s(buf[pos:ke])
+					val = b2s(buf[vs:ve])
+					next = i
+					if i < n {
+						next = i + 2
+					}
+					ok = true
+				}
+			}
+		} else if open && i >= n {
+			return st, scanNeedMore, nil // the name ran to the end of the data
+		}
+		if !ok {
+			if open {
+				return st, scanFallback, nil
+			}
+			key, val, next, err = parseHeaderLineSlow(buf, pos)
+			if err != nil {
+				return st, scanDone, err
+			}
+		}
 
 		switch key {
 		case "content-length":
-			if contentLength != -1 {
+			if st.contentLength != -1 {
 				// Reject duplicates outright. Even identical duplicates are an unnecessary
 				// framing ambiguity across intermediaries with different policies.
-				return 0, fmt.Errorf("duplicate content-length")
+				return st, scanDone, errDuplicateContentLength
 			}
-			cl64, err := strconv.ParseInt(val, 10, 64)
-			if err != nil || cl64 < 0 || cl64 > int64(^uint(0)>>1) {
-				return 0, fmt.Errorf("invalid content-length")
+			cl, ok := parseContentLength(val)
+			if !ok {
+				return st, scanDone, errInvalidContentLength
 			}
-			contentLength = int(cl64)
+			st.contentLength = cl
 		case "transfer-encoding":
-			transferEncodingSeen = true
+			st.teSeen = true
 		case "connection":
 			// Joined rather than overwritten: "Connection: keep-alive" and a
 			// later "Connection: close" are both in effect, and close wins.
-			if connValue == "" {
-				connValue = val
+			if st.connValue == "" {
+				st.connValue = val
 			} else {
-				connValue += "," + val
+				st.connValue += "," + val
 			}
 		case "host":
-			if hostSeen {
-				return 0, fmt.Errorf("duplicate host")
+			if st.hostSeen {
+				return st, scanDone, errDuplicateHost
 			}
-			hostSeen = true
+			st.hostSeen = true
 		}
 		req.Header[key] = val
-		headerLines++
+		st.lines++
+		pos = next
 	}
+	st.pos = pos
+	return st, scanDone, nil
+}
 
+// finishRequest does what follows the header loop: duplicate-header joining,
+// the framing and Host checks, the connection mode, and the body. header is
+// the header block (without its CRLFCRLF), headerEnd its length.
+func finishRequest(req *HTTPRequest, data, header []byte, lineEnd, headerEnd int, st *headScan, http10 bool, maxBody int64) (int, error) {
 	// Duplicates are detected for free: a repeated name overwrites its map entry,
 	// so the map ends up shorter than the number of lines parsed. Only then is
 	// the (rare) second pass paid for. Last-wins silently discarded the earlier
 	// values, which is wrong for lists (X-Forwarded-For, Accept) and lets two
 	// parties — a proxy and this server — disagree about which Authorization
 	// header a request carried.
-	if len(req.Header) != headerLines {
+	if len(req.Header) != st.lines {
 		joinDuplicateHeaders(req, header[lineEnd+2:])
 	}
 
-	if transferEncodingSeen {
-		return 0, fmt.Errorf("transfer-encoding is not supported")
+	if st.teSeen {
+		return 0, errTransferEncoding
 	}
-	if version == "HTTP/1.1" && !hostSeen {
-		return 0, fmt.Errorf("missing host header")
+	if !http10 && !st.hostSeen {
+		return 0, errMissingHost
 	}
-	req.connMode = connectionMode(version == "HTTP/1.0", connValue)
+	req.connMode = connectionMode(http10, st.connValue)
 
 	// ── Body (zero-copy) ───────────────────────────────────────────────────
 	// The cap is checked here, at the first moment the size of the body is
@@ -356,24 +545,147 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	// an oversized request is rejected without the connection ever holding its
 	// bytes. A 0 maxBody skips the branch entirely, which is the default and
 	// today's behaviour.
-	if maxBody > 0 && int64(contentLength) > maxBody {
+	if maxBody > 0 && int64(st.contentLength) > maxBody {
 		return 0, ErrBodyTooLarge
 	}
 
 	consumed := headerEnd + 4
-	if contentLength > 0 {
+	if st.contentLength > 0 {
 		// Check before adding: Content-Length can be int-sized while the
 		// header offset makes the sum overflow int and panic on slicing.
-		if contentLength > len(data)-consumed {
+		if st.contentLength > len(data)-consumed {
 			return 0, nil // body not fully received yet
 		}
-		total := consumed + contentLength
+		total := consumed + st.contentLength
 		req.Body = data[consumed:total]
 		consumed = total
 	}
 
 	return consumed, nil
 }
+
+// Errors the parser returns for malformed requests. They are package-level
+// values rather than fmt.Errorf calls so that a flood of malformed requests
+// does not allocate an error per request; the texts are unchanged.
+var (
+	errMalformedRequestLine   = errors.New("malformed request line")
+	errInvalidMethod          = errors.New("invalid request method")
+	errUnsupportedVersion     = errors.New("unsupported HTTP version")
+	errInvalidTarget          = errors.New("invalid request target")
+	errEmptyHeaderLine        = errors.New("unexpected empty header line")
+	errObsFold                = errors.New("obs-fold header is not permitted")
+	errMalformedHeaderLine    = errors.New("malformed header line")
+	errInvalidHeaderValue     = errors.New("invalid header value")
+	errDuplicateContentLength = errors.New("duplicate content-length")
+	errInvalidContentLength   = errors.New("invalid content-length")
+	errDuplicateHost          = errors.New("duplicate host")
+	errTransferEncoding       = errors.New("transfer-encoding is not supported")
+	errMissingHost            = errors.New("missing host header")
+)
+
+// parseRequestLine splits "METHOD SP target SP HTTP/1.x" (CRLF already
+// removed) into the method, the path and the raw query of the target, and
+// reports whether the version is HTTP/1.0.
+//
+// The fast path accepts exactly the plainly well-formed shape: a non-empty run
+// of token bytes, one space, a non-empty run of target bytes, one space and a
+// version that is exactly "HTTP/1.1" or "HTTP/1.0". For those the original
+// checks cannot fail, so the result is the same by construction. Anything
+// else goes to parseRequestLineSlow, which is the original code and decides
+// which error a malformed line gets.
+func parseRequestLine(rl []byte) (method, path, query []byte, http10 bool, err error) {
+	n := len(rl)
+	i := 0
+	for i < n && tokenChar[rl[i]] {
+		i++
+	}
+	if i > 0 && i < n && rl[i] == ' ' {
+		ts := i + 1
+		te := scanTarget(rl, ts)
+		if te > ts && te < n && rl[te] == ' ' && n-te-1 == 8 {
+			v := b2s(rl[te+1:])
+			if v == "HTTP/1.1" || v == "HTTP/1.0" {
+				target := rl[ts:te]
+				path, query = splitPathQuery(target)
+				return rl[:i], path, query, v == "HTTP/1.0", nil
+			}
+		}
+	}
+	return parseRequestLineSlow(rl)
+}
+
+// parseRequestLineSlow is the original request-line code, unchanged in what it
+// accepts and in which error it reports first.
+func parseRequestLineSlow(requestLine []byte) (method, path, query []byte, http10 bool, err error) {
+	s1 := bytes.IndexByte(requestLine, ' ')
+	if s1 <= 0 {
+		return nil, nil, nil, false, errMalformedRequestLine
+	}
+	s2rel := bytes.IndexByte(requestLine[s1+1:], ' ')
+	if s2rel <= 0 {
+		return nil, nil, nil, false, errMalformedRequestLine
+	}
+	s2 := s1 + 1 + s2rel
+	if s2+1 >= len(requestLine) || bytes.IndexByte(requestLine[s2+1:], ' ') >= 0 {
+		return nil, nil, nil, false, errMalformedRequestLine
+	}
+
+	methodBytes := requestLine[:s1]
+	if !validHTTPToken(methodBytes) {
+		return nil, nil, nil, false, errInvalidMethod
+	}
+	rawPath := requestLine[s1+1 : s2]
+	version := b2s(requestLine[s2+1:])
+	if version != "HTTP/1.1" && version != "HTTP/1.0" {
+		return nil, nil, nil, false, errUnsupportedVersion
+	}
+	for _, c := range rawPath {
+		if c <= 0x20 || c == 0x7f {
+			return nil, nil, nil, false, errInvalidTarget
+		}
+	}
+	path, query = splitPathQuery(rawPath)
+	return methodBytes, path, query, version == "HTTP/1.0", nil
+}
+
+// parseHeaderLineSlow parses the header line that starts at pos in header the
+// way the parser always did: split at the next CRLF, reject an empty line,
+// obs-fold and a malformed name, lowercase the name, trim and validate the
+// value. It returns the lowercased name, the value, and the offset of the next
+// line. The fast path in fillHTTPRequest defers to it for every line it does
+// not accept outright.
+func parseHeaderLineSlow(header []byte, pos int) (key, val string, next int, err error) {
+	rel := bytes.Index(header[pos:], crlfBytes)
+	end := len(header)
+	if rel >= 0 {
+		end = pos + rel
+	}
+	line := header[pos:end]
+	next = end
+	if rel >= 0 {
+		next += 2
+	}
+
+	if len(line) == 0 {
+		return "", "", 0, errEmptyHeaderLine
+	}
+	if line[0] == ' ' || line[0] == '\t' {
+		return "", "", 0, errObsFold
+	}
+	colon := bytes.IndexByte(line, ':')
+	if colon <= 0 || !validHTTPToken(line[:colon]) {
+		return "", "", 0, errMalformedHeaderLine
+	}
+
+	key = lowerHeaderKey(line[:colon])
+	valBytes := bytes.TrimSpace(line[colon+1:])
+	if !validHeaderValue(valBytes) {
+		return "", "", 0, errInvalidHeaderValue
+	}
+	return key, b2s(valBytes), next, nil
+}
+
+var crlfBytes = []byte("\r\n")
 
 func validHTTPToken(b []byte) bool {
 	if len(b) == 0 {
@@ -494,6 +806,9 @@ func internMethod(b []byte) Method {
 		if b[0] == 'P' && b[1] == 'O' && b[2] == 'S' && b[3] == 'T' {
 			return POST
 		}
+		if b[0] == 'H' && b[1] == 'E' && b[2] == 'A' && b[3] == 'D' {
+			return Method("HEAD") // constant string: no copy
+		}
 	case 5:
 		if b[0] == 'P' && b[1] == 'A' && b[2] == 'T' && b[3] == 'C' && b[4] == 'H' {
 			return PATCH
@@ -538,6 +853,23 @@ const (
 // ApacheBench without -k, waits for the server to close the socket to know the
 // response has ended, and the server never did.
 func connectionMode(http10 bool, value string) uint8 {
+	// A single "keep-alive" or "close" token, in any ASCII case, is nearly every
+	// Connection header there is. Answer it without splitting and folding; the
+	// general loop below still decides everything else, including values that
+	// only Unicode case folding would match.
+	switch len(value) {
+	case 10:
+		if asciiEqualFold(value, "keep-alive") {
+			if http10 {
+				return connModeKeepAlive10
+			}
+			return connModeKeepAlive
+		}
+	case 5:
+		if asciiEqualFold(value, "close") {
+			return connModeClose
+		}
+	}
 	closeTok, keepTok := false, false
 	for len(value) > 0 {
 		tok := value
@@ -563,6 +895,25 @@ func connectionMode(http10 bool, value string) uint8 {
 		return connModeClose
 	}
 	return connModeKeepAlive
+}
+
+// asciiEqualFold reports whether s equals lower once ASCII capitals in s are
+// folded. lower must be all lowercase ASCII. Non-ASCII bytes never match, so a
+// false result means "ask the general code", not "different".
+func asciiEqualFold(s, lower string) bool {
+	if len(s) != len(lower) {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != lower[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // joinDuplicateHeaders rebuilds the values of repeated request headers as RFC 9110

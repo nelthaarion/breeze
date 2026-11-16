@@ -117,3 +117,46 @@ func TestLoggingMiddlewareOutputOption(t *testing.T) {
 		}
 	}
 }
+
+// loggedDuration runs one request through LoggingMiddleware around a handler that takes work, and
+// returns the duration the line printed.
+func loggedDuration(t *testing.T, work time.Duration) time.Duration {
+	t.Helper()
+	out := &lockedBuf{}
+	mw := LoggingMiddlewareWith(LoggingOptions{Output: out})
+	ctx := breeze.NewContext(breeze.GET, "/timed")
+	ctx.SetMiddlewareChain([]breeze.HandlerFunc{mw}, func(c *breeze.Context) error {
+		time.Sleep(work)
+		return c.WriteString("hi")
+	})
+	if err := ctx.Next(); err != nil {
+		t.Fatal(err)
+	}
+	line := out.String()
+	open, end := strings.LastIndex(line, "("), strings.LastIndex(line, ")")
+	if open < 0 || end < open {
+		t.Fatalf("no duration in %q", line)
+	}
+	d, err := time.ParseDuration(line[open+1 : end])
+	if err != nil {
+		t.Fatalf("the printed duration %q is not a duration: %v", line[open+1:end], err)
+	}
+	return d
+}
+
+// TestLoggingMiddlewarePrintsTheTimeTheChainTook: the duration is what the request took, in its own
+// unit. A line that read "(258.018s)" for a request that took microseconds could be a unit error here,
+// or a process that was frozen while the request was in flight (the monotonic clock keeps counting
+// through SIGSTOP, so the line is right about the wall time and wrong about the work). This pins the
+// first reading down: a request that takes nothing prints microseconds, one that takes 40ms prints at
+// least that and nowhere near seconds.
+func TestLoggingMiddlewarePrintsTheTimeTheChainTook(t *testing.T) {
+	if fast := loggedDuration(t, 0); fast <= 0 || fast >= 50*time.Millisecond {
+		t.Errorf("a handler that does no work printed %v, want microseconds", fast)
+	}
+	const work = 40 * time.Millisecond
+	slow := loggedDuration(t, work)
+	if slow < work || slow >= 2*time.Second {
+		t.Errorf("a handler that took %v printed %v, want at least that and under a couple of seconds", work, slow)
+	}
+}

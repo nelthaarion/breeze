@@ -179,3 +179,47 @@ func TestAggregatorHeartbeatAndCloseAreSafe(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestServicesEndpointListsTombstonesOnlyWhenAsked(t *testing.T) {
+	router := breeze.NewRouter()
+	cfg := DefaultConfig()
+	cfg.Username, cfg.Password = "viewer", "read-secret"
+	a := InstallAggregator(nil, router, cfg)
+	defer a.Close(context.Background())
+	basic := map[string]string{"authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte("viewer:read-secret"))}
+
+	now := time.Now()
+	a.registry.Observe(fleet.Heartbeat{Service: "orders", InstanceID: "i1"}, now.Add(-time.Hour))
+	a.registry.Observe(fleet.Heartbeat{Service: "gateway", InstanceID: "g1"}, now)
+	a.registry.Sweep(now)
+
+	names := func(target string) string {
+		ctx := invoke(t, router, breeze.GET, target, nil, basic)
+		if ctx.Res.Status != 200 {
+			t.Fatalf("%s answered %d: %s", target, ctx.Res.Status, ctx.Res.Body)
+		}
+		var list []ServiceInfo
+		if err := json.Unmarshal(ctx.Res.Body, &list); err != nil {
+			t.Fatalf("%s: %v", target, err)
+		}
+		var out []string
+		for _, s := range list {
+			out = append(out, s.Name+":"+s.Status)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := names("/fleet/api/services"); got != "gateway:up" {
+		t.Errorf("the default list is %q, want only the live service: the UI draws every row as live", got)
+	}
+	if got := names("/fleet/api/services?forgotten=1"); got != "gateway:up,orders:forgotten" {
+		t.Errorf("with forgotten=1 the list is %q, want the live service and then the tombstone", got)
+	}
+	if got := names("/fleet/api/services?forgotten=true"); got != "gateway:up,orders:forgotten" {
+		t.Errorf("with forgotten=true the list is %q, want the live service and then the tombstone", got)
+	}
+	for _, off := range []string{"0", "false", ""} {
+		if got := names("/fleet/api/services?forgotten=" + off); got != "gateway:up" {
+			t.Errorf("with forgotten=%q the list is %q, want only the live service", off, got)
+		}
+	}
+}

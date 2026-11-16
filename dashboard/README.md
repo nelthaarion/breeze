@@ -70,6 +70,8 @@ Two kinds of request are in no count. A request for a path that no route serves 
 #### 3. Developer Timeline (the headline feature)
 Each request generates a hierarchical timeline showing every phase: Request Received → Middleware → Authentication → Cache → ORM Query → Controller → JSON Serialization → Response. Each step shows start/end timestamps, duration, and arbitrary metadata. Slow steps (>100ms) are flagged.
 
+**What a timeline actually holds.** Two facts decide it, and `breeze_get_timeline` states both in every answer. A timeline is recorded only for a request that ran while a browser had the dashboard open, because the recorder is attached before the handler runs, when nobody can know the request will be slow, and attaching one to every request would allocate on the path the dashboard keeps free of allocation; a request nobody was watching has none, whatever its duration, even though its request record carries a `timeline_id`. And the framework records one step itself, `Request Received`, spanning the whole request: the phases listed above exist only where application code records them with the `TimelineRecorder` (`ctx.Get("breeze.dashboard.timeline")`), so a timeline of one step says how long a request took and nothing about where.
+
 #### 4. Performance
 Detailed Go runtime metrics: Goroutines, Heap Alloc, Heap Sys, Stack In Use, GC Count, GC Pause, Mallocs, Frees, CPU Usage, Mem Sys, Mem Usage %, CGO Calls. Four charts (Heap, Goroutines, CPU, GC Pauses) update every second.
 

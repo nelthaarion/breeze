@@ -539,9 +539,17 @@ func (c *Client) dialNew(addr, hostname string, secure bool) (gnetplus.Conn, *co
 		return conn, state, nil
 	}
 
-	conn, err := c.gcli.DialContext("tcp", addr, state)
+	// gnetplus's DialContext is net.Dial followed by EnrollContext, and net.Dial has no timeout:
+	// toward a host that drops the SYN, as a firewall does, it held the call for the kernel's
+	// connect timeout, about two minutes, however short Timeout and DialTimeout were set. The
+	// dial is made here instead, bounded as the TLS path above is.
+	nc, err := (&net.Dialer{Timeout: c.cfg.DialTimeout}).Dial("tcp", addr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("client: dial %s: %w", addr, err)
+	}
+	conn, err := c.gcli.EnrollContext(nc, state)
+	if err != nil {
+		return nil, nil, fmt.Errorf("client: enroll %s: %w", addr, err)
 	}
 	return conn, state, nil
 }

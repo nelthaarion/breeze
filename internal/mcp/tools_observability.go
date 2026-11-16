@@ -34,6 +34,13 @@ var signalSources = []string{
 	"events", "router", "http", "cache", "database", "scheduler", "websocket", "oauth2", "plugin", "workflow",
 }
 
+// producerless are the sources the collector can name and the framework never records into. Of its
+// ten, only events (the bus bridge), workflow (the engine) and http (the video handler) have a
+// producer; a signal in any of these was recorded by the application.
+var producerless = map[string]bool{
+	"router": true, "cache": true, "database": true, "scheduler": true, "websocket": true, "oauth2": true, "plugin": true,
+}
+
 // ── breeze_get_signals ───────────────────────────────────────────────────────
 
 // signalRow mirrors dashboard.eventRow, less its payload.
@@ -113,18 +120,20 @@ type signalsArgs struct {
 func getSignalsTool() *tool {
 	return &tool{
 		name: "breeze_get_signals",
-		description: "Read what the service's observability collector recorded: event bus dispatches, " +
-			"database queries, scheduler jobs, workflow executions, WebSocket activity, OAuth2 flows, cache " +
-			"operations and plugin calls. This is where a failure that is not an HTTP error shows up: a job " +
-			"that never ran, a listener that threw, a query that failed, a workflow stuck on a step. The " +
-			"result lists which names are failing and how often, then the recent signals. By default only " +
-			"failures are returned; pass failed=false for everything. Event payloads are not included, " +
-			"because they are application data. Requires the dashboard feature with an event bus attached.",
+		description: "Read what the service's observability collector recorded: event bus dispatches (source " +
+			"events), workflow executions and video requests. This is where a failure that is not an HTTP " +
+			"error shows up: a listener that threw, a workflow stuck on a step. The result lists which names " +
+			"are failing and how often, then the recent signals. By default only failures are returned; pass " +
+			"failed=false for everything. The other sources it can name (router, cache, database, scheduler, " +
+			"websocket, oauth2, plugin) have no producer in the framework, so they hold only what an " +
+			"application records there: database queries are not signals, and are read with " +
+			"breeze_get_queries. Event payloads are not included, because they are application data. " +
+			"Requires the dashboard feature with an event bus attached.",
 		schema: objectSchema(liveProps(map[string]any{
 			"source": map[string]any{
 				"type":        "string",
 				"enum":        append([]string{"all"}, signalSources...),
-				"description": "Restrict to one source: database for queries, scheduler for jobs, workflow, events, websocket and so on. Defaults to all.",
+				"description": "Restrict to one source: events, workflow or http hold what the framework records; the rest hold only what an application records there. Defaults to all.",
 			},
 			"name":   stringProp("Exact signal name, such as an event type, a job name or a workflow name."),
 			"query":  stringProp("Substring of the signal name to match."),
@@ -213,6 +222,16 @@ func getSignals(a signalsArgs) toolCallResult {
 		report.Notes = append(report.Notes, fmt.Sprintf("%d signal(s) were dropped because the collector's buffer was full, "+
 			"so failures older than the recent window may be missing from the rows below. The failing list is built "+
 			"from counters, which still include them.", wire.Totals.Dropped))
+	}
+	if report.Count == 0 && producerless[source] {
+		note := "Nothing in the framework records into the " + source + " source, so an empty answer here says that nothing " +
+			"recorded there, not that nothing happened."
+		if source == "database" {
+			note = "Nothing in the framework records into the database source. A query pushed to the dashboard is recorded as an " +
+				"event named database.query under the source events, without its statement or its duration, and a statement that " +
+				"failed is not marked failed there; the statements themselves are read with breeze_get_queries."
+		}
+		report.Notes = append(report.Notes, note)
 	}
 	if report.Count == 0 && failedOnly {
 		switch {

@@ -166,6 +166,64 @@ var idiomList = []idiom{
 		Dont:    "Edit inside a // breeze:feature block and expect it to survive.",
 		Checked: false,
 	},
+	{
+		Rule:     "mcp-reads-the-dashboard",
+		Topic:    "the in-process MCP endpoint and the dashboard",
+		Severity: severityWarning,
+		Summary:  "breeze add mcp serves a read-only view of the dashboard's collector; with no dashboard it has nothing to read",
+		Why: "The in-process endpoint is read-only by decision: it answers from the running service's own memory, " +
+			"so a tool called without service_url reads the dashboard's collector directly, with no HTTP hop and no " +
+			"second set of credentials, and a tool that would change state is not offered at all (actions are exposed " +
+			"through Auto-MCP by the application's author). Every live tool (breeze_get_routes, breeze_get_performance, " +
+			"breeze_get_recent_errors, breeze_get_logs, breeze_get_signals, breeze_get_health, breeze_get_timeline, " +
+			"breeze_get_queries) reads the collector, so a service that has the mcp feature and not the dashboard answers " +
+			"each call that it has no dashboard. The endpoint is a separate port (BREEZE_MCP_PORT) behind BREEZE_MCP_TOKEN, " +
+			"and what it exposes is bounded by BREEZE_MCP_SCOPE. One cost is worth knowing: the mcp package links the " +
+			"generator, which adds about 5 MB to the service's binary, so a service that is size-sensitive should read " +
+			"its dashboard over HTTP from a separate MCP server instead of embedding the endpoint.",
+		Do: "breeze add dashboard, then breeze add mcp, and call the live tools with no service_url. Re-run breeze add " +
+			"mcp if the dashboard was added afterwards.",
+		Dont:    "Add mcp to a service that has no dashboard and expect an agent to find faults through it.",
+		Checked: false,
+	},
+	{
+		Rule:     "fleet-advertises-an-address",
+		Topic:    "how the Fleet aggregator finds a service's logs",
+		Severity: severityWarning,
+		Summary:  "a service that advertises no dashboard address is traced but its logs are missing from the stitched trace",
+		Why: "A heartbeat carries the address the aggregator reads a service's logs from, and a service that sends " +
+			"none is traced and cannot be log-stitched: breeze_get_trace_logs and breeze_explain_incident are silent " +
+			"about it, and breeze_get_services names it. FLEET_DASHBOARD_URL is that address, base path included " +
+			"(http://orders:3000/dashboard). FLEET_OPENAPI_URL is the address of the OpenAPI document, used for " +
+			"contract checks; the aggregator still derives a dashboard address from its host when no dashboard " +
+			"address is sent, assuming the default /dashboard base path. FLEET_SERVICE_TTL is the aggregator's setting " +
+			"for how long a silent service stays up: it is called down after one TTL and forgotten after twenty, " +
+			"and a forgotten service is listed by breeze_get_services as a tombstone for a day. The aggregator " +
+			"sends its ServiceToken to the address a heartbeat gives, so it does so only for an authenticated fleet " +
+			"or a host on FetchAllowedHosts.",
+		Do:      "Set FLEET_DASHBOARD_URL on every service in the fleet, and FLEET_SERVICE_TTL on the aggregator if five minutes of memory is wrong for the deployment.",
+		Dont:    "Rely on FLEET_OPENAPI_URL alone for a service that moved its dashboard, or leave both empty and expect its logs in a trace.",
+		Checked: false,
+	},
+	{
+		Rule:     "the-dashboard-counts-before-it-keeps",
+		Topic:    "what the dashboard keeps and what it only counts",
+		Severity: severityWarning,
+		Summary:  "request counts are exact; full records, timelines and queries are bounded samples with their own capture policies",
+		Why: "The dashboard counts every request per route and status class, and keeps a full record only for a bounded " +
+			"sample of failures (a budget of client errors and of server errors per route in each window) and for slow " +
+			"requests. So breeze_get_routes is the answer to how many, and breeze_get_recent_errors is a sample of which, " +
+			"and the number of records is not the number of errors. /dashboard/api/traffic carries the capture policy " +
+			"and a counting field (exact, partial or not_measured) that says whether the numbers can be trusted: " +
+			"not_measured means the dashboard middleware is not installed, and zero then means nothing. A timeline is " +
+			"recorded only for a request that ran while a browser had the dashboard open, and the framework itself " +
+			"records one step, 'Request Received'. Queries are in the monitor only if the application's data layer " +
+			"pushed them with Collector.PushQuery, and are not database signals. Of the observability sources, only " +
+			"events, workflow and http have a producer in the framework.",
+		Do:      "Read counts for how many, samples for which, and read the notes each tool returns before treating an empty answer as a clean one.",
+		Dont:    "Take the length of an error list as the error count, or an empty timeline or query list as proof that nothing was slow.",
+		Checked: false,
+	},
 }
 
 // idiomsByRule indexes the list once.

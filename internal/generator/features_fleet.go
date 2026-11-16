@@ -205,6 +205,11 @@ func setupFleet(app *breeze.Breeze, router *breeze.Router) {
 		// trace's. The aggregator checks contracts only when a hash is sent as well, and
 		// none is, so no document has to exist at the path.
 		OpenAPIURL: fleetEnv("FLEET_OPENAPI_URL", ""),
+		// Where this service's dashboard is, base path included (http://orders:3000/dashboard).
+		// The aggregator reads this service's logs there. Without it the aggregator falls back
+		// to the host of OpenAPIURL above with /dashboard appended, which is wrong for a
+		// service that moved its dashboard and absent for one that sets neither.
+		DashboardURL: fleetEnv("FLEET_DASHBOARD_URL", ""),
 		Transport: %s,
 	})
 
@@ -234,7 +239,7 @@ func fleetEnv(key, fallback string) string {
 
 	notes := []string{
 		"Set FLEET_INGEST_TOKEN, FLEET_WRITE_URL and FLEET_SERVICE_NAME in the environment rather than editing the generated defaults.",
-		"Set FLEET_OPENAPI_URL to this service's address as the aggregator reaches it (http://orders:3000/openapi.json) so the aggregator can read its logs for a trace. Without it the service is traced but its logs are missing from breeze_get_trace_logs.",
+		"Set FLEET_DASHBOARD_URL to this service's dashboard as the aggregator reaches it (http://orders:3000/dashboard) so the aggregator can read its logs for a trace. Without it, and without FLEET_OPENAPI_URL, the service is traced but its logs are missing from breeze_get_trace_logs. FLEET_OPENAPI_URL still works for this: its host with /dashboard appended is used when no dashboard address is set.",
 		"Call FleetTracer.Close(context.Background()) on shutdown, or spans buffered at exit are lost.",
 	}
 	if loggerNote != "" {

@@ -36,6 +36,7 @@ package dashboard
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/nelthaarion/breeze/v2/internal/livesource"
 )
@@ -56,6 +57,11 @@ func (v queryValues) Query(name string) string { return url.Values(v).Get(name) 
 // readEndpoints are the endpoints a Reader can answer, keyed by their path below
 // <base>/api. The set is deliberately a table: a test walks it and checks each entry
 // against the HTTP endpoint it stands for.
+//
+// A segment written :name stands for any one segment, as in the router, and reaches the
+// payload function as the query value of that name: "/timeline/:id" answers
+// "/timeline/9f2c..." with id=9f2c.... A value taken from the path wins over one of the same
+// name in the query, as it does over HTTP.
 var readEndpoints = map[string]func(c *Collector, q query) (any, error){
 	"/routes":       func(c *Collector, _ query) (any, error) { return c.routesPayload(), nil },
 	"/requests":     func(c *Collector, q query) (any, error) { return c.requestsPayload(q), nil },
@@ -65,18 +71,73 @@ var readEndpoints = map[string]func(c *Collector, q query) (any, error){
 	"/health":       func(c *Collector, _ query) (any, error) { return c.RunHealthChecks(), nil },
 	"/architecture": func(c *Collector, _ query) (any, error) { return c.architecturePayload(), nil },
 	"/events":       func(c *Collector, q query) (any, error) { return c.eventsView(q), nil },
+	"/queries":      func(c *Collector, q query) (any, error) { return c.queriesPayload(q), nil },
+	"/timeline":     func(c *Collector, q query) (any, error) { return c.timelineListPayload(q), nil },
+	"/timeline/:id": func(c *Collector, q query) (any, error) {
+		t, ok := c.timelineByID(q.Query("id"))
+		if !ok {
+			return nil, &livesource.Error{Status: 404, Message: "timeline not found"}
+		}
+		return t, nil
+	},
 }
 
 // readEndpoint answers one read endpoint from memory.
 func (c *Collector) readEndpoint(path string, params url.Values) (any, error) {
-	read, ok := readEndpoints[path]
+	read, bound, ok := lookupReadEndpoint(path)
 	if !ok {
 		return nil, &livesource.Error{
 			Status:  404,
 			Message: fmt.Sprintf("the dashboard has no in-process reader for %q", path),
 		}
 	}
+	if len(bound) > 0 {
+		merged := make(url.Values, len(params)+len(bound))
+		for k, v := range params {
+			merged[k] = v
+		}
+		for k, v := range bound {
+			merged.Set(k, v)
+		}
+		params = merged
+	}
 	return read(c, queryValues(params))
+}
+
+// lookupReadEndpoint finds the entry that answers path, and the values its :name segments took.
+// An entry written out in full wins over one with a parameter, so the answer does not depend on
+// the order a map is walked in.
+func lookupReadEndpoint(path string) (func(*Collector, query) (any, error), map[string]string, bool) {
+	if read, ok := readEndpoints[path]; ok {
+		return read, nil, true
+	}
+	segments := strings.Split(strings.Trim(path, "/"), "/")
+	for pattern, read := range readEndpoints {
+		if !strings.Contains(pattern, ":") {
+			continue
+		}
+		parts := strings.Split(strings.Trim(pattern, "/"), "/")
+		if len(parts) != len(segments) {
+			continue
+		}
+		bound := map[string]string{}
+		matched := true
+		for i, part := range parts {
+			switch {
+			case strings.HasPrefix(part, ":"):
+				bound[part[1:]] = segments[i]
+			case part != segments[i]:
+				matched = false
+			}
+			if !matched {
+				break
+			}
+		}
+		if matched {
+			return read, bound, true
+		}
+	}
+	return nil, nil, false
 }
 
 // MakeCurrent makes c the collector that a Breeze MCP endpoint in this process reads.

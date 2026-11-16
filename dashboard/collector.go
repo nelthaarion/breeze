@@ -27,6 +27,10 @@ type Collector struct {
 	cfg    Config
 	router *breeze.Router
 
+	// maskKeys is cfg.MaskedHeaders as maskLine wants it, worked out once. A Collector built
+	// without newCollector has none; keysForMasking then works it out from cfg, as before.
+	maskKeys []string
+
 	// app is the application the dashboard is installed in, or nil when the
 	// Collector was built without one (every test that calls newCollector, and
 	// any caller that only wants the recording API).
@@ -213,6 +217,7 @@ func newCollector(cfg Config, router *breeze.Router) *Collector {
 	cfg = cfg.withDefaults()
 	return &Collector{
 		cfg:         cfg,
+		maskKeys:    maskKeys(cfg),
 		router:      router,
 		requests:    newRingBuffer[RequestRecord](cfg.MaxRequests),
 		queries:     newRingBuffer[QueryRecord](cfg.MaxQueries),
@@ -233,6 +238,14 @@ func newCollector(cfg Config, router *breeze.Router) *Collector {
 		uniqueIPs:   make(map[string]bool),
 		dailyCounts: make(map[string]int64),
 	}
+}
+
+// keysForMasking is the set of keys a log line is masked against.
+func (c *Collector) keysForMasking() []string {
+	if c.maskKeys != nil {
+		return c.maskKeys
+	}
+	return maskKeys(c.cfg)
 }
 
 // DBInspector exposes the current cached database inspector, if one was set.

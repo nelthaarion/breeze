@@ -3,6 +3,7 @@ package middleware
 import (
 	"github.com/nelthaarion/breeze/v2"
 )
+
 // SecurityOptions defines configurable HTTP security headers
 type SecurityOptions struct {
 	ContentSecurityPolicy     string

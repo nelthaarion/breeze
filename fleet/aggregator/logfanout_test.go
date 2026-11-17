@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -108,10 +109,17 @@ func TestLogFanoutMergesByTimestamp(t *testing.T) {
 func TestLogFanoutReadsEveryLogTab(t *testing.T) {
 	base := time.Now().Truncate(time.Second)
 
-	var asked []string
+	// The handler runs on the HTTP server's goroutines and the test reads the list from its own, and
+	// a loopback round trip gives the race detector no ordering between them, so go through a mutex.
+	var (
+		askedMu sync.Mutex
+		asked   []string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		level := r.URL.Query().Get("level")
+		askedMu.Lock()
 		asked = append(asked, level)
+		askedMu.Unlock()
 
 		lines := map[string][]dashboard.LogEntry{
 			"app":   {{Time: base, Level: "app", Message: "auth: authorized order 123", TraceID: "t"}},
@@ -136,8 +144,11 @@ func TestLogFanoutReadsEveryLogTab(t *testing.T) {
 	if got.Logs[0].Level != "app" || got.Logs[1].Level != "error" {
 		t.Errorf("levels = %q then %q, want app then error, in time order", got.Logs[0].Level, got.Logs[1].Level)
 	}
-	if want := strings.Join(fanoutLogTabs, ","); strings.Join(asked, ",") != want {
-		t.Errorf("asked for tabs %v, want every one of %s", asked, want)
+	askedMu.Lock()
+	askedTabs := append([]string(nil), asked...)
+	askedMu.Unlock()
+	if want := strings.Join(fanoutLogTabs, ","); strings.Join(askedTabs, ",") != want {
+		t.Errorf("asked for tabs %v, want every one of %s", askedTabs, want)
 	}
 	if len(got.Sources) != 1 || got.Sources[0].Count != 2 {
 		t.Errorf("sources = %+v, want one service that contributed both lines", got.Sources)

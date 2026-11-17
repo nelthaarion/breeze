@@ -162,8 +162,18 @@ func TestCompensationRunsInReverse(t *testing.T) {
 	}
 }
 
-func TestParallelStepsShareOneLevel(t *testing.T) {
-	e := newTestEngine(t)
+// peakParallelism runs root -> (a, b) -> join on an engine capped at maxWorkers and returns how many of
+// the two sibling steps were ever in flight at the same time. The cap is always passed explicitly:
+// Config.MaxWorkers defaults to runtime.NumCPU(), which is 1 on a single-CPU host (a CI runner or a
+// container pinned to one core) and would serialise the siblings, so a test that left it unset would
+// be measuring the machine it runs on instead of the scheduler.
+func peakParallelism(t *testing.T, maxWorkers int) int32 {
+	t.Helper()
+	e := NewEngine(Config{
+		Bus:                  events.New(),
+		DisableObservability: true,
+		MaxWorkers:           maxWorkers,
+	})
 	var running, peak atomic.Int32
 
 	slow := func(*Context) error {
@@ -188,8 +198,19 @@ func TestParallelStepsShareOneLevel(t *testing.T) {
 	if _, err := e.Run(context.Background(), "fanout", nil); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if peak.Load() < 2 {
-		t.Fatalf("peak concurrency = %d, want at least 2", peak.Load())
+	return peak.Load()
+}
+
+func TestParallelStepsShareOneLevel(t *testing.T) {
+	if peak := peakParallelism(t, 2); peak < 2 {
+		t.Fatalf("peak concurrency = %d, want at least 2", peak)
+	}
+}
+
+// MaxWorkers is the documented bound on concurrent steps, so one worker must run siblings one at a time.
+func TestMaxWorkersBoundsParallelSteps(t *testing.T) {
+	if peak := peakParallelism(t, 1); peak != 1 {
+		t.Fatalf("peak concurrency = %d with MaxWorkers 1, want exactly 1", peak)
 	}
 }
 

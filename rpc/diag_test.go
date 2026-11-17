@@ -9,11 +9,14 @@ package rpc
 // dashboard — so the empty-method-table case is asserted first and hardest.
 
 import (
+	"context"
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nelthaarion/breeze/v2/diag"
+	"github.com/nelthaarion/gnetplus/v2"
 )
 
 func TestProbeReportsAnEmptyMethodTableAsDegraded(t *testing.T) {
@@ -169,7 +172,12 @@ func (stubPool) Submit(f func()) { f() }
 // JSON-RPC port. The probe said "ok" for it, because listen_port is the port that was asked
 // for and not proof that anything is bound to it.
 func TestProbeReportsAListenerThatNeverStarted(t *testing.T) {
-	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	// The port is taken on the very wildcard the server binds. It used to be taken on loopback
+	// only, which makes the wildcard bind fail on Linux and not on Windows: there a socket on
+	// 127.0.0.1:P and one on [::]:P do not conflict, the bind succeeded, Run blocked for as long
+	// as its listener lived, and the test sat until the package timed out after ten minutes. Two
+	// sockets on one address and port conflict on every platform.
+	taken, err := net.Listen("tcp", ":0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,10 +188,25 @@ func TestProbeReportsAListenerThatNeverStarted(t *testing.T) {
 	reg.Register("sum", func(*Context) {})
 	s := NewServer(reg)
 
-	// Wildcard, like the generated block: the port is taken on loopback, so the wildcard
-	// bind to the same port fails.
-	if err := s.Run(port, false); err == nil {
-		t.Fatal("Run returned nil on a port that is already in use; the test cannot show the failure")
+	// Wildcard, like the generated block. Run returns only when its listener is gone, so a bind
+	// that unexpectedly worked would block here for good: it runs on a goroutine, and the test
+	// waits a bounded time for the failure it needs.
+	runErr := make(chan error, 1)
+	go func() { runErr <- s.Run(port, false) }()
+	select {
+	case err := <-runErr:
+		if err == nil {
+			t.Fatal("Run returned nil on a port that is already in use; the test cannot show the failure")
+		}
+	case <-time.After(10 * time.Second):
+		// Take the listener that did come up down again, so neither it nor its goroutine
+		// outlives the test.
+		if addr := s.listenAddr.Load(); addr != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = gnetplus.Stop(ctx, *addr)
+		}
+		t.Fatal("Run did not fail on a port that is already in use: the bind succeeded, so the test cannot show the failure")
 	}
 
 	report := s.probe()

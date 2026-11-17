@@ -12,7 +12,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 
 	"github.com/nelthaarion/gnetplus/v2"
 )
@@ -69,6 +68,10 @@ type Breeze struct {
 	// Stop coordinates on. Declared in shutdown.go, beside the code that uses
 	// it.
 	shutdownFields
+
+	// Engine configuration — the gnet settings Run resolves into gnetplus.Options, and the tick
+	// period. Declared in engine_config.go, beside the code that uses it.
+	engineFields
 
 	// ErrorHandler turns an error returned by a handler or middleware into a
 	// response. Nil means the framework default; see error.go.
@@ -769,9 +772,10 @@ func (s *Breeze) Run(port int, multiCore bool) error {
 // minute, and without SO_REUSEADDR bind refuses the port until those are gone, so a service that
 // served a request and was restarted inside that minute (a crash loop, a rolling deploy, systemd's
 // Restart=) could not listen and exited. It does not let two servers share a port: that is
-// SO_REUSEPORT, a separate option that this one does not set. On Windows the option means the
-// opposite of what is wanted, since it lets another process bind a port that is already being
-// listened on, and a port in TIME_WAIT does not refuse a listener there, so it is left off.
+// SO_REUSEPORT, a separate option that stays off unless EngineConfig.ReusePort turns it on. On
+// Windows the option means the opposite of what is wanted, since it lets another process bind a
+// port that is already being listened on, and a port in TIME_WAIT does not refuse a listener
+// there, so it is left off. EngineConfig.DisableReuseAddr leaves it off on Unix as well.
 var reuseAddr = runtime.GOOS != "windows"
 
 // RunOn starts Breeze on host:port. An empty host preserves the historical
@@ -787,27 +791,21 @@ func (s *Breeze) RunOn(host string, port int, multiCore bool) error {
 	s.listenPort.Store(int64(port))
 	h := host
 	s.listenHost.Store(&h)
-	noYield := false
 
+	// The poll-yield policy is decided once, here, from what SetPollYield stored and from the routes
+	// registered by now. A loop that then runs without gnet's pre-block yield makes up for it right
+	// after it hands a request to a worker (see yieldOnDispatch).
+	noYield := s.noPollYield()
 	s.yieldOnDispatch.Store(noYield)
 
+	// Every engine setting comes from the EngineConfig and reaches gnet as one WithOptions and nothing
+	// else. WithOptions replaces the whole option set instead of adding to it, so an option listed
+	// before it is thrown away: WithTicker sat before it once, which left Options.Ticker false, OnTick
+	// unscheduled and the idle and read-header (slowloris) timeouts unenforced. See package gnetcfg.
+	opts := s.gnetOptions(multiCore, noYield)
+
 	serve := func(addr string) error {
-		return gnetplus.Run(
-			s,
-			addr,
-			gnetplus.WithTCPNoDelay(gnetplus.TCPNoDelay),
-			gnetplus.WithMulticore(multiCore),
-			gnetplus.WithLoadBalancing(gnetplus.RoundRobin),
-			gnetplus.WithReadBufferCap(64<<10),
-			gnetplus.WithWriteBufferCap(64<<10),
-			gnetplus.WithTicker(true),
-			gnetplus.WithNoPollYield(noYield),
-			gnetplus.WithReusePort(true),
-			gnetplus.WithOptions(gnetplus.Options{NumEventLoop: s.Pool.Metrics().Workers, TCPKeepAlive: time.Second * 5}),
-			// Last on purpose: WithOptions replaces the whole option set instead of adding to it, so
-			// anything listed before it is discarded and the port would stay unrebindable.
-			gnetplus.WithReuseAddr(reuseAddr),
-		)
+		return gnetRun(s, addr, gnetplus.WithOptions(opts))
 	}
 	err := serve("tcp://" + net.JoinHostPort(host, strconv.Itoa(port)))
 	// An empty host asks for every interface, which gnet satisfies with a

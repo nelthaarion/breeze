@@ -296,7 +296,11 @@ func parserDiffCorpus() []string {
 	var many strings.Builder
 	many.WriteString("GET /m HTTP/1.1\r\nHost: h\r\n")
 	for i := 0; i < 100; i++ {
-		many.WriteString("X-Hdr-" + strconv.Itoa(i) + ": value-" + strconv.Itoa(i) + "\r\n")
+		many.WriteString("X-Hdr-")
+		many.WriteString(strconv.Itoa(i))
+		many.WriteString(": value-")
+		many.WriteString(strconv.Itoa(i))
+		many.WriteString("\r\n")
 	}
 	many.WriteString("\r\n")
 	add(many.String())

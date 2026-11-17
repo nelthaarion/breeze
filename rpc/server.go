@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nelthaarion/breeze/v2/gnetcfg"
 	"github.com/nelthaarion/gnetplus/v2"
 )
 
@@ -89,6 +90,9 @@ type Server struct {
 
 	maxRequestBody atomic.Int64
 	blockingSlots  chan struct{}
+
+	// engineCfg is what SetEngineConfig stored, normalized. Nil means the zero Config.
+	engineCfg atomic.Pointer[gnetcfg.Config]
 }
 
 // Pool is the subset of breeze.WorkerPool this package needs.
@@ -435,10 +439,11 @@ var gnetRun = gnetplus.Run
 
 // Run starts the server on the given TCP port.
 //
-// The gnet options match Breeze.Run: one read buffer per event loop sized for a
-// pipelined batch, a matching write buffer cap, TCP_NODELAY on because a
-// request-response protocol must not wait for Nagle, and round-robin load
-// balancing.
+// The gnet options match Breeze.Run and come from the same place, gnetcfg.Config: one read
+// buffer per event loop sized for a pipelined batch, a matching write buffer cap, TCP_NODELAY
+// on because a request-response protocol must not wait for Nagle, round-robin load balancing,
+// and SO_REUSEADDR (not on Windows) so that a restart inside the TIME_WAIT minute can bind the
+// port again. SetEngineConfig changes any of them.
 func (s *Server) Run(port int, multiCore bool) error {
 	return s.RunOn("", port, multiCore)
 }
@@ -461,22 +466,18 @@ func (s *Server) RunOn(host string, port int, multiCore bool) error {
 	s.runEnded.Store(nil)
 	s.fellBack.Store(false)
 
-	opts := []gnetplus.Option{
-		gnetplus.WithTCPNoDelay(gnetplus.TCPNoDelay),
-		gnetplus.WithMulticore(multiCore),
-		gnetplus.WithLoadBalancing(gnetplus.RoundRobin),
-		gnetplus.WithReadBufferCap(64 << 10),
-		gnetplus.WithWriteBufferCap(64 << 10),
-	}
+	// One WithOptions and nothing else: it replaces the whole option set instead of adding to it, so
+	// an option listed before it would be thrown away. See package gnetcfg.
+	opts := gnetplus.WithOptions(s.EngineConfig().Resolve(s.engineDefaults(true), multiCore))
 
 	addr := "tcp://" + net.JoinHostPort(host, strconv.Itoa(port))
 	s.listenAddr.Store(&addr)
-	err := gnetRun(s, addr, opts...)
+	err := gnetRun(s, addr, opts)
 	if err != nil && host == "" && addressFamilyUnsupported(err) {
 		addr = "tcp4://" + net.JoinHostPort("0.0.0.0", strconv.Itoa(port))
 		s.listenAddr.Store(&addr)
 		s.fellBack.Store(true)
-		err = gnetRun(s, addr, opts...)
+		err = gnetRun(s, addr, opts)
 	}
 
 	// Recorded because the caller is usually a goroutine whose only report is a log line,
@@ -539,16 +540,36 @@ func (s *Server) MaxRequestBody() int64 {
 
 // RunAddr starts the server on an explicit gnet address, for callers that need
 // a bind host, a Unix socket, or a port chosen by the OS.
+//
+// SO_REUSEADDR is set for a TCP address and for no other kind: a Unix socket has no TIME_WAIT
+// to wait out.
 func (s *Server) RunAddr(addr string, multiCore bool) error {
-	return gnetplus.Run(
-		s,
-		addr,
-		gnetplus.WithTCPNoDelay(gnetplus.TCPNoDelay),
-		gnetplus.WithMulticore(multiCore),
-		gnetplus.WithLoadBalancing(gnetplus.RoundRobin),
-		gnetplus.WithReadBufferCap(64<<10),
-		gnetplus.WithWriteBufferCap(64<<10),
-	)
+	reuse := strings.HasPrefix(addr, "tcp")
+	return gnetRun(s, addr, gnetplus.WithOptions(s.EngineConfig().Resolve(s.engineDefaults(reuse), multiCore)))
+}
+
+// engineDefaults is what the zero Config means for this server: the loop count is left to
+// multiCore, keep-alive is off, and there is no ticker because nothing here runs from OnTick.
+func (s *Server) engineDefaults(reuseAddr bool) gnetcfg.Defaults {
+	return gnetcfg.Defaults{ReuseAddr: reuseAddr}
+}
+
+// SetEngineConfig sets the gnet engine configuration. Call it before Run, RunOn or RunAddr: it
+// is read once, when the listener starts. The zero gnetcfg.Config, which is also what a server
+// that never calls this has, is the configuration described on Run. Of its fields, TickInterval
+// is ignored here, since this server has no ticker.
+func (s *Server) SetEngineConfig(c gnetcfg.Config) {
+	n := c.Normalized()
+	s.engineCfg.Store(&n)
+}
+
+// EngineConfig reports the engine configuration SetEngineConfig stored, normalized. A server
+// that was never given one reports the zero value, which means the defaults.
+func (s *Server) EngineConfig() gnetcfg.Config {
+	if p := s.engineCfg.Load(); p != nil {
+		return *p
+	}
+	return gnetcfg.Config{}
 }
 
 // Handle dispatches one JSON-RPC message and returns the raw response bytes.

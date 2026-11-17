@@ -52,7 +52,8 @@ func connStateOf(c gnetplus.Conn) *connState {
 //
 // Reading the wall clock on every request costs more than the connection state
 // update it feeds. The sweeper only needs second-level resolution, so the clock
-// is advanced once a second by OnTick and read with a single atomic load.
+// is advanced by OnTick (once a second, unless EngineConfig.TickInterval says
+// otherwise) and read with a single atomic load.
 var coarseClock atomic.Int64
 
 func init() { coarseClock.Store(time.Now().UnixNano()) }
@@ -91,7 +92,7 @@ func (s *Breeze) OnTick() (time.Duration, gnetplus.Action) {
 	now := time.Now().UnixNano()
 	coarseClock.Store(now)
 	s.sweepConns(now)
-	return time.Second, gnetplus.None
+	return s.tickInterval(), gnetplus.None
 }
 
 func (s *Breeze) sweepConns(now int64) {

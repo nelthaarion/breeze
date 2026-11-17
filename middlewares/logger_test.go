@@ -118,15 +118,30 @@ func TestLoggingMiddlewareOutputOption(t *testing.T) {
 	}
 }
 
+// waitForTheClockToMove returns once the clock the middleware reads has advanced: the nearest thing
+// to a handler that does no work that every platform can time. That clock has a grain, a few
+// nanoseconds on Linux but the timer tick on Windows (0.5 to 15.6 ms), and a handler that finishes
+// inside one tick is measured as exactly 0 there. That reading is true to the clock and is not a
+// fault of the middleware, so the test must not ask a coarse clock for a figure it cannot give.
+func waitForTheClockToMove() {
+	for t0 := time.Now(); time.Since(t0) == 0; {
+	}
+}
+
 // loggedDuration runs one request through LoggingMiddleware around a handler that takes work, and
-// returns the duration the line printed.
+// returns the duration the line printed. A work of zero is a handler that takes as little time as
+// the clock can show.
 func loggedDuration(t *testing.T, work time.Duration) time.Duration {
 	t.Helper()
 	out := &lockedBuf{}
 	mw := LoggingMiddlewareWith(LoggingOptions{Output: out})
 	ctx := breeze.NewContext(breeze.GET, "/timed")
 	ctx.SetMiddlewareChain([]breeze.HandlerFunc{mw}, func(c *breeze.Context) error {
-		time.Sleep(work)
+		if work > 0 {
+			time.Sleep(work)
+		} else {
+			waitForTheClockToMove()
+		}
 		return c.WriteString("hi")
 	})
 	if err := ctx.Next(); err != nil {
@@ -148,11 +163,11 @@ func loggedDuration(t *testing.T, work time.Duration) time.Duration {
 // unit. A line that read "(258.018s)" for a request that took microseconds could be a unit error here,
 // or a process that was frozen while the request was in flight (the monotonic clock keeps counting
 // through SIGSTOP, so the line is right about the wall time and wrong about the work). This pins the
-// first reading down: a request that takes nothing prints microseconds, one that takes 40ms prints at
-// least that and nowhere near seconds.
+// first reading down: a request that takes next to nothing prints a small figure, not a count of
+// seconds, and one that takes 40ms prints at least that and nowhere near seconds.
 func TestLoggingMiddlewarePrintsTheTimeTheChainTook(t *testing.T) {
 	if fast := loggedDuration(t, 0); fast <= 0 || fast >= 50*time.Millisecond {
-		t.Errorf("a handler that does no work printed %v, want microseconds", fast)
+		t.Errorf("a handler that does no work printed %v, want a small positive figure", fast)
 	}
 	const work = 40 * time.Millisecond
 	slow := loggedDuration(t, work)

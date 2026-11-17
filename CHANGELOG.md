@@ -6,6 +6,48 @@ All changes made to the Breeze framework.
 
 ## [Unreleased]
 
+### The idle and read-header timeouts now actually run
+
+`Run` passed `WithTicker(true)` to gnet ahead of a `WithOptions`, which replaces the whole option set instead of adding
+to it, so the ticker was thrown away: `OnTick` was never scheduled, the coarse clock stood still, and neither
+`SetIdleTimeout` (default 120 s) nor `SetReadHeaderTimeout` (default 30 s) ever closed a connection. A client that sent
+half a request line and went quiet held its socket for the life of the process, which is the slowloris the header
+timeout exists for. `TestSlowHeadersAreCutOff` and `TestIdleConnectionsAreClosed` failed because of it, at `GOMAXPROCS`
+1, 2 and 4 alike. Both timeouts are enforced now: a connection that sends nothing for 120 seconds is closed, so a
+client that parks an idle keep-alive connection for longer has to reconnect, and `SetIdleTimeout(0)` turns the limit
+off. `WithReusePort(true)`, listed before the same `WithOptions`, never took effect either and stays off. With the
+sweeper running, the root package passes under the race detector.
+
+### The gnet engine settings are configuration, and `SetPollYield` reaches gnet
+
+What `Run` handed gnet was a list of literals, repeated in `rpc.Server`: one event loop per pool worker, 64 KiB read and
+write buffers, round-robin assignment, `TCP_NODELAY`, a five second keep-alive, a one second tick, and which socket
+options to set. They are one `gnetcfg.Config` now, set with `Breeze.SetEngineConfig` or `rpc.Server.SetEngineConfig` and
+read back, normalized, with `EngineConfig`. Its fields are `EventLoops`, `LoadBalancing`, `ReadBufferCap`,
+`WriteBufferCap`, `TCPKeepAlive`, `TickInterval`, `DisableTCPNoDelay`, `DisableReuseAddr`, `ReusePort` and
+`AlwaysPollYield`, and the zero value is the configuration both servers always ran with, so a program that never calls
+it changes nothing. A value out of range is replaced by the nearest valid one instead of failing the start.
+`Config.Resolve` builds a single `gnetplus.Options`, which a server passes through one `WithOptions`, so an option can no
+longer be lost to the order of a list, which is how the ticker was lost; the ticker is not a field, because a server
+without it stops enforcing its timeouts. `SO_REUSEADDR` and `SO_REUSEPORT` are never set on Windows, where gnetplus turns
+either into `SO_REUSEADDR` and another process could take the port over, and `ReusePort` is honored only where gnet
+supports it for several loops (Linux, FreeBSD, DragonFly). Two behaviors change with it. `Run` fixed the poll-yield
+decision at false, so `SetPollYield(PollYieldAuto)` and `PollYieldNever` were accepted and did nothing; `Run` now takes
+the decision from them, and the default is unchanged. And the JSON-RPC listener now sets `SO_REUSEADDR` (not on
+Windows), so it can be restarted inside the TIME_WAIT minute as the HTTP one can; `DisableReuseAddr` restores the old
+behavior. The tests read the options `Run` hands gnet, through a stub, and assert there is exactly one.
+
+### Tests that only held on one platform
+
+`TestProbeReportsAListenerThatNeverStarted` took its port on loopback and expected the wildcard bind to fail. It does on
+Linux; on Windows a socket on `127.0.0.1:P` and one on `[::]:P` do not conflict, the bind succeeded, `Run` blocked for as
+long as its listener lived, and the package ran into its ten minute timeout. The port is now taken on the wildcard the
+server binds, and the test waits a bounded time for the failure. `TestLoggingMiddlewarePrintsTheTimeTheChainTook` asked
+a handler that does nothing for a non-zero duration; the clock Go reads on Windows ticks every 0.5 to 15.6 ms, so the
+true reading is 0. The handler now waits for the clock to move. The Docker live tests provisioned under fixed names, so a
+container left by an earlier run made the next `docker run --name breeze-live-gateway` fail with a name conflict; every
+run now uses names of its own.
+
 ### `breeze_get_timeline`: where the time went inside a request
 
 An agent chasing a slow route could read how long a request took (`breeze_get_routes`) and nothing about where

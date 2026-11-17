@@ -511,8 +511,28 @@ func TestGetTraceLogsRejectsAMalformedTraceID(t *testing.T) {
 	}
 }
 
+// askedQuery holds the raw query the stub aggregator saw last. The handler runs on the HTTP server's
+// goroutines and the test reads it from its own, and a loopback round trip gives the race detector no
+// ordering between the two, so both sides go through the mutex.
+type askedQuery struct {
+	mu sync.Mutex
+	q  string
+}
+
+func (a *askedQuery) set(q string) {
+	a.mu.Lock()
+	a.q = q
+	a.mu.Unlock()
+}
+
+func (a *askedQuery) get() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.q
+}
+
 // stubAggregator serves a fixed list at /fleet/api/services and records what it was asked.
-func stubAggregator(t *testing.T, list string, asked *string) string {
+func stubAggregator(t *testing.T, list string, asked *askedQuery) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/fleet/api/services" {
@@ -520,7 +540,7 @@ func stubAggregator(t *testing.T, list string, asked *string) string {
 			return
 		}
 		if asked != nil {
-			*asked = r.URL.RawQuery
+			asked.set(r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(list))
@@ -534,7 +554,7 @@ func stubAggregator(t *testing.T, list string, asked *string) string {
 // and puts them after everything alive, counted apart.
 func TestGetServicesListsForgottenServicesAfterTheLiveOnes(t *testing.T) {
 	now := time.Now()
-	var asked string
+	var asked askedQuery
 	base := stubAggregator(t, fmt.Sprintf(`[
 		{"name":"orders","instances":0,"rps":0,"error_rate":0,"status":"forgotten","last_heartbeat_unix":%d,"forgotten_at_unix":%d,"dashboard_url":"http://orders:3000/dashboard"},
 		{"name":"gateway","instances":1,"rps":5,"error_rate":0,"status":"up","last_heartbeat_unix":%d,"dashboard_url":"http://gateway:3000/dashboard"}
@@ -544,8 +564,8 @@ func TestGetServicesListsForgottenServicesAfterTheLiveOnes(t *testing.T) {
 	if isErr {
 		t.Fatalf("breeze_get_services: %s", summary)
 	}
-	if !strings.Contains(asked, "forgotten=1") {
-		t.Errorf("the tool asked the aggregator %q, so it never gets the tombstones", asked)
+	if q := asked.get(); !strings.Contains(q, "forgotten=1") {
+		t.Errorf("the tool asked the aggregator %q, so it never gets the tombstones", q)
 	}
 	rows := asRows(t, got["services"])
 	if len(rows) != 2 || rows[0]["name"] != "gateway" || rows[1]["name"] != "orders" || rows[1]["status"] != "forgotten" {

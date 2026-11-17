@@ -17,6 +17,8 @@ package mcp
 // establish either, because it would be asserting against itself.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -51,6 +53,20 @@ func liveOrchestrator(t *testing.T) *orchestrator {
 	return orch
 }
 
+// liveName returns base with eight random hex digits appended, so that every run provisions under
+// names of its own. The tests used fixed ones (live-users, live-gateway, live-orders), and a
+// container left behind by an earlier run, one that was interrupted or whose cleanup failed, made
+// the next `docker run --name breeze-live-gateway` fail with "Conflict. The container name ... is
+// already in use". The test then failed for a reason that had nothing to do with provisioning.
+func liveName(t *testing.T, base string) string {
+	t.Helper()
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("no randomness for a unique service name: %v", err)
+	}
+	return base + "-" + hex.EncodeToString(b[:])
+}
+
 // cleanupProvisioned removes everything a live test provisioned.
 //
 // Registered with t.Cleanup rather than deferred, so it still runs when a test fails
@@ -80,10 +96,11 @@ func TestLiveProvisionServiceReachableOnBothAddresses(t *testing.T) {
 
 	// The default wait applies: this test wants provisioning to have settled before it
 	// starts asserting.
+	name := liveName(t, "live-users")
 	result := orch.provisionService(provisionServiceArgs{
-		Name:        "live-users",
+		Name:        name,
 		Template:    "api",
-		configInput: configInput{Config: map[string]any{"module": "example.com/live-users"}},
+		configInput: configInput{Config: map[string]any{"module": "example.com/" + name}},
 	})
 	if result.IsError {
 		t.Fatalf("provision_service failed: %s", result.Content[0].Text)
@@ -206,14 +223,15 @@ func TestLiveProvisionFleetTracesFlowBetweenServices(t *testing.T) {
 	orch := liveOrchestrator(t)
 	cleanupProvisioned(t, orch)
 
+	gateway, orders := liveName(t, "live-gateway"), liveName(t, "live-orders")
 	result := orch.provisionFleet(
 		[]fleetServiceRequest{
-			{Name: "live-gateway", Template: "api",
-				configInput: configInput{Config: map[string]any{"module": "example.com/live-gateway"}}},
-			{Name: "live-orders", Template: "api",
-				configInput: configInput{Config: map[string]any{"module": "example.com/live-orders"}}},
+			{Name: gateway, Template: "api",
+				configInput: configInput{Config: map[string]any{"module": "example.com/" + gateway}}},
+			{Name: orders, Template: "api",
+				configInput: configInput{Config: map[string]any{"module": "example.com/" + orders}}},
 		},
-		fleetAggregatorConfig{HostedBy: "live-gateway"},
+		fleetAggregatorConfig{HostedBy: gateway},
 		dockerOptions{},
 	)
 	if result.IsError {

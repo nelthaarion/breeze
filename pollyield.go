@@ -5,9 +5,10 @@ import "runtime"
 // PollYield selects what the gnet event loops do right before they block in the
 // kernel waiting for the next event.
 //
-// By default gnet calls runtime.Gosched there, so that goroutines the callbacks
-// have just made runnable (a worker-pool task, a WebSocket dispatch) get the CPU
-// before the loop sleeps. A server that handles every request inline in OnTraffic
+// gnet calls runtime.Gosched there (gnetplus only for the loops whose goroutines
+// may be waiting for their P, unless EngineConfig.AlwaysPollYield makes it
+// unconditional), so that goroutines the callbacks have just made runnable (a
+// worker-pool task, a WebSocket dispatch) get the CPU before the loop sleeps. A server that handles every request inline in OnTraffic
 // never creates such goroutines, and for it the yield is cost: an extra
 // non-blocking poll, a scheduler round trip and the futex wake-ups that go with
 // it, on every idle transition.
@@ -21,8 +22,9 @@ import "runtime"
 type PollYield int32
 
 const (
-	// PollYieldDefault keeps gnet's behaviour: yield before blocking. This is
-	// what Breeze has always done and it is the default.
+	// PollYieldDefault leaves the yield to gnetplus: its adaptive yield, or the
+	// unconditional one when EngineConfig.AlwaysPollYield is set. This is what
+	// Breeze has always done and it is the default.
 	PollYieldDefault PollYield = iota
 	// PollYieldAuto skips the yield when this server serves its routes inline
 	// (inline execution is on and no route was registered with HandleBlocking,
@@ -35,7 +37,8 @@ const (
 	PollYieldNever
 )
 
-// SetPollYield chooses the event-loop yield policy. Call it before Run.
+// SetPollYield chooses the event-loop yield policy. Call it before Run, which
+// reads it once and hands the decision to gnet through Options.NoPollYield.
 func (s *Breeze) SetPollYield(mode PollYield) { s.pollYield.Store(int32(mode)) }
 
 func (s *Breeze) noPollYield() bool {

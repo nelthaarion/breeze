@@ -545,7 +545,7 @@ func TestWriteSessionInCallbackFlow(t *testing.T) {
 	if status(cbCtx) != 302 {
 		t.Fatalf("callback status = %d", status(cbCtx))
 	}
-	
+
 	// The wire, not the header map: respCookies reads the serialized bytes, so a
 	// malformed Set-Cookie line is reported as the missing cookie it is.
 	sessionCookies := respCookies(cbCtx)

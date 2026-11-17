@@ -304,8 +304,6 @@ func RenderStaticHeaders(kvs ...string) (block []byte, lookup map[string]string)
 	return block, lookup
 }
 
-
-
 // Bytes serializes the HTTPResponse to raw HTTP/1.1 bytes in a freshly
 // allocated slice.
 //

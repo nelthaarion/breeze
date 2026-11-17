@@ -32,12 +32,16 @@ func parserBenchBody(n int) []byte {
 
 func parserBenchPOST(path string, body []byte) []byte {
 	var sb strings.Builder
-	sb.WriteString("POST " + path + " HTTP/1.1\r\n")
+	sb.WriteString("POST ")
+	sb.WriteString(path)
+	sb.WriteString(" HTTP/1.1\r\n")
 	sb.WriteString("Host: api.example.com\r\n")
 	sb.WriteString("User-Agent: Go-http-client/1.1\r\n")
 	sb.WriteString("Content-Type: application/json\r\n")
 	sb.WriteString("Accept: application/json\r\n")
-	sb.WriteString("Content-Length: " + strconv.Itoa(len(body)) + "\r\n")
+	sb.WriteString("Content-Length: ")
+	sb.WriteString(strconv.Itoa(len(body)))
+	sb.WriteString("\r\n")
 	sb.WriteString("\r\n")
 	return append([]byte(sb.String()), body...)
 }
@@ -81,7 +85,11 @@ var parserBenchCases = func() []parserBenchCase {
 	var many strings.Builder
 	many.WriteString("GET /m HTTP/1.1\r\nHost: h\r\n")
 	for i := 0; i < 29; i++ {
-		many.WriteString("X-Hdr-" + strconv.Itoa(i) + ": v" + strconv.Itoa(i) + "\r\n")
+		many.WriteString("X-Hdr-")
+		many.WriteString(strconv.Itoa(i))
+		many.WriteString(": v")
+		many.WriteString(strconv.Itoa(i))
+		many.WriteString("\r\n")
 	}
 	many.WriteString("\r\n")
 	add("many30", []byte(many.String()), false)

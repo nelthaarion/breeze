@@ -225,7 +225,3 @@ func deleteUser(ctx *breeze.Context) error {
 
 	return nil
 }
-
-func cfg() {
-
-}

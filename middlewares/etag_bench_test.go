@@ -14,8 +14,8 @@ func BenchmarkETagMiddlewareSteadyState(b *testing.B) {
 	handler := func(c *breeze.Context) error { c.Res = &breeze.HTTPResponse{Status: 200, Body: etagBody}; return nil }
 	chain := []breeze.HandlerFunc{mw}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		ctx := breeze.NewContext(breeze.GET, "/users")
 		ctx.SetMiddlewareChain(chain, handler)
 		if err := ctx.Next(); err != nil {

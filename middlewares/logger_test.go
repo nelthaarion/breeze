@@ -77,8 +77,8 @@ func TestAsyncLogKeepsEveryLineIntact(t *testing.T) {
 		wg.Add(1)
 		go func(g int) {
 			defer wg.Done()
-			for i := 0; i < 2000; i++ {
-				l.write([]byte(fmt.Sprintf("line g=%d i=%04d padding-padding-padding\n", g, i)))
+			for i := range 2000 {
+				l.write(fmt.Appendf(nil, "line g=%d i=%04d padding-padding-padding\n", g, i))
 			}
 		}(g)
 	}

@@ -48,7 +48,7 @@ func TestParseAcceptEncodingNoAllocs(t *testing.T) {
 func BenchmarkAcceptEncodingGeneric(b *testing.B) {
 	b.ReportAllocs()
 	h := "gzip, deflate, br"
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, e := range []string{"br", "gzip", "deflate"} {
 			if encodingQValue(h, e) <= 0 {
 				continue
@@ -61,7 +61,7 @@ func BenchmarkAcceptEncodingGeneric(b *testing.B) {
 func BenchmarkAcceptEncodingSinglePass(b *testing.B) {
 	b.ReportAllocs()
 	h := "gzip, deflate, br"
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		q := parseAcceptEncoding(h)
 		for _, e := range []string{"br", "gzip", "deflate"} {
 			if q.of(e) <= 0 {

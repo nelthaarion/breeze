@@ -154,7 +154,9 @@ Run at most once, then remove automatically:
 events.Once(AppStarted{}, InitializeCache)
 ```
 
-Concurrent emits are safe: exactly one invocation happens.
+Concurrent emits are safe: exactly one invocation happens. The listener is
+removed as soon as it has fired, so `Count`, `Has` and the inspector stop
+reporting it and a long-lived bus does not accumulate spent entries.
 
 ## Stop Propagation
 
@@ -200,6 +202,8 @@ func Handler(ctx *events.Context, e MyEvent) error {
 
 Context is **pooled** for sync dispatch and must not be retained past the handler's return. Async listeners receive a non-pooled Context.
 
+`ctx.CorrelationID` and `ctx.RequestID` start empty on every dispatch; the bus neither fills them in nor propagates them to follow-up events. A middleware may set them (they are copied into the observer's `DispatchResult` and the recorder), and a listener that emits a follow-up event carries the identifier forward itself.
+
 ## Metadata
 
 Listeners coordinate through the shared Context:
@@ -237,7 +241,11 @@ func Logger(ctx *events.Context, next events.Next) error {
 events.Default.Use(Logger)
 ```
 
-Middleware runs even when an event has no listeners, which makes it suitable for tracing and observability.
+Middleware runs even when a *synchronously* emitted event has no listeners, which makes it suitable for tracing and observability.
+
+Middleware wraps synchronous dispatch only. An async emit returns once its listeners are scheduled, so there is no finished dispatch to wrap: it does not run the chain, and an async emit of an event with no listeners is not reported to the observer. Concerns that must see every event belong in an `Observer`.
+
+A panicking middleware is contained like a panicking listener (see below). Because the dispatch cannot continue, `Emit` returns a `*PanicError` for it in both recovering modes.
 
 ## Error Handling
 
@@ -291,6 +299,8 @@ Modes:
 - `PanicRecoverAndContinue`: recover, report, continue
 - `PanicRecoverAndFail`: recover, report, stop dispatch, return `*PanicError`
 - `PanicPropagate`: re-panic (for tests)
+
+Recovery covers listeners, listener filters and middleware. Async dispatch always recovers, whatever the mode: there is no caller to propagate to.
 
 ## Async Dispatch
 
@@ -433,6 +443,32 @@ testBus := events.New()
 
 The package-level functions (`events.Emit`, `events.On`) operate on `events.Default`.
 
+Every `events.New` replaces the bus the process-wide diagnostic (`diag`, name `events`) reports on: right for the bus your application actually runs on, wrong for a private one — a library's internal bus, a per-tenant bus, a test double. Build those with `events.Config{DisableDiagnostics: true}` so they do not take the report over; `events.RegisterDiagnostics(bus)` still publishes one explicitly.
+
+## Topics and Backends
+
+On top of the typed bus there is a small topic layer for untyped, byte-oriented messages — the shape message brokers carry:
+
+```go
+events.Subscribe("orders.created", func(ctx *events.Context, m events.RawMessage) error {
+	// m.Topic, m.Payload, m.Meta
+	return nil
+})
+events.Publish("orders.created", payload, events.Meta{"x-trace": id}) // sync
+events.PublishAsync("orders.created", payload, nil)                  // async
+```
+
+`events.Backend` is the seam for transports. `events.NewInMemoryBackend(bus)` is the in-process implementation; a broker adapter implements the same three methods (`Publish`, `Subscribe`, `Close`). Contract:
+
+- `Close` stops every subscription made through that backend, and afterwards `Publish` and `Subscribe` return `events.ErrBackendClosed`. It does not close a bus the caller supplied.
+- `Subscribe` returns `events.ErrEmptyTopic` for an empty topic and `events.ErrNilHandler` for a nil handler. The cancel function it returns is safe to call repeatedly.
+- A handler must copy `Payload` and `Meta` if it keeps them: a network backend may reuse the buffer they came from.
+- A backend that can honour a deadline while publishing implements `events.ContextPublisher`; `events.PublishVia(ctx, backend, ...)` uses it when present, so an exporter's context reaches the wire instead of stopping at the interface.
+
+A Kafka implementation lives in the nested module `fleet/transport/eventtransport/backends/kafka`. It commits an offset only after the message's handler has returned (at-least-once), reports failures through `Config.OnError`, and takes TLS/SASL through `Config.Dialer` and `Config.Transport`.
+
+Topic subscriptions are listeners on one `RawMessage` event, so a publish evaluates every subscriber's topic filter: that is cheap for dozens of topics, and the typed API is the better tool when there are thousands of subscribers.
+
 ## Framework Events
 
 Breeze emits built-in events:
@@ -491,6 +527,9 @@ bus := events.New(events.Config{
 	Metrics:      true,  // default: on
 	Recorder:     false, // default: off
 	RecorderSize: 256,
+
+	// Private bus: do not replace the process-wide diagnostic
+	DisableDiagnostics: false,
 })
 ```
 

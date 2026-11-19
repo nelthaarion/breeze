@@ -109,7 +109,7 @@ func emitCtx[T any](b *Bus, stdctx context.Context, event T) error {
 	// The payload is boxed into an interface only when something will read it.
 	// Passing `event` unconditionally allocated on every dispatch to hand a
 	// value to two branches that were almost always disabled.
-	b.finish(e, ctx, elapsed, start, ran, stopped, err, payloadFor(b, event), false)
+	b.finish(e, ctx, elapsed, start, ran, stopped, err, payloadFor(b, event), false, obs)
 	return err
 }
 
@@ -139,6 +139,26 @@ func payloadFor[T any](b *Bus, event T) any {
 // closure's captures escape, and isolating it here keeps that cost on the
 // dispatches that actually have middleware registered.
 func runMiddlewareChain[T any](mw []Middleware, b *Bus, e *entry, ctx *Context, snap []*listener[T], event T, obs Observer) (ran int, stopped bool, err error) {
+	// A middleware is plugin code like a listener, and PanicError is
+	// documented as covering both. Recovery is scoped to this function, so
+	// the no-middleware path pays nothing for it. A panic before next() means
+	// the listeners never ran, so the caller gets the *PanicError instead of
+	// a silent nil.
+	//
+	// PanicPropagate is a pass-through and must stay one: recovering here
+	// would also catch a listener panic that invokeListener has already
+	// reported and is re-panicking, and report it a second time. So in that
+	// mode the deferred function does not call recover at all.
+	defer func() {
+		if b.cfg.PanicMode == PanicPropagate {
+			return
+		}
+		r := recover()
+		if r == nil {
+			return
+		}
+		err = b.reportPanic(e, ctx.EventName, "", r)
+	}()
 	err = runChain(mw, ctx, func() error {
 		var derr error
 		ran, stopped, derr = runListeners(b, e, ctx, snap, event, obs)
@@ -156,6 +176,14 @@ func runListeners[T any](b *Bus, e *entry, ctx *Context, snap []*listener[T], ev
 	// failure, so the common paths allocate nothing.
 	var errs []error
 
+	// spent collects the once-listeners this walk ran. They are removed once
+	// the walk is over: "run at most once, then remove automatically" is the
+	// documented contract, and a spent listener left in the snapshot is
+	// skipped by every later dispatch for ever. Only listeners this dispatch
+	// claimed are collected; see channel.removeIDs. It stays nil, and the
+	// walk allocates nothing, unless a once-listener runs.
+	var spent []uint64
+
 	for i, l := range snap {
 		// Checked before each listener rather than once up front: any
 		// listener may cancel, and the ones after it must not run.
@@ -168,6 +196,9 @@ func runListeners[T any](b *Bus, e *entry, ctx *Context, snap []*listener[T], ev
 		lerr, skipped := invokeListener(b, e, ctx, l, event, obs, i)
 		if skipped {
 			continue
+		}
+		if l.once && l.fired.Load() {
+			spent = append(spent, l.id)
 		}
 		ran++
 
@@ -189,12 +220,19 @@ func runListeners[T any](b *Bus, e *entry, ctx *Context, snap []*listener[T], ev
 		}
 
 		if !b.cfg.ContinueOnError {
-			return ran, true, lerr
+			err, stopped = lerr, true
+			break
 		}
 		errs = append(errs, &ListenerError{Listener: l.name, Err: lerr})
 	}
 
-	return ran, stopped, asError(errs)
+	if len(spent) > 0 {
+		e.erased.removeIDs(spent)
+	}
+	if err == nil {
+		err = asError(errs)
+	}
+	return ran, stopped, err
 }
 
 // invoke runs one listener with panic recovery.
@@ -247,18 +285,7 @@ func invokeListener[T any](b *Bus, e *entry, ctx *Context, l *listener[T], event
 		}
 
 		panicked = true
-		if b.cfg.Metrics {
-			e.stats.panics.Add(1)
-		}
-		pe := &PanicError{
-			Event:    ctx.EventName,
-			Listener: l.name,
-			Value:    r,
-			Stack:    debug.Stack(),
-		}
-		if b.cfg.OnPanic != nil {
-			b.cfg.OnPanic(pe)
-		}
+		pe := b.reportPanic(e, ctx.EventName, l.name, r)
 
 		switch b.cfg.PanicMode {
 		case PanicPropagate:
@@ -280,12 +307,23 @@ func invokeListener[T any](b *Bus, e *entry, ctx *Context, l *listener[T], event
 
 // finish records metrics and history for a completed dispatch, and hands
 // the result to the observer if one is attached.
-func (b *Bus) finish(e *entry, ctx *Context, d time.Duration, start time.Time, ran int, stopped bool, err error, payload any, async bool) {
+//
+// obs is the observer the dispatch announced itself to, not whatever is attached
+// now: an observer swapped or detached mid-dispatch must still receive the end
+// of the dispatch it saw begin, and one attached mid-dispatch must not receive
+// the end of a dispatch it never saw start.
+//
+// For an async dispatch only the scheduling is finished here; its listeners
+// count themselves as they run (see runAsyncListener), so adding ran and
+// stopped here as well would count every invocation twice.
+func (b *Bus) finish(e *entry, ctx *Context, d time.Duration, start time.Time, ran int, stopped bool, err error, payload any, async bool, obs Observer) {
 	if b.cfg.Metrics {
 		e.stats.observe(d, start)
-		e.stats.listeners.Add(uint64(ran))
-		if stopped {
-			e.stats.stopped.Add(1)
+		if !async {
+			e.stats.listeners.Add(uint64(ran))
+			if stopped {
+				e.stats.stopped.Add(1)
+			}
 		}
 	}
 
@@ -308,7 +346,7 @@ func (b *Bus) finish(e *entry, ctx *Context, d time.Duration, start time.Time, r
 		b.recorder.push(rec)
 	}
 
-	if obs := b.observer(); obs != nil {
+	if obs != nil {
 		res := DispatchResult{
 			EventID:           ctx.EventID,
 			EventName:         ctx.EventName,
@@ -402,13 +440,14 @@ func emitAsync[T any](b *Bus, stdctx context.Context, event T, wg *sync.WaitGrou
 	}
 
 	scheduled := 0
+	var spent []uint64 // once-listeners this emit claimed and scheduled: removed below
 	for _, l := range snap {
 		if ctx.Cancelled() {
 			break
 		}
 		// Filters are evaluated on the emitting goroutine so that a
 		// rejected event never costs a goroutine or a queue slot.
-		if l.filter != nil && !l.filter(event) {
+		if !asyncFilterAccepts(b, e, ctx, l, event) {
 			if b.cfg.Metrics {
 				e.stats.filtered.Add(1)
 			}
@@ -443,20 +482,69 @@ func emitAsync[T any](b *Bus, stdctx context.Context, event T, wg *sync.WaitGrou
 			}
 			continue
 		}
+		if lst.once {
+			spent = append(spent, lst.id)
+		}
 		scheduled++
+	}
+
+	if len(spent) > 0 {
+		ch.removeIDs(spent)
 	}
 
 	// Duration here measures scheduling, not execution; the Record's
 	// Async flag tells consumers how to read it.
-	b.finish(e, ctx, time.Since(start), start, scheduled, ctx.Cancelled(), nil, payloadFor(b, event), true)
+	b.finish(e, ctx, time.Since(start), start, scheduled, ctx.Cancelled(), nil, payloadFor(b, event), true, obs)
 	return nil
+}
+
+// asyncFilterAccepts evaluates l's filter on the emitting goroutine.
+//
+// Under sync dispatch a panicking filter is recovered inside invokeListener.
+// Here there is no such frame, so without this a filter bug would unwind
+// straight through EmitAsync into the caller — the one place the package
+// promises a broken plugin cannot reach. A panicking filter is reported like
+// any recovered panic and its listener is skipped.
+func asyncFilterAccepts[T any](b *Bus, e *entry, ctx *Context, l *listener[T], event T) (accept bool) {
+	if l.filter == nil {
+		return true
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			accept = false
+			b.reportPanic(e, ctx.EventName, l.name, r)
+		}
+	}()
+	return l.filter(event)
+}
+
+// reportPanic counts a recovered panic and hands it to the panic handler. It
+// returns the *PanicError so a caller can also surface it as an error.
+func (b *Bus) reportPanic(e *entry, event, listener string, r any) *PanicError {
+	if b.cfg.Metrics {
+		e.stats.panics.Add(1)
+	}
+	pe := &PanicError{
+		Event:    event,
+		Listener: listener,
+		Value:    r,
+		Stack:    debug.Stack(),
+	}
+	if b.cfg.OnPanic != nil {
+		b.cfg.OnPanic(pe)
+	}
+	return pe
 }
 
 // schedule runs task according to the configured async mode. It reports
 // whether the task was accepted.
 func (b *Bus) schedule(task func()) bool {
 	if b.cfg.Async == AsyncWorkerPool {
-		return b.workers().submit(task)
+		p := b.workers()
+		if p == nil { // bus closed: refuse rather than start a pool nobody will stop
+			return false
+		}
+		return p.submit(task)
 	}
 	go task()
 	return true
@@ -511,18 +599,7 @@ func runAsyncListener[T any](b *Bus, e *entry, ctx *Context, l *listener[T], eve
 			return
 		}
 		panicked = true
-		if b.cfg.Metrics {
-			e.stats.panics.Add(1)
-		}
-		pe := &PanicError{
-			Event:    ctx.EventName,
-			Listener: l.name,
-			Value:    r,
-			Stack:    debug.Stack(),
-		}
-		if b.cfg.OnPanic != nil {
-			b.cfg.OnPanic(pe)
-		}
+		b.reportPanic(e, ctx.EventName, l.name, r)
 		// PanicPropagate is deliberately not honoured here. Re-panicking
 		// on a listener goroutine would crash the process from a stack
 		// that has no relation to the emitter, so async always recovers.
@@ -543,9 +620,10 @@ func runAsyncListener[T any](b *Bus, e *entry, ctx *Context, l *listener[T], eve
 
 	if errors.Is(err, Stop) {
 		// Cancelling here suppresses listeners not yet scheduled. Those
-		// already running are unaffected.
-		ctx.Cancel()
-		if b.cfg.Metrics {
+		// already running are unaffected. Metrics.Stopped counts dispatches,
+		// and several listeners may return Stop for the same one, so only the
+		// call that actually flips the flag is counted.
+		if ctx.cancelOnce() && b.cfg.Metrics {
 			e.stats.stopped.Add(1)
 		}
 		return

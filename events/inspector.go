@@ -137,8 +137,9 @@ func (b *Bus) RecorderStats() RecorderStats {
 // PoolStats returns the async worker pool's statistics. It returns a
 // zero value when the pool has not been started.
 func (b *Bus) PoolStats() PoolStats {
-	if b.pool == nil {
+	p := b.pool.Load()
+	if p == nil {
 		return PoolStats{}
 	}
-	return b.pool.stats()
+	return p.stats()
 }

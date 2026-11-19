@@ -1,6 +1,7 @@
 package events
 
 import (
+	"slices"
 	"sync"
 	"sync/atomic"
 )
@@ -132,12 +133,64 @@ func (c *channel[T]) clearAll() {
 	c.mu.Unlock()
 }
 
-// pruneFired drops once-listeners that have already run.
+// removeIDs removes every listener whose id is in ids, with a single republish.
 //
-// A spent once-listener is skipped in O(1) during dispatch, so pruning is
-// an occupancy optimisation rather than a correctness requirement. It runs
-// after a dispatch observes at least one spent listener, which keeps a
-// long-lived bus from accumulating dead entries.
+// This is how a dispatch retires the once-listeners it ran: each dispatch
+// removes exactly the ones it claimed. Sweeping everything that merely looks
+// fired is not safe, because an async emit that claimed a once-listener and
+// then failed to schedule it un-fires it again; a sweep in that window would
+// remove a listener that never ran.
+func (c *channel[T]) removeIDs(ids []uint64) {
+	if len(ids) == 0 {
+		return
+	}
+	// A linear scan of ids per listener is right for the usual one or two;
+	// a dispatch that retires many at once would make it quadratic.
+	var set map[uint64]struct{}
+	if len(ids) > 8 {
+		set = make(map[uint64]struct{}, len(ids))
+		for _, id := range ids {
+			set[id] = struct{}{}
+		}
+	}
+	drop := func(id uint64) bool {
+		if set != nil {
+			_, ok := set[id]
+			return ok
+		}
+		return slices.Contains(ids, id)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	kept := c.master[:0]
+	changed := false
+	for _, l := range c.master {
+		if drop(l.id) {
+			changed = true
+			continue
+		}
+		kept = append(kept, l)
+	}
+	if !changed {
+		return
+	}
+	// Zero the vacated tail so the removed listeners (and anything their
+	// closures captured) become collectable.
+	for i := len(kept); i < len(c.master); i++ {
+		c.master[i] = nil
+	}
+	c.master = kept
+	c.publishLocked()
+}
+
+// pruneFired drops every once-listener that has already fired.
+//
+// Dispatch does not use it (see removeIDs): by the time a dispatch sees
+// fired=true it cannot tell a listener that ran from one that another dispatch
+// has claimed and may yet hand back. It is a sweep for a quiescent bus, and a
+// cleanup for the rare leftover — a dispatch unwound by PanicPropagate before
+// it could retire what it ran.
 func (c *channel[T]) pruneFired() {
 	c.mu.Lock()
 	defer c.mu.Unlock()

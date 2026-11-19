@@ -6,6 +6,72 @@ All changes made to the Breeze framework.
 
 ## [Unreleased]
 
+### Event bus audit: once-listeners are removed, async metrics stop double counting, and plugin code can no longer escape
+
+A review of the `events` package against its own documentation turned up the following, each now covered by a test in
+`events/audit_regression_test.go` that failed on 2.4.0.
+
+`Once` listeners were never removed. The README says they "run at most once, then remove automatically", and
+`channel.pruneFired` existed to do it, but nothing called it, so a spent listener stayed in the snapshot for the life of
+the bus: `Count`, `Has` and the inspector kept reporting it, its closure stayed reachable, and every later dispatch
+walked past it. A bus that registers a once-listener per request grew without bound. A dispatch now prunes the
+once-listeners it ran or found spent, and `Subscription.Active` reports `false` for them (and after `Clear`, `Reset` and
+`OffBus`, which it also ignored).
+
+Async dispatch counted every listener twice (`Metrics.Listeners` was 6 for three listeners) and counted `Stopped` once
+per `Stop`-returning listener plus once more depending on whether the emitter happened to see the cancellation first.
+Listeners now count themselves as they run and a dispatch is `Stopped` once. A zero-length duration sample (routine on a
+coarse clock) was indistinguishable from "no sample yet", so the next sample overwrote `MinDuration`; it no longer is.
+
+The lazily started worker pool was read without synchronisation by `Bus.PoolStats` (which the diagnostics probe calls
+from another goroutine) and by `Bus.Close`: a data race under `-race`. An emit that had passed the closed check before
+`Close` ran could also start a pool afterwards that nothing would ever stop. The pool is an atomic pointer created under
+a mutex that `Close` takes, so neither can happen.
+
+Plugin code escaped the recovery the README promises. A panicking middleware was never recovered (it now follows
+`PanicMode` and `Emit` returns the `*PanicError`), and a panicking listener `Where` filter was recovered under sync
+dispatch but unwound straight into the caller of `EmitAsync`. An observer attached or detached mid-dispatch was given
+an end for a dispatch it never saw start, or no end for one it did (`observability.EventObserver` then holds that
+dispatch in its in-flight map); the dispatch now finishes with the observer it started with.
+
+`SubscribeBus` registered its listener and attached the topic filter in a second step, so for an instant a subscription
+made while traffic was flowing received messages for every topic (500 ms of concurrent publishing delivered tens of
+thousands of them). The filter and name are part of the registration now. A nil handler is inert instead of panicking
+on the first matching publish. Listener ordering subtracted priorities, which overflows for extreme values; renaming
+one event type no longer unregisters the name another type had taken over; a nil handler is named `<nil>` in the
+inspector as documented; and the dangling reference to a `Context.Emitter` that never existed is gone (`CorrelationID`
+and `RequestID` are set by middleware and are not propagated).
+
+Behavior changes to be aware of: a spent once-listener disappears from `Inspect` immediately instead of staying listed
+with `Fired` set (`TestInspectReportsListeners` pinned the old behavior and now inspects before the emit); after
+`Backend.Close`, `Publish` and `Subscribe` return `events.ErrBackendClosed`, so an `eventtransport.Transport` that was
+closed no longer silently keeps publishing. Asynchronous dispatch still does not run middleware; that is now stated in
+the docs rather than implied away.
+
+### Message-broker integration: the Kafka backend commits after handling, closes cleanly and honours deadlines
+
+`events.Backend.Close` is documented as stopping the backend's subscriptions; the in-memory backend's was a no-op. It
+now cancels them. `Backend` also gains the optional `events.ContextPublisher` (and `events.PublishVia` to use it), because
+`Publish` has no context and an exporter's deadline stopped at the interface; `eventtransport` publishes through it.
+
+The nested Kafka module had no tests and several defects, found by reading it against kafka-go's source and now
+covered by tests that run against fakes of its reader and writer. It consumed with `ReadMessage`, which commits the
+offset *before* returning, so a message was acknowledged before its handler ran and the handler's error was discarded: a
+crash, a failed commit or a handler error lost the message. Messages are now committed after the handler returns, and
+handler failures, undecodable messages, commit failures and fetch errors reach a new `Config.OnError`. kafka-go flushes
+a partial batch only when `BatchTimeout` expires and defaults it to one second, so every synchronous `Publish` took about
+a second; it defaults to 10 ms here and is configurable, as are `BatchSize`, `CommitInterval` and `StartOffset`. `Close`
+held the backend lock while closing readers over the network, did not wait for running handlers, closed each reader up
+to three times and never removed a cancelled subscription from its list. It now stops subscriptions outside the lock,
+waits up to `ShutdownTimeout` for in-flight handlers (which see their context cancelled), and forgets a subscription as
+soon as it is cancelled. `Reader.Close` cannot return until the fetch in flight does, and kafka-go holds a fetch open
+for `MaxWait`, ten seconds by default, so closing a backend with a live reader took up to ten seconds; `MaxWait` is
+500 ms here and configurable. Measured with the real kafka-go client against an in-memory broker that speaks the Kafka
+protocol: a lone `Publish` went from 1.000 s to 10 ms, and `Close` with one live reader from 8.8 s to 0.18 s. A fetch error no longer spins the consuming goroutine. TLS and SASL are reachable through
+`Config.Dialer` and `Config.Transport`. The private bus the backend builds for itself no longer replaces the process's
+event-bus diagnostic (new `events.Config.DisableDiagnostics`). The nested module's `require` of the base module has to
+move to the release that contains this change.
+
 ### The idle and read-header timeouts now actually run
 
 `Run` passed `WithTicker(true)` to gnet ahead of a `WithOptions`, which replaces the whole option set instead of adding

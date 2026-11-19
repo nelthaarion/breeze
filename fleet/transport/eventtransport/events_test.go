@@ -2,7 +2,9 @@ package eventtransport
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,5 +56,56 @@ func TestPropagationRoundTrip(t *testing.T) {
 	gotTC, gotBag, ok := tr.Extract(carrier)
 	if !ok || gotTC != tc || gotBag["order_id"] != "123" || carrier[fleet.HeaderService] != "gateway" {
 		t.Fatalf("round trip tc=%+v bag=%+v ok=%v carrier=%+v", gotTC, gotBag, ok, carrier)
+	}
+}
+
+// ctxBackend is a Backend that, like a network broker, can take the caller's
+// context. It records which of its two publish methods was used.
+type ctxBackend struct {
+	gotCtx context.Context
+	topic  string
+	plain  atomic.Int64
+}
+
+func (b *ctxBackend) Publish(string, []byte, events.Meta) error { b.plain.Add(1); return nil }
+func (b *ctxBackend) PublishContext(ctx context.Context, topic string, _ []byte, _ events.Meta) error {
+	b.gotCtx, b.topic = ctx, topic
+	return nil
+}
+func (*ctxBackend) Subscribe(string, events.MessageHandler) (func(), error) { return func() {}, nil }
+func (*ctxBackend) Close() error                                            { return nil }
+
+// An exporter's context carries its deadline and cancellation. The transport
+// used to call Backend.Publish, which has no context parameter, so a broker
+// backend never saw either.
+func TestExporterContextReachesAContextAwareBackend(t *testing.T) {
+	type key struct{}
+	ctx := context.WithValue(context.Background(), key{}, "marker")
+	b := &ctxBackend{}
+	tr := New(Config{Backend: b, ServiceName: "orders"})
+
+	span := fleet.Span{TraceID: strings.Repeat("a", 32), SpanID: strings.Repeat("1", 16), Service: "orders"}
+	if err := tr.ExportSpans(ctx, "", []fleet.Span{span}); err != nil {
+		t.Fatal(err)
+	}
+	if b.gotCtx == nil || b.gotCtx.Value(key{}) != "marker" {
+		t.Fatal("the exporter's context did not reach the backend")
+	}
+	if b.topic != DefaultSpansTopic {
+		t.Fatalf("topic=%q, want %q", b.topic, DefaultSpansTopic)
+	}
+	if b.plain.Load() != 0 {
+		t.Fatal("Backend.Publish was used although the backend implements ContextPublisher")
+	}
+}
+
+func TestExportAfterTransportCloseFails(t *testing.T) {
+	tr := New(Config{Bus: events.New(events.Config{DisableDiagnostics: true}), ServiceName: "orders"})
+	if err := tr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	span := fleet.Span{TraceID: strings.Repeat("a", 32), SpanID: strings.Repeat("1", 16), Service: "orders"}
+	if err := tr.ExportSpans(context.Background(), "", []fleet.Span{span}); !errors.Is(err, events.ErrBackendClosed) {
+		t.Fatalf("export after Close: err=%v, want events.ErrBackendClosed", err)
 	}
 }

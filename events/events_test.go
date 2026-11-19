@@ -756,8 +756,9 @@ func TestInspectReportsListeners(t *testing.T) {
 	OnBus(b, orderEvent{}, func(*Context, orderEvent) error { return nil }).
 		Where(func(orderEvent) bool { return true }).Named("filtered")
 
-	EmitBus(b, orderEvent{})
-
+	// Inspect before the emit: a once-listener is removed as soon as it has
+	// fired ("run at most once, then remove automatically"), so listing all
+	// four registrations is only possible while it is still pending.
 	info := Inspect[orderEvent](b)
 	if info.Name != "inspect.me" {
 		t.Errorf("Name = %q, want inspect.me", info.Name)
@@ -773,8 +774,20 @@ func TestInspectReportsListeners(t *testing.T) {
 			t.Errorf("listener %d has Order %d", i, l.Order)
 		}
 	}
+
+	EmitBus(b, orderEvent{})
+
+	info = Inspect[orderEvent](b)
 	if info.Metrics.Dispatches != 1 {
 		t.Errorf("Dispatches = %d, want 1", info.Metrics.Dispatches)
+	}
+	if info.ListenerCount != 3 {
+		t.Errorf("ListenerCount = %d after the emit, want 3 (the once-listener has fired and been removed)", info.ListenerCount)
+	}
+	for _, l := range info.Listeners {
+		if l.Name == "once" {
+			t.Errorf("the spent once-listener is still listed: %+v", l)
+		}
 	}
 }
 

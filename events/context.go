@@ -44,19 +44,27 @@ type Context struct {
 	EventName string
 
 	// CorrelationID ties a dispatch to a wider logical operation (a saga,
-	// a job run, a trace). It is propagated to any event emitted through
-	// this Context via [Context.Emitter].
+	// a job run, a trace).
+	//
+	// The bus never fills it in and does not propagate it: it starts empty
+	// on every dispatch. A [Middleware] may assign it (it runs before the
+	// listeners, and the value is carried into [DispatchResult] and the
+	// recorder), and a listener that emits a follow-up event is responsible
+	// for carrying the identifier forward itself, for instance in the event
+	// value. (An earlier version of this comment promised propagation "via
+	// Context.Emitter"; no such method has ever existed.)
 	CorrelationID string
 
 	// RequestID ties a dispatch to the inbound HTTP request or WebSocket
-	// frame that triggered it.
+	// frame that triggered it. Like CorrelationID it is empty unless a
+	// [Middleware] sets it.
 	RequestID string
 
 	// Ctx is the standard context governing the dispatch. It is never nil
 	// during a dispatch; it defaults to context.Background().
 	Ctx context.Context
 
-	// bus is the owning bus, used to propagate IDs to nested emits.
+	// bus is the owning bus.
 	bus *Bus
 
 	// cancelled is atomic because async listeners may cancel concurrently.
@@ -125,6 +133,10 @@ func (c *Context) release() {
 // the remaining listeners, but Cancel can also be called from middleware
 // or from a nested helper that has no way to return an error.
 func (c *Context) Cancel() { c.cancelled.Store(true) }
+
+// cancelOnce cancels the dispatch and reports whether this call was the one
+// that did, as opposed to finding it already cancelled.
+func (c *Context) cancelOnce() bool { return !c.cancelled.Swap(true) }
 
 // Cancelled reports whether the dispatch has been cancelled, either by
 // [Context.Cancel] or by a listener returning [Stop].

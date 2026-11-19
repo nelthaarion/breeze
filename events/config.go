@@ -170,6 +170,15 @@ type Config struct {
 	// RecorderSize is the recorder's ring-buffer capacity. Defaults to
 	// [DefaultRecorderSize].
 	RecorderSize int
+
+	// DisableDiagnostics stops [New] from registering the bus as the
+	// process's event-bus diagnostic probe. By default every new bus
+	// replaces the previously registered one, which is right for the bus an
+	// application actually runs on and wrong for a private bus — a
+	// library's internal bus, a per-tenant bus, a test double — that would
+	// otherwise take over the report without anyone using it. Set it for
+	// those. [RegisterDiagnostics] can still publish such a bus explicitly.
+	DisableDiagnostics bool
 }
 
 // DefaultRecorderSize is the recorder ring-buffer capacity used when

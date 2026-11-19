@@ -131,12 +131,24 @@ func (l *listener[T]) clone() *listener[T] {
 //
 // Because id is unique the ordering is total, which means an unstable
 // sort is sufficient and the result is deterministic.
+//
+// It compares and returns -1/0/1 rather than subtracting: priorities are
+// documented as "any int", and b.priority - a.priority overflows for extreme
+// values (math.MaxInt against math.MinInt) and returns the wrong sign. The
+// comparisons are spelled out instead of calling cmp.Compare because this is
+// the sort's inner loop and the three generic calls were measurably slower.
 func compareListeners[T any](a, b *listener[T]) int {
 	if a.phase != b.phase {
-		return int(a.phase) - int(b.phase)
+		if a.phase < b.phase {
+			return -1
+		}
+		return 1
 	}
 	if a.priority != b.priority {
-		return b.priority - a.priority
+		if a.priority > b.priority { // higher priority runs first
+			return -1
+		}
+		return 1
 	}
 	switch {
 	case a.id < b.id:

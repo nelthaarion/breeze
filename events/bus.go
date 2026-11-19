@@ -19,6 +19,7 @@ type channelHandle interface {
 	describe() []ListenerInfo
 	clearAll()
 	pruneFired()
+	removeIDs(ids []uint64)
 	remove(id uint64) bool
 	has(id uint64) bool
 }
@@ -76,8 +77,14 @@ type Bus struct {
 	// single atomic load.
 	middleware atomic.Pointer[[]Middleware]
 
-	pool     *workerPool
-	poolOnce sync.Once
+	// pool is the lazily started async worker pool. It is an atomic
+	// pointer, not a plain field guarded by a sync.Once, because the
+	// diagnostics probe ([Bus.PoolStats]) and [Bus.Close] read it from other
+	// goroutines while the first async emit may be creating it. poolMu
+	// serialises creation against Close, so a pool can never be started
+	// after Close has looked for one.
+	pool   atomic.Pointer[workerPool]
+	poolMu sync.Mutex
 
 	recorder *recorder
 
@@ -119,7 +126,9 @@ func New(cfg ...Config) *Bus {
 
 	// Publish this bus as the process's event-bus diagnostic. One registry
 	// append, at construction; nothing is added to the dispatch path.
-	RegisterDiagnostics(b)
+	if !c.DisableDiagnostics {
+		RegisterDiagnostics(b)
+	}
 	return b
 }
 
@@ -218,24 +227,41 @@ func (b *Bus) ClearMiddleware() {
 // The pool is lazy so that a bus configured for [AsyncWorkerPool] but
 // never used asynchronously does not hold idle goroutines — which matters
 // for the default bus, present in every process whether or not it emits.
+//
+// It returns nil once the bus is closed: a pool started after Close would
+// never be shut down.
 func (b *Bus) workers() *workerPool {
-	b.poolOnce.Do(func() {
-		b.pool = newWorkerPool(b.cfg.Workers, b.cfg.QueueSize, b.cfg.AsyncOverflow)
-	})
-	return b.pool
+	if p := b.pool.Load(); p != nil {
+		return p
+	}
+	b.poolMu.Lock()
+	defer b.poolMu.Unlock()
+	if p := b.pool.Load(); p != nil {
+		return p
+	}
+	if b.closed.Load() {
+		return nil
+	}
+	p := newWorkerPool(b.cfg.Workers, b.cfg.QueueSize, b.cfg.AsyncOverflow)
+	b.pool.Store(p)
+	return p
 }
 
 // Name assigns a stable display name to an event type. Names surface in
 // the inspector, the recorder and the dashboard, and let operators refer
 // to an event without knowing its Go type.
 //
-// Naming a type twice replaces the previous name.
+// Naming a type twice replaces the previous name. Names are meant to be
+// unique: if two types are given the same name, name-based lookups such as
+// [Bus.HasEvent] resolve to the one named last.
 func Name[T any](b *Bus, name string) {
 	e := entryFor[T](b)
 	key := e.typ
 
 	b.mu.Lock()
-	if prev := e.name.Load(); prev != nil {
+	if prev := e.name.Load(); prev != nil && b.byName[*prev] == key {
+		// Only drop the old mapping if it is still ours; another type may
+		// have been given that name since.
 		delete(b.byName, *prev)
 	}
 	e.name.Store(&name)
@@ -342,8 +368,14 @@ func (b *Bus) Close() {
 	if !b.closed.CompareAndSwap(false, true) {
 		return
 	}
-	if b.pool != nil {
-		b.pool.close()
+	// Taking poolMu waits out a pool that is being created right now and
+	// guarantees that any later workers() call sees closed and starts
+	// nothing, so the pool read here is the last one there will ever be.
+	b.poolMu.Lock()
+	p := b.pool.Load()
+	b.poolMu.Unlock()
+	if p != nil {
+		p.close()
 	}
 }
 

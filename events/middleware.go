@@ -9,6 +9,18 @@ type Next func() error
 // once per listener, which makes it the right place for concerns that
 // describe the event as a whole: logging, tracing, recovery, metrics.
 //
+// Middleware wraps synchronous dispatch only ([EmitBus], [EmitCtxBus] and the
+// package-level Emit and EmitCtx). Asynchronous dispatch ([EmitAsyncBus],
+// [EmitAsyncWaitBus]) returns once its listeners are scheduled, so there is no
+// completed dispatch to wrap: it does not run the chain, and an async emit of an
+// event with no listeners is not reported to the [Observer] either. Concerns
+// that must see every event, async included, belong in an [Observer].
+//
+// A middleware is plugin code like a listener and is contained like one: a
+// panic is recovered according to [Config.PanicMode], reported to
+// [Config.OnPanic], and — since the dispatch cannot continue — returned from
+// Emit as a [*PanicError].
+//
 //	bus.Use(func(ctx *events.Context, next events.Next) error {
 //		start := time.Now()
 //		err := next()
@@ -39,7 +51,11 @@ type mwRunner struct {
 	mw    []Middleware
 	ctx   *Context
 	final func() error
-	i     int
+	// nextFn is r.next bound once. Evaluating the method value r.next at
+	// each call allocates a fresh closure, so a chain of n middleware cost n
+	// of them per dispatch.
+	nextFn func() error
+	i      int
 }
 
 // next runs the middleware at the current index, or the terminal function
@@ -54,7 +70,7 @@ func (r *mwRunner) next() error {
 	}
 	m := r.mw[r.i]
 	r.i++
-	return m(r.ctx, r.next)
+	return m(r.ctx, r.nextFn)
 }
 
 // runChain executes final wrapped in mw. It calls final directly when no
@@ -64,5 +80,6 @@ func runChain(mw []Middleware, ctx *Context, final func() error) error {
 		return final()
 	}
 	r := &mwRunner{mw: mw, ctx: ctx, final: final}
+	r.nextFn = r.next
 	return r.next()
 }

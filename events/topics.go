@@ -42,7 +42,10 @@ package events
 // is a property the tests pin, not an accident.
 
 import (
+	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 )
 
 // ErrEmptyTopic is returned by [Publish] and its variants when the topic is
@@ -52,6 +55,16 @@ import (
 // constant — and silently publishing to a topic nobody can subscribe to would
 // hide it. Failing loudly costs one comparison.
 var ErrEmptyTopic = errors.New("events: topic is empty")
+
+// ErrBackendClosed is returned by a [Backend] once it has been closed, by both
+// Publish and Subscribe.
+var ErrBackendClosed = errors.New("events: backend is closed")
+
+// ErrNilHandler is returned by [Backend.Subscribe] when the handler is nil. A
+// nil handler can never do anything, and a backend that accepted it would
+// either fail on the first message or silently consume messages from a broker
+// that nobody is handling.
+var ErrNilHandler = errors.New("events: handler is nil")
 
 // Meta carries string key/value metadata alongside a published payload.
 //
@@ -136,6 +149,10 @@ type RawMessage struct {
 //
 // The Context is the same one typed listeners receive, so cancellation,
 // per-dispatch metadata and the deadline all behave identically.
+//
+// The message's Payload and Meta are borrowed: a handler that keeps either
+// beyond its return must copy it. For a network [Backend] they may be backed
+// by a read buffer that is reused for the next message.
 type MessageHandler func(ctx *Context, msg RawMessage) error
 
 // Publish dispatches a message on the default bus synchronously.
@@ -203,12 +220,20 @@ func Subscribe(topic string, fn MessageHandler) *Subscription[RawMessage] {
 // Since [Publish] rejects an empty topic, subscribing to "" yields a
 // subscription that can never fire. That is intentional: a missing topic
 // silently receiving everything would be far worse than receiving nothing.
+//
+// A nil fn registers an inert subscription, as a nil typed handler does.
+//
+// The topic filter and the name are installed as part of the registration
+// itself, not chained on afterwards. A listener that is published first and
+// filtered second is, for an instant, a listener for every topic — and a
+// subscription made while traffic is flowing would receive some of it.
 func SubscribeBus(b *Bus, topic string, fn MessageHandler) *Subscription[RawMessage] {
-	return OnBus(b, RawMessage{}, func(ctx *Context, msg RawMessage) error {
-		return fn(ctx, msg)
-	}).Where(func(msg RawMessage) bool {
-		return msg.Topic == topic
-	}).Named("topic:" + topic)
+	// A conversion, not a wrapper closure: MessageHandler and
+	// Handler[RawMessage] have the same underlying type, so delivery does not
+	// pay for an extra indirect call.
+	return registerWith(b, phaseNormal, false, Handler[RawMessage](fn),
+		func(msg RawMessage) bool { return msg.Topic == topic },
+		"topic:"+topic)
 }
 
 // Backend is the seam between topic-based publishing and a transport.
@@ -222,12 +247,14 @@ func SubscribeBus(b *Bus, topic string, fn MessageHandler) *Subscription[RawMess
 // An implementation must be safe for concurrent use by multiple goroutines.
 type Backend interface {
 	// Publish sends payload to topic. Whether it blocks until delivery is
-	// implementation-defined; the in-process backend does not.
+	// implementation-defined; the in-process backend does not. After Close it
+	// returns [ErrBackendClosed].
 	Publish(topic string, payload []byte, meta Meta) error
 
 	// Subscribe registers fn for topic and returns a function that cancels
 	// the subscription. The cancel function must be safe to call more than
-	// once.
+	// once. It returns [ErrEmptyTopic] for an empty topic, [ErrNilHandler]
+	// for a nil handler and [ErrBackendClosed] after Close.
 	Subscribe(topic string, fn MessageHandler) (cancel func(), err error)
 
 	// Close releases the backend's resources. Subscriptions made through it
@@ -235,9 +262,40 @@ type Backend interface {
 	Close() error
 }
 
+// ContextPublisher is an optional extension of [Backend] for transports that
+// can honour a deadline or cancellation while publishing — which is every
+// network broker. [Backend.Publish] has no context parameter, so a caller's
+// deadline was lost on its way to the wire. Use [PublishVia] to take advantage
+// of it without caring whether a given backend implements it.
+type ContextPublisher interface {
+	PublishContext(ctx context.Context, topic string, payload []byte, meta Meta) error
+}
+
+// PublishVia publishes through b, passing ctx along when b implements
+// [ContextPublisher] and otherwise checking it once before falling back to
+// [Backend.Publish].
+func PublishVia(ctx context.Context, b Backend, topic string, payload []byte, meta Meta) error {
+	if cp, ok := b.(ContextPublisher); ok {
+		return cp.PublishContext(ctx, topic, payload, meta)
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	return b.Publish(topic, payload, meta)
+}
+
 // inMemoryBackend implements [Backend] over a *Bus.
 type inMemoryBackend struct {
 	bus *Bus
+
+	closed atomic.Bool
+
+	// mu guards subs and orders Subscribe against Close, so a subscription
+	// cannot slip in after Close has collected the ones to cancel.
+	mu   sync.Mutex
+	subs map[uint64]*Subscription[RawMessage]
 }
 
 // NewInMemoryBackend returns a [Backend] that delivers messages in-process via
@@ -258,20 +316,72 @@ func NewInMemoryBackend(bus *Bus) Backend {
 // one from the caller's point of view, and it means the payload is copied — see
 // [PublishAsyncBus].
 func (m *inMemoryBackend) Publish(topic string, payload []byte, meta Meta) error {
+	if m.closed.Load() {
+		return ErrBackendClosed
+	}
 	return PublishAsyncBus(m.bus, topic, payload, meta)
+}
+
+// PublishContext implements [ContextPublisher]. Delivery is a function call
+// that never blocks the publisher, so there is nothing to interrupt: the
+// context only decides whether to publish at all.
+func (m *inMemoryBackend) PublishContext(ctx context.Context, topic string, payload []byte, meta Meta) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	return m.Publish(topic, payload, meta)
 }
 
 func (m *inMemoryBackend) Subscribe(topic string, fn MessageHandler) (func(), error) {
 	if topic == "" {
 		return nil, ErrEmptyTopic
 	}
+	if fn == nil {
+		return nil, ErrNilHandler
+	}
+	m.mu.Lock()
+	if m.closed.Load() {
+		m.mu.Unlock()
+		return nil, ErrBackendClosed
+	}
 	sub := SubscribeBus(m.bus, topic, fn)
-	// Subscription.Unsubscribe is already idempotent — it guards on a
-	// compare-and-swap — so it satisfies Backend's contract directly.
-	return sub.Unsubscribe, nil
+	if m.subs == nil {
+		m.subs = make(map[uint64]*Subscription[RawMessage])
+	}
+	m.subs[sub.ID()] = sub
+	m.mu.Unlock()
+
+	// Unsubscribe is idempotent (it guards on a compare-and-swap) and so is
+	// the delete, which satisfies Backend's "safe to call more than once".
+	// Forgetting the subscription here keeps a backend that churns
+	// subscriptions from accumulating them until Close.
+	return func() {
+		sub.Unsubscribe()
+		m.mu.Lock()
+		delete(m.subs, sub.ID())
+		m.mu.Unlock()
+	}, nil
 }
 
-// Close is a no-op beyond satisfying the interface: this backend owns no
-// resources of its own, and closing the bus is the caller's decision, not
-// something a backend handed a shared bus should do on its behalf.
-func (m *inMemoryBackend) Close() error { return nil }
+// Close cancels every subscription made through this backend and makes later
+// Publish and Subscribe calls fail with [ErrBackendClosed], as [Backend]
+// requires. It does not close the bus: that is shared, and closing it is the
+// caller's decision, not something a backend handed a shared bus should do on
+// its behalf.
+func (m *inMemoryBackend) Close() error {
+	m.mu.Lock()
+	if m.closed.Swap(true) {
+		m.mu.Unlock()
+		return nil
+	}
+	subs := m.subs
+	m.subs = nil
+	m.mu.Unlock()
+
+	for _, s := range subs {
+		s.Unsubscribe()
+	}
+	return nil
+}

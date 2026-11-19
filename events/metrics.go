@@ -23,8 +23,11 @@ type eventStats struct {
 	// dispatches it yields the mean without storing a history.
 	totalNanos atomic.Uint64
 
-	// minNanos and maxNanos bracket the observed durations. minNanos
-	// starts at zero, which the first observation treats as "unset".
+	// minNanos and maxNanos bracket the observed durations. minNanos holds
+	// the minimum plus one, so that zero can mean "no sample yet" without
+	// also swallowing a genuine zero-length sample: on a coarse clock a fast
+	// dispatch measures 0, and storing it as 0 made the next sample look like
+	// the first.
 	minNanos atomic.Uint64
 	maxNanos atomic.Uint64
 
@@ -34,6 +37,9 @@ type eventStats struct {
 
 // observe records one completed dispatch.
 func (s *eventStats) observe(d time.Duration, start time.Time) {
+	if d < 0 {
+		d = 0
+	}
 	n := uint64(d)
 	s.dispatches.Add(1)
 	s.totalNanos.Add(n)
@@ -49,11 +55,11 @@ func (s *eventStats) observe(d time.Duration, start time.Time) {
 		}
 	}
 	for {
-		cur := s.minNanos.Load()
-		if cur != 0 && n >= cur {
+		cur := s.minNanos.Load() // minimum+1; 0 means unset
+		if cur != 0 && n+1 >= cur {
 			break
 		}
-		if s.minNanos.CompareAndSwap(cur, n) {
+		if s.minNanos.CompareAndSwap(cur, n+1) {
 			break
 		}
 	}
@@ -71,8 +77,10 @@ func (s *eventStats) snapshot() Metrics {
 		Stopped:       s.stopped.Load(),
 		Filtered:      s.filtered.Load(),
 		TotalDuration: total,
-		MinDuration:   time.Duration(s.minNanos.Load()),
 		MaxDuration:   time.Duration(s.maxNanos.Load()),
+	}
+	if mn := s.minNanos.Load(); mn != 0 {
+		m.MinDuration = time.Duration(mn - 1)
 	}
 	if dispatches > 0 {
 		m.AvgDuration = total / time.Duration(dispatches)
@@ -95,8 +103,11 @@ type Metrics struct {
 	Failures uint64
 	// Panics is the number of recovered panics.
 	Panics uint64
-	// Stopped is the number of dispatches halted early by [Stop] or
-	// [Context.Cancel].
+	// Stopped is the number of dispatches halted early by [Stop],
+	// [Context.Cancel] or, unless [Config.ContinueOnError] is set, a listener
+	// error. For an async dispatch only a listener returning [Stop] is
+	// counted, once per dispatch however many listeners return it: whether
+	// the dispatch was cancelled is not settled when scheduling finishes.
 	Stopped uint64
 	// Filtered is the number of listener invocations skipped by a
 	// [Filter].
@@ -116,7 +127,19 @@ type Metrics struct {
 
 // add merges other into m. It is used to total per-event metrics across
 // the bus: counters sum and the duration bounds widen to cover both.
+//
+// An event that has never dispatched contributes nothing to the duration
+// bounds, and a bound of zero is a real value, not "unset": whether a bound
+// means anything is decided by Dispatches.
 func (m *Metrics) add(other Metrics) {
+	if other.Dispatches > 0 {
+		if m.Dispatches == 0 {
+			m.MinDuration, m.MaxDuration = other.MinDuration, other.MaxDuration
+		} else {
+			m.MinDuration = min(m.MinDuration, other.MinDuration)
+			m.MaxDuration = max(m.MaxDuration, other.MaxDuration)
+		}
+	}
 	m.Dispatches += other.Dispatches
 	m.Listeners += other.Listeners
 	m.Failures += other.Failures
@@ -125,12 +148,6 @@ func (m *Metrics) add(other Metrics) {
 	m.Filtered += other.Filtered
 	m.TotalDuration += other.TotalDuration
 
-	if other.MaxDuration > m.MaxDuration {
-		m.MaxDuration = other.MaxDuration
-	}
-	if m.MinDuration == 0 || (other.MinDuration != 0 && other.MinDuration < m.MinDuration) {
-		m.MinDuration = other.MinDuration
-	}
 	if other.LastDispatch.After(m.LastDispatch) {
 		m.LastDispatch = other.LastDispatch
 	}

@@ -85,7 +85,10 @@ func (t *Transport) publish(ctx context.Context, topic string, value any) error 
 	if t.token != "" {
 		meta[MetaSignature] = Sign(t.token, payload)
 	}
-	return t.backend.Publish(topic, payload, meta)
+	// PublishVia hands ctx to a backend that can honour it (a network broker
+	// must, or an exporter's deadline is lost on its way to the wire) and
+	// falls back to Backend.Publish for one that cannot.
+	return events.PublishVia(ctx, t.backend, topic, payload, meta)
 }
 
 func Sign(token string, payload []byte) string {

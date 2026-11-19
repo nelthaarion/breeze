@@ -82,13 +82,37 @@ func (s *Subscription[T]) Unsubscribe() {
 }
 
 // Active reports whether the listener is still registered.
-func (s *Subscription[T]) Active() bool { return s.active.Load() }
+//
+// It is false after Unsubscribe, but also after the listener was removed some
+// other way: [Clear], [Bus.Reset], [OffBus], or — for a once-listener — having
+// fired.
+func (s *Subscription[T]) Active() bool {
+	return s.active.Load() && s.ch.has(s.id)
+}
 
 // register is the single implementation behind On, Once, Before and After.
 func register[T any](b *Bus, ph phase, once bool, fn Handler[T]) *Subscription[T] {
+	return registerWith(b, ph, once, fn, nil, "")
+}
+
+// registerWith is register with a filter and a display name installed
+// *before* the listener is published.
+//
+// Chaining Where or Named onto a finished registration leaves a window in
+// which the listener is live without them. For a type-wide listener that is a
+// documented, startup-only hazard; for a topic subscription it meant receiving
+// messages for every topic. Callers that need the listener to be correct from
+// the first dispatch use this. An empty name keeps the name derived from fn.
+func registerWith[T any](b *Bus, ph phase, once bool, fn Handler[T], filter Filter[T], name string) *Subscription[T] {
 	ch := channelFor[T](b)
 	sub := &Subscription[T]{bus: b, ch: ch, id: b.nextListenerID()}
 	sub.active.Store(true)
+
+	// The name comes from the handler as given: a nil handler is named
+	// "<nil>" in the inspector, which is what the comment below promises.
+	if name == "" {
+		name = handlerName(fn)
+	}
 
 	// A nil handler is accepted and registered as a no-op rather than
 	// panicking: a plugin passing nil by mistake should not take the
@@ -100,7 +124,8 @@ func register[T any](b *Bus, ph phase, once bool, fn Handler[T]) *Subscription[T
 
 	l := &listener[T]{
 		fn:       fn,
-		name:     handlerName(fn),
+		filter:   filter,
+		name:     name,
 		id:       sub.id,
 		priority: PriorityNormal,
 		phase:    ph,

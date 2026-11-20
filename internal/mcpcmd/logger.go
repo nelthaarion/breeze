@@ -25,6 +25,7 @@ package mcpcmd
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -58,9 +59,17 @@ type stderrLogger struct {
 //	breeze-mcp: refused 401 missing or invalid bearer token from 10.1.2.3:53551
 //
 // Deliberately one line, space-separated, key=value where a key is useful: an operator
-// greps it, and a line that wraps is a line that greps badly. Nothing is escaped because
-// nothing here needs escaping — every component is a constant from internal/mcp, a
-// registered tool name, a number, or a peer address.
+// greps it, and a line that wraps is a line that greps badly.
+//
+// # What is escaped, and why
+//
+// Not everything in an event is a constant. The tool name of an *unknown* tool, and the
+// argument names of any call, are whatever the caller sent; the peer address is the
+// transport's. A caller holding the token can put a newline or a terminal escape sequence
+// in a tool name and, written verbatim, forge whole lines in a log an operator reads as
+// evidence ("refused 401 ... from 10.0.0.1"), or repaint the terminal tailing it. Those
+// fields go through text(), which leaves an ordinary name untouched and quotes anything
+// else, so one event is always exactly one line and the line says what the caller sent.
 func (l *stderrLogger) LogEvent(ev mcp.Event) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -68,20 +77,20 @@ func (l *stderrLogger) LogEvent(ev mcp.Event) {
 	switch ev.Kind {
 	case mcp.EventToolCall:
 		fmt.Fprintf(l.out, "%s: tool %s %s %s%s\n",
-			l.name, ev.Tool, ev.Outcome, duration(ev.Duration), args(ev.ArgNames))
+			l.name, text(ev.Tool), ev.Outcome, duration(ev.Duration), args(ev.ArgNames))
 	case mcp.EventToolPanic:
 		// Named as a panic rather than an error, because the two want different
 		// responses: an error is usually the project's, a panic is this server's.
 		fmt.Fprintf(l.out, "%s: tool %s PANICKED %s%s\n",
-			l.name, ev.Tool, duration(ev.Duration), args(ev.ArgNames))
+			l.name, text(ev.Tool), duration(ev.Duration), args(ev.ArgNames))
 	case mcp.EventToolUnknown:
-		fmt.Fprintf(l.out, "%s: tool %s unknown\n", l.name, ev.Tool)
+		fmt.Fprintf(l.out, "%s: tool %s unknown\n", l.name, text(ev.Tool))
 	case mcp.EventToolRefused:
-		fmt.Fprintf(l.out, "%s: tool %s refused (needs %s capability)\n", l.name, ev.Tool, ev.Reason)
+		fmt.Fprintf(l.out, "%s: tool %s refused (needs %s capability)\n", l.name, text(ev.Tool), text(ev.Reason))
 	case mcp.EventHandshake:
 		fmt.Fprintf(l.out, "%s: session initialized\n", l.name)
 	case mcp.EventTransportRefusal:
-		fmt.Fprintf(l.out, "%s: refused %d %s%s\n", l.name, ev.Status, ev.Reason, from(ev.Remote))
+		fmt.Fprintf(l.out, "%s: refused %d %s%s\n", l.name, ev.Status, text(ev.Reason), from(ev.Remote))
 	}
 }
 
@@ -110,7 +119,64 @@ func args(names []string) string {
 	if len(names) == 0 {
 		return ""
 	}
-	return " args=" + strings.Join(names, ",")
+
+	// A caller chooses how many argument names it sends, so the line is bounded: a log
+	// line a megabyte long is a way to bury everything around it.
+	const maxNames = 32
+	shown := names
+	if len(shown) > maxNames {
+		shown = shown[:maxNames]
+	}
+	quoted := make([]string, len(shown))
+	for i, name := range shown {
+		quoted[i] = text(name)
+	}
+	out := " args=" + strings.Join(quoted, ",")
+	if extra := len(names) - len(shown); extra > 0 {
+		out += ",+" + strconv.Itoa(extra) + "_more"
+	}
+	return out
+}
+
+// maxLogField bounds one caller-controlled field. Real tool and argument names are a few
+// dozen characters; this is generous to those and hostile to a name built to flood a line.
+const maxLogField = 80
+
+// text renders a field that may have come from a caller so that it cannot break the line.
+//
+// A value made only of characters that appear in real tool names, argument names and peer
+// addresses is returned as it is — the common case costs one scan and changes nothing an
+// operator greps for. Anything else, including a control character, a space, a non-UTF-8
+// byte or an over-long value, comes back as a quoted ASCII string with every unusual byte
+// written as an escape, so it is visibly "what was sent" and not a forged field.
+func text(s string) string {
+	if len(s) <= maxLogField && isPlain(s) {
+		return s
+	}
+	truncated := len(s) > maxLogField
+	if truncated {
+		s = s[:maxLogField]
+	}
+	quoted := strconv.QuoteToASCII(s)
+	if truncated {
+		quoted = quoted[:len(quoted)-1] + `..."`
+	}
+	return quoted
+}
+
+// isPlain reports whether s consists only of characters found in tool names, argument
+// names and network addresses.
+func isPlain(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '_', c == '-', c == '.', c == ':', c == '/', c == '@', c == '[', c == ']', c == '+':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // from renders a peer address when one is known.
@@ -118,5 +184,5 @@ func from(remote string) string {
 	if remote == "" {
 		return ""
 	}
-	return " from " + remote
+	return " from " + text(remote)
 }

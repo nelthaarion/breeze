@@ -315,6 +315,53 @@ their own test. `generate view --views` was found unguarded by it: that flag bot
 the HTML template and was embedded in the generated `router.View` call, so the running
 application would have read templates from outside the project as well.
 
+### Links inside a project
+
+The workspace check resolves the directory a tool is pointed at. It cannot see what is
+*inside* that directory, and a project is not necessarily trusted: a cloned repository can
+ship `internal -> /somewhere/else` or `llms.txt -> ~/.bashrc`, and a write below either
+follows it. So the writes are checked too:
+
+- **A commit** (`breeze_commit_change_set`) refuses a file whose directory resolves outside
+  the project, not only a file that is itself a link. `os.Lstat` on the final path follows
+  every directory on the way, so the earlier check looked only at the last component.
+- **`.breeze/` history** and **`llms.txt` / `llms-full.txt`** are written only after the same
+  check. `generate_llms_txt` reports the file it declined to write in its `notes` and still
+  writes the other one.
+- **A generator** runs in this process and writes with ordinary file calls, so there is no
+  seam to check each write at. When a workspace is configured and the project has a
+  `go.mod`, the tree is searched once, before the generator runs, for a link that leads
+  outside both the project and the workspace; if there is one, nothing runs and the error
+  names it. `.git`, `node_modules` and `vendor` are not searched. A link that stays inside
+  the project or the workspace is fine, and with no workspace configured nothing is searched.
+- **`breeze_new`** refuses a project directory that is already a link leading out.
+
+`begin_change_set` also refuses to copy a tree of more than 100,000 files or 512 MiB. It
+copies the whole project into the temp directory, up to 32 sets at once, and pointing
+`project_path` at a home directory would otherwise fill the disk.
+
+### What a command may inherit and hold
+
+`breeze_verify_project`, `breeze_migrate` and the Docker tools run things this server does
+not control — a project's tests, a Dockerfile's build steps. So:
+
+- **The control token is not in a child's environment.** A project's tests are arbitrary
+  code, often written by the agent that asked for them to run; with a token scoped to
+  `verification` and nothing else, `os.Getenv("BREEZE_MCP_TOKEN")` in a test would otherwise
+  be enough to read the credential. Everything else is inherited unchanged, including
+  `BREEZE_DATABASE_URL`, which `breeze_migrate` needs.
+- **Output is bounded.** The first 2 MiB and last 6 MiB of a command's output are kept, with a
+  note where the middle was dropped — the ends are where a build's first errors and a test
+  run's `FAIL`/`ok` summary are. `CombinedOutput` grew without limit.
+- **A timeout kills the whole process group**, and the wait for output is bounded. `go test`
+  runs the test binary as a grandchild that holds the output pipe; killing only `go` left the
+  caller waiting on it, so a hung test turned the timeout meant to bound it into a call that
+  never returned.
+- **At most `max(4, NumCPU)` commands run at once.** Over HTTP each request has its own
+  goroutine, so a hundred concurrent `breeze_verify_project` calls used to start a hundred
+  `go test` runs. Extra calls queue, and report that the server is busy if none finishes in
+  time.
+
 ### What a provisioned container may reach
 
 `provision_service` starts a second `breeze-mcp` inside each container it creates. That
@@ -522,6 +569,38 @@ Three things worth knowing about that:
 Like the stdio guide, this block is terminal-only. A container log gets the banner — which
 is fact, and worth keeping — without the instructions, which are not.
 
+`--help`, and the usage printed after a mistyped flag, do not show the token either. The flag
+used to take `$BREEZE_MCP_TOKEN` as its default, and `flag` prints every non-empty default, so
+`breeze-mcp -h` wrote the live token to stderr. The environment is read after parsing now.
+A token given as `--token` is still visible to every user in the process list; prefer the
+environment variable.
+
+### Reaching it from another machine
+
+Binding beyond loopback (`--host 0.0.0.0`) puts the token alone between the network and a
+code generator, and the server is stricter about it than on loopback:
+
+- **The token must be at least 16 characters, with no whitespace or control characters.**
+  A typed `secret` or `devtoken` is refused at startup. Leave the token unset on loopback
+  to have a 256-bit one generated, or make one with `openssl rand -hex 32`. Loopback is
+  exempt: the bind is the first lock there, and short development tokens keep working.
+- **Repeated wrong tokens lock a client out.** Ten failures from one publicly routable address
+  in a minute refuse that address for the next minute — *including* a request that carries the
+  right token, because a lockout that still answered a correct guess would only slow the
+  attacker down. IPv6 clients are counted per /64. Every refusal is logged. Loopback,
+  private, link-local and carrier-grade-NAT (`100.64.0.0/10`, e.g. Tailscale) peers are never
+  counted: they are almost always a reverse proxy or a container bridge standing in front of
+  many clients, and counting there would let anyone who can reach the proxy lock everyone out.
+- **The connection is plain HTTP.** There is no TLS in the server, so the token crosses the
+  network in the clear. Put a TLS-terminating proxy in front of it, or reach it through an SSH
+  tunnel or a VPN; do not expose it on a network you do not control.
+
+Independent of where it listens: `/mcp/features` shares the protocol endpoint's lockout and
+logs its refusals; sessions expire after 24 hours of not being used (the limit was declared but
+never applied); idle keep-alive connections are closed after two minutes; request headers are
+capped at 64 KiB; and a request body must arrive within 60 seconds. There is deliberately no
+server-wide read or write timeout — either would cut a long `breeze_verify_project` short.
+
 ## Seeing what it is doing: `--log`
 
 A server without `--log` prints its banner and then nothing. That is the right
@@ -651,6 +730,15 @@ provision, and they are excluded for two independent reasons:
 `InProcessConfig.AllowWorkspaceTools` restores the excluded set — for a
 development container where the app runs from its own clone and serves no real
 traffic. A deployed app should not set it.
+
+A `ModeGenerator` endpoint is **confined to a workspace**. The standalone binary installs a
+workspace policy before it serves anything; an embedded endpoint has no entrypoint of its
+own, and the installer is not reachable from outside the module, so it used to serve
+`breeze_verify_project`, `breeze_new` and the rest against any path the application's user
+could write. It now comes up confined to `InProcessConfig.Workspace` or, when that is empty,
+to the working directory — never "anywhere". A policy the process already installed, or an
+explicit decision not to confine, is left alone. `Workspace` has no meaning in `ModeAppRuntime`
+(there are no filesystem tools to confine), and setting it there is an error.
 
 ### Scoping an embedded token
 

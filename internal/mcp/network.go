@@ -71,6 +71,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nelthaarion/breeze/v2/internal/authguard"
 )
 
 // DefaultEndpointPath is the MCP endpoint. The specification requires a single
@@ -97,7 +99,32 @@ const maxRequestBytes = 8 << 20
 // which a client recovers from by re-initializing: that is the documented
 // meaning of the 404 this produces.
 const maxSessions = 1024
+
+// maxSessionAge is how long a session may sit unused before it stops being valid.
+//
+// Idle time, not age since creation: every request that presents the id refreshes it, so
+// a client that keeps working is never cut off, and one that went away — or whose id was
+// copied somewhere it should not be — stops being accepted after a day.
 const maxSessionAge = 24 * time.Hour
+
+// bodyReadTimeout bounds how long one request body may take to arrive.
+//
+// There is no server-wide ReadTimeout, deliberately: a tool call can run for minutes, and
+// net/http's own background read on the connection treats an expired read deadline as a
+// reason to cancel the request context — which would abort a long go test mid-run. So the
+// deadline is applied by the handler around the one thing that needs it, reading the body,
+// and lifted again before dispatch.
+const bodyReadTimeout = 60 * time.Second
+
+// idleConnTimeout closes a keep-alive connection that has gone quiet. Without it a peer
+// can complete one request and then hold the connection — and the file descriptor and
+// goroutine behind it — open forever; ReadHeaderTimeout only covers a request that has
+// started.
+const idleConnTimeout = 2 * time.Minute
+
+// maxRequestHeaderBytes bounds the header block of one request. MCP headers are a handful
+// of short fields; net/http's default of 1 MiB is far more than any of them needs.
+const maxRequestHeaderBytes = 64 << 10
 
 const (
 	sessionHeader      = "Mcp-Session-Id"
@@ -171,6 +198,12 @@ type NetworkServer struct {
 
 	origins   map[string]bool
 	anyOrigin bool
+
+	// limiter throttles repeated authentication failures from one address. It is set only
+	// when the listener is reachable beyond loopback: that is where an online guessing
+	// attack can come from, and on loopback a lockout would only hand any local process a
+	// way to shut the legitimate client out of its own control port.
+	limiter *authguard.Limiter
 
 	// mu guards sessions. Sessions are created by initialize and read by every
 	// subsequent request, from whichever net/http goroutine served it.
@@ -277,8 +310,9 @@ func newNetworkServer(handler rpcHandler, cfg NetworkConfig) (*NetworkServer, st
 		host = DefaultNetworkHost
 	}
 	token := strings.TrimSpace(cfg.Token)
+	remoteBind := !isLoopbackBindHost(host)
 	if token == "" {
-		if !isLoopbackBindHost(host) {
+		if remoteBind {
 			return nil, "", errors.New("mcp: an explicit bearer token is required when binding MCP to a non-loopback host")
 		}
 		generated, err := NewToken()
@@ -286,6 +320,12 @@ func newNetworkServer(handler rpcHandler, cfg NetworkConfig) (*NetworkServer, st
 			return nil, "", err
 		}
 		token = generated
+	} else if remoteBind {
+		// A short or whitespace-bearing token is refused here rather than accepted and
+		// guessed: on a listener the network can reach, the token is the only credential.
+		if err := authguard.ValidateRemote(token); err != nil {
+			return nil, "", fmt.Errorf("mcp: refusing to bind to %s: %w", host, err)
+		}
 	}
 
 	ns := &NetworkServer{
@@ -293,6 +333,9 @@ func newNetworkServer(handler rpcHandler, cfg NetworkConfig) (*NetworkServer, st
 		token:    token,
 		origins:  defaultOrigins(cfg.Host, cfg.Port),
 		sessions: make(map[string]time.Time, 8),
+	}
+	if remoteBind {
+		ns.limiter = authguard.NewLimiter()
 	}
 	for _, origin := range cfg.AllowedOrigins {
 		origin = strings.TrimSpace(origin)
@@ -384,8 +427,11 @@ func (n *NetworkServer) Listen(cfg NetworkConfig) error {
 		// there is no write timeout: cutting a verify_project response off
 		// half-way would report a working project as a broken transport. Reads
 		// are bounded instead, which is where an unauthenticated peer can
-		// misbehave.
+		// misbehave: the header phase here, the body phase in serveMCP, and the
+		// time a connection may sit idle between requests.
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       idleConnTimeout,
+		MaxHeaderBytes:    maxRequestHeaderBytes,
 	}
 	return nil
 }

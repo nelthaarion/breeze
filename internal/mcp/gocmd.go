@@ -92,21 +92,38 @@ func runGo(dir string, timeout time.Duration, args ...string) goRun {
 		return run
 	}
 
+	// A caller chooses how many of these run at once, and each is a compiler or a test
+	// binary. Wait for a slot — for as long as the command itself would be allowed to run
+	// — rather than starting every one immediately. The wait is not charged to the
+	// command's own timeout, which starts when it does.
+	waitCtx, stopWaiting := context.WithTimeout(context.Background(), timeout)
+	release, slotErr := acquireChild(waitCtx)
+	stopWaiting()
+	if slotErr != nil {
+		run.StartErr = fmt.Errorf("this server is already running its limit of %d commands and none "+
+			"finished in time; try again once one has", cap(childSlots))
+		return run
+	}
+	defer release()
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
 
-	// GOFLAGS is cleared of anything the parent process set that would change
-	// what is being measured, and the module cache is left alone: a verification
-	// run should behave exactly as the same command typed in that directory.
-	cmd.Env = append(cmd.Environ(), "GO111MODULE=on")
+	// The environment is the server's own — the module cache, GOFLAGS and GOPROXY are
+	// left alone, so a verification run behaves like the same command typed in that
+	// directory — with two differences. The server's own control token is removed,
+	// because the code under test is arbitrary and must not be able to read it; and
+	// GO111MODULE=on is forced. Output is bounded and a timeout kills the whole process
+	// group: see procexec.go.
+	captured := prepareChild(cmd, "GO111MODULE=on")
 
 	started := time.Now()
-	output, runErr := cmd.CombinedOutput()
+	runErr := cmd.Run()
 	run.Duration = time.Since(started)
-	run.Output = string(output)
+	run.Output = captured.String()
 
 	if ctx.Err() != nil {
 		run.TimedOut = true

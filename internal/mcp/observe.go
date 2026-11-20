@@ -179,4 +179,5 @@ const (
 	ReasonSessionMissing   = "no session header on a request that needs one"
 	ReasonSessionUnknown   = "session id is not live"
 	ReasonSessionFailed    = "a session id could not be generated"
+	ReasonAuthThrottled    = "too many failed authentication attempts from this address"
 )

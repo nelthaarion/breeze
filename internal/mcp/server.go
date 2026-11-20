@@ -288,28 +288,7 @@ func (s *Server) handleToolsCall(ctx *rpc.Context) {
 	// Checked here as well as in tools/list because a client may have cached a
 	// listing, or may be calling a name it read in documentation.
 	if !s.scope.AllowsTool(p.Name) {
-		capability, classified := capabilityOf(p.Name)
-		detail := map[string]any{
-			"tool":               p.Name,
-			"refused":            true,
-			"reason":             "outside this token's granted capabilities",
-			"granted":            capabilityNames(s.scope.Granted()),
-			"known":              capabilityNames(KnownCapabilities()),
-			"retry_will_succeed": false,
-		}
-		if classified {
-			detail["requires"] = string(capability)
-		}
-		s.emit(Event{
-			Kind:   EventToolRefused,
-			Tool:   p.Name,
-			Reason: string(capability),
-		})
-		ctx.Result(structuredErrorResult(
-			fmt.Sprintf("%s is outside this token's scope; it requires the %q capability, which this "+
-				"token was not granted. A different token is needed — retrying will not help.",
-				p.Name, capability),
-			detail))
+		ctx.Result(s.scopeRefusal(p.Name))
 		return
 	}
 
@@ -351,6 +330,39 @@ func (s *Server) handleToolsCall(ctx *rpc.Context) {
 	})
 
 	ctx.Result(result)
+}
+
+// scopeRefusal is the answer to a call this server's token may not make, and the record
+// that it was refused.
+//
+// A method of its own, not inline in handleToolsCall, because dispatch is not the only
+// place a tool gets run. breeze_stage_call runs a generator tool by name from inside
+// another tool, which never passes through tools/call — so it has to ask the same
+// question of the same scope and give the same answer, and the way to guarantee that is
+// for both to call this.
+func (s *Server) scopeRefusal(name string) toolCallResult {
+	capability, classified := capabilityOf(name)
+	detail := map[string]any{
+		"tool":               name,
+		"refused":            true,
+		"reason":             "outside this token's granted capabilities",
+		"granted":            capabilityNames(s.scope.Granted()),
+		"known":              capabilityNames(KnownCapabilities()),
+		"retry_will_succeed": false,
+	}
+	if classified {
+		detail["requires"] = string(capability)
+	}
+	s.emit(Event{
+		Kind:   EventToolRefused,
+		Tool:   name,
+		Reason: string(capability),
+	})
+	return structuredErrorResult(
+		fmt.Sprintf("%s is outside this token's scope; it requires the %q capability, which this "+
+			"token was not granted. A different token is needed — retrying will not help.",
+			name, capability),
+		detail)
 }
 
 // decodeArgs unmarshals a tool's arguments.

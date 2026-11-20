@@ -26,6 +26,7 @@ package mcp
 // every transport, so nothing is unreachable — only less convenient to reach by hand.
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/goccy/go-json"
@@ -93,16 +94,18 @@ func (n *NetworkServer) serveFeatures(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if origin := r.Header.Get("Origin"); origin != "" && !n.originAllowed(origin) {
+		// Logged like the protocol endpoint's refusal, and without the Origin, which is
+		// caller-supplied. This endpoint used to refuse silently, so a probe of it left
+		// no trace at all.
+		n.refuse(http.StatusForbidden, ReasonOriginRejected, r.RemoteAddr)
 		writeRPCError(w, http.StatusForbidden,
-			"Origin "+origin+" is not allowed; pass --allow-origin to permit it")
+			fmt.Sprintf("Origin %q is not allowed; pass --allow-origin to permit it", origin))
 		return
 	}
 
-	if !n.authorised(r) {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="breeze-mcp"`)
-		writeRPCError(w, http.StatusUnauthorized,
-			"this endpoint requires the same bearer token as "+DefaultEndpointPath+
-				": send Authorization: Bearer <token>")
+	if !n.authenticate(w, r,
+		"this endpoint requires the same bearer token as "+DefaultEndpointPath+
+			": send Authorization: Bearer <token>") {
 		return
 	}
 

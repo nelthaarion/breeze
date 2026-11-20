@@ -197,6 +197,16 @@ type InProcessConfig struct {
 	// than tools that work.
 	AllowWorkspaceTools bool
 
+	// Workspace is the set of directories a ModeGenerator endpoint's filesystem tools
+	// may touch. A path outside every one is refused, with symlinks resolved first.
+	//
+	// Empty means the process's working directory, never "anywhere": this endpoint is
+	// reached over a network listener, and the generators it serves write files and run
+	// `go test`, so an unconfined one would let the token's holder do that in any
+	// directory the application's user can write. Setting it in ModeAppRuntime is an
+	// error, because that mode registers no filesystem tools to confine.
+	Workspace []string
+
 	// Scope narrows what this endpoint's token may do. The zero value grants every
 	// capability, so an existing embed is unaffected.
 	//
@@ -275,6 +285,7 @@ func StartInProcess(app *breeze.Breeze, cfg InProcessConfig) (*Server, string, e
 		Token:               cfg.Token,
 		AllowedOrigins:      cfg.AllowedOrigins,
 		AllowWorkspaceTools: cfg.AllowWorkspaceTools,
+		Workspace:           cfg.Workspace,
 		Scope:               cfg.Scope,
 	})
 	if err != nil {

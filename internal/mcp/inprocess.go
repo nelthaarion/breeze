@@ -122,6 +122,17 @@ type InProcessConfig struct {
 	// comment. Almost every deployed application should leave this false.
 	AllowWorkspaceTools bool
 
+	// Workspace is the set of directories a generator-mode endpoint's filesystem tools
+	// may touch; a path outside every one is refused, symlinks resolved first.
+	//
+	// Empty means the process's working directory — never "anywhere". An embedded
+	// endpoint is reached over a network listener, and the generators it serves write
+	// files and run `go test`; leaving them unconfined would let whoever holds the token
+	// do that in any directory the application's user can write. It has no meaning in
+	// app-runtime mode, which registers no filesystem tools, and setting it there is an
+	// error rather than a silent no-op.
+	Workspace []string
+
 	// Scope is what the endpoint's token may do. The zero value is unscoped, so an
 	// existing embed keeps behaving exactly as it did.
 	//
@@ -177,6 +188,18 @@ func NewInProcess(version string, cfg InProcessConfig) (*NetworkServer, string, 
 		return nil, "", fmt.Errorf("mcp: AllowWorkspaceTools cannot be set on a %q server; "+
 			"the workspace tools are not registered in this mode at all. Use Mode: %q if this "+
 			"process really does own a source tree", ModeAppRuntime, ModeGenerator)
+	}
+
+	// Confinement is settled before the listener exists, so no request can ever reach a
+	// filesystem tool that has no jail. Only a generator-mode embed has such tools.
+	if cfg.Mode == ModeGenerator {
+		if err := confineEmbedded(cfg.Workspace); err != nil {
+			return nil, "", err
+		}
+	} else if len(cfg.Workspace) > 0 {
+		return nil, "", fmt.Errorf("mcp: Workspace was set on a %q server, which registers no filesystem "+
+			"tools; there is nothing to confine. Use Mode: %q if this process owns a source tree",
+			cfg.Mode, ModeGenerator)
 	}
 
 	server, token, err := NewNetworkServer(inner, cfg.network())

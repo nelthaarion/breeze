@@ -1,17 +1,20 @@
 package breeze
 
 import (
-	"crypto/subtle"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-json"
 
+	"github.com/nelthaarion/breeze/v2/internal/authguard"
 	"github.com/nelthaarion/breeze/v2/rpc"
 )
 
@@ -31,10 +34,26 @@ const (
 type autoMCPHTTPHandler struct {
 	rpc   *rpc.Server
 	token string
+
+	// limiter throttles repeated authentication failures from one address. It is set only
+	// when the listener is reachable beyond loopback — see EnableMCPWithToken — because
+	// that is where an online guessing attack can come from, and on loopback a lockout
+	// would only let any local process shut the application's own agent out.
+	limiter *authguard.Limiter
 }
 
 func newAutoMCPHTTPHandler(rpcSrv *rpc.Server, token string) http.Handler {
+	return newAutoMCPHTTPHandlerFor(rpcSrv, token, false)
+}
+
+// newAutoMCPHTTPHandlerFor is newAutoMCPHTTPHandler for a listener that may be reachable
+// beyond loopback: with throttle set, a client that keeps presenting wrong tokens is
+// locked out for a while.
+func newAutoMCPHTTPHandlerFor(rpcSrv *rpc.Server, token string, throttle bool) http.Handler {
 	h := &autoMCPHTTPHandler{rpc: rpcSrv, token: token}
+	if throttle {
+		h.limiter = authguard.NewLimiter()
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", h.serve)
 	return mux
@@ -50,9 +69,7 @@ func (h *autoMCPHTTPHandler) serve(w http.ResponseWriter, r *http.Request) {
 		autoMCPError(w, http.StatusForbidden, -32000, "request Origin is not allowed")
 		return
 	}
-	if !h.authorized(r) {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="breeze-automcp"`)
-		autoMCPError(w, http.StatusUnauthorized, -32000, "a bearer token is required")
+	if !h.authenticate(w, r) {
 		return
 	}
 	if !acceptsJSON(r.Header.Get("Accept")) {
@@ -134,13 +151,55 @@ func isLoopbackMCPHost(host string) bool {
 	return false
 }
 
+// authenticate decides whether r may proceed and writes the refusal when it may not.
+//
+// Behind loopback a wrong token is simply refused. When the listener is reachable beyond
+// it, a publicly routable client that keeps presenting wrong ones is locked out, and while
+// it is locked out even a correct token is refused: a lockout that still answered a right
+// guess would let an attacker read the result off the status code and carry on guessing.
+// Peers that are not publicly routable (a proxy, a container bridge) are never counted;
+// see authguard.Throttleable.
+func (h *autoMCPHTTPHandler) authenticate(w http.ResponseWriter, r *http.Request) bool {
+	key := authguard.ClientKey(r)
+	// Only a publicly routable peer is counted: behind a proxy or a container bridge every
+	// client shares one address, and a lockout there would let anyone lock everyone out.
+	throttled := h.limiter != nil && authguard.Throttleable(r)
+
+	if throttled {
+		if wait, blocked := h.limiter.Blocked(key); blocked {
+			w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
+			autoMCPError(w, http.StatusTooManyRequests, -32000,
+				"too many failed authentication attempts from this address; wait and retry")
+			return false
+		}
+	}
+
+	if !h.authorized(r) {
+		if throttled && h.limiter.Fail(key) {
+			// Once per lockout, not once per attempt: a guessing run would otherwise
+			// write a line per try into the application's log.
+			log.Printf("breeze: Auto-MCP: %s locked out after repeated authentication failures", key)
+		}
+		w.Header().Set("WWW-Authenticate", `Bearer realm="breeze-automcp"`)
+		autoMCPError(w, http.StatusUnauthorized, -32000, "a bearer token is required")
+		return false
+	}
+
+	if throttled {
+		h.limiter.Succeed(key)
+	}
+	return true
+}
+
+// authorized reports whether the request carries the bearer token. The comparison is
+// constant-time and independent of length: see authguard.Equal.
 func (h *autoMCPHTTPHandler) authorized(r *http.Request) bool {
 	raw := strings.TrimSpace(r.Header.Get("Authorization"))
 	if len(raw) < len("Bearer ") || !strings.EqualFold(raw[:len("Bearer ")], "Bearer ") {
 		return false
 	}
 	presented := strings.TrimSpace(raw[len("Bearer "):])
-	return subtle.ConstantTimeCompare([]byte(presented), []byte(h.token)) == 1
+	return authguard.Equal(presented, h.token)
 }
 
 func acceptsJSON(v string) bool {

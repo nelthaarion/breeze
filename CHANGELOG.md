@@ -6,6 +6,61 @@ All changes made to the Breeze framework.
 
 ## [Unreleased]
 
+### MCP security review: a planning token could generate, an embedded endpoint had no workspace, and the control token leaked three ways
+
+A review of every MCP surface — the control-plane server (`internal/mcp`, `cmd/breeze-mcp`), the embedded endpoint
+(`mcp.StartInProcess`) and Auto-MCP (`EnableMCP`) — found the following. Each has a test that fails without the fix; the
+two privilege findings were confirmed by running the new tests against the old code.
+
+**Scope could be bypassed through a change set.** `breeze_stage_call` runs a generator tool by name from inside another
+tool, so the call never passed through `tools/call` and its scope check. The tool is classified as `planning`; a token
+granted `planning` but not `generation` could stage `breeze_generate`, `breeze_add` or `breeze_new` and commit them,
+writing project files with a credential minted so that it could not. The capability map claimed the staged calls "were
+themselves subject to this same check when they ran"; they were not. `stage_call` now asks the same scope the same
+question (the refusal is shared with dispatch, so the answer and the log record are identical), and a test pins that
+every stageable tool is classified `generation`.
+
+**An embedded `ModeGenerator` endpoint served the filesystem tools with no workspace.** Every standalone entrypoint
+installs a confinement policy; an embed has no entrypoint and the installer is unreachable from outside the module, so
+`breeze_verify_project`, `breeze_new` and the rest accepted any path on the host, behind a network listener. An embed is
+now confined to `InProcessConfig.Workspace` (new, also on `mcp.InProcessConfig`) or to the working directory. A policy
+the process already chose is not overridden.
+
+**The control token leaked.** `breeze-mcp -h`, and the usage printed after any mistyped flag, printed
+`$BREEZE_MCP_TOKEN`: the flag defaulted to the environment's value and `flag` prints non-empty defaults. Every child
+process (`go test`, `go run`, the docker CLI) inherited the token, so a project's tests — arbitrary code — could read the
+credential with `os.Getenv`. And the stderr log wrote caller-controlled strings verbatim (an unknown tool's name, every
+argument name), so a token holder could forge whole log lines or send terminal escapes; those fields are now quoted when
+they hold anything but ordinary name characters, and bounded.
+
+**Writes could follow a link out of the project.** The commit path refused a link at the destination but checked
+nothing above it: `os.Lstat` follows every directory but the last, so a repository shipping `internal -> /elsewhere` had
+commits written through it. `.breeze/` history and `llms.txt` followed links too, and generators, which write with
+ordinary file calls, followed any link in the tree. Writes made by this package now require their directory to resolve
+inside the project, and a generator is refused up front when the tree holds a link leading outside the workspace.
+`begin_change_set` no longer copies an unbounded tree (100,000 files / 512 MiB).
+
+**Commands could hang the server or exhaust it.** A timeout killed `go` but not the test binary it had started, which held
+the output pipe, so `Wait` blocked until the hung test ended and the timeout bounded nothing. Output was captured
+without limit, and nothing bounded how many commands ran at once. A timeout now kills the process group and the wait is
+bounded; output keeps its first 2 MiB and last 6 MiB; at most `max(4, NumCPU)` commands run at once.
+
+**Token handling on the network transports.** Both HTTP transports (they share `internal/authguard` now) compare SHA-256
+digests of the tokens, which removes the length leak of comparing raw strings. On a listener reachable beyond loopback
+a token must be at least 16 characters without whitespace (a typed `secret` was accepted before), and ten wrong tokens
+from one publicly routable address lock it out for a minute — correct token included, IPv6 counted per /64, and
+loopback, private and CGNAT peers never counted so a proxy or container bridge cannot be used to lock everyone out.
+Sessions had a documented 24-hour limit that no code applied; it applies now. The listener gained an idle timeout, a
+header cap and a body-read deadline (deliberately no server-wide read or write timeout, which would cut long
+verifications short), and `/mcp/features` now logs its refusals and shares the lockout.
+
+Behaviour changes to be aware of: a token shorter than 16 characters is refused on a non-loopback bind (loopback is
+unchanged); `breeze_commit_change_set`, history and `llms.txt` refuse paths that traverse a link out of the project;
+an embedded `ModeGenerator` endpoint refuses paths outside its workspace; a child process no longer sees
+`BREEZE_MCP_TOKEN`. Not changed, and worth knowing: the transports are plain HTTP (terminate TLS in front of a remote
+endpoint), and a provisioned container's control token is still passed to `docker run` as `-e`, visible to other local
+users for the moment that command runs.
+
 ### Event bus audit: once-listeners are removed, async metrics stop double counting, and plugin code can no longer escape
 
 A review of the `events` package against its own documentation turned up the following, each now covered by a test in

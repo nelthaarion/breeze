@@ -187,6 +187,10 @@ func copyTree(src, dst string) error {
 		return err
 	}
 
+	var (
+		files  int
+		copied int64
+	)
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -209,9 +213,38 @@ func copyTree(src, dst string) error {
 		if !d.Type().IsRegular() {
 			return nil
 		}
+
+		// A sandbox is a full copy in the temp directory, and a caller chooses what to
+		// point it at. Without a bound, begin_change_set on a parent directory — a home
+		// directory, a monorepo, a media library — copies all of it, up to 32 times over
+		// (one per open set), until the disk is full.
+		files++
+		if files > maxSandboxFiles {
+			return fmt.Errorf("the tree has more than %d files, which is more than a change-set sandbox "+
+				"holds. Point project_path at the project's own directory, not a directory above it",
+				maxSandboxFiles)
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return infoErr
+		}
+		copied += info.Size()
+		if copied > maxSandboxBytes {
+			return fmt.Errorf("the tree is larger than %d MiB, which is more than a change-set sandbox "+
+				"holds. Point project_path at the project's own directory, not a directory above it",
+				maxSandboxBytes>>20)
+		}
 		return copyFile(path, target)
 	})
 }
+
+// The most a change-set sandbox will copy. A Breeze project is a few hundred small files;
+// these are generous to anything that is one and refuse anything that is not. Variables
+// only so a test can lower them; nothing assigns them at run time.
+var (
+	maxSandboxFiles       = 100_000
+	maxSandboxBytes int64 = 512 << 20
+)
 
 // copyFile copies one file, preserving its mode and creating parents.
 func copyFile(src, dst string) error {
@@ -475,6 +508,14 @@ func applyChanges(from, to string, changes []fileChange) (err error) {
 		// arbitrary file overwrite outside the project.
 		if info, statErr := os.Lstat(target); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("refusing to modify symlink target %q", change.Path)
+		}
+
+		// The check above looks at the last component only: Lstat follows every
+		// directory on the way, so a project whose `internal` is a link to somewhere
+		// else would have a commit write straight through it. The target's directory
+		// has to resolve to somewhere inside the project too.
+		if escapeErr := ensureWriteStaysInside(base, target); escapeErr != nil {
+			return fmt.Errorf("invalid change path %q: %w", change.Path, escapeErr)
 		}
 
 		record := undo{path: target}

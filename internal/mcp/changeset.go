@@ -62,6 +62,16 @@ const historyFileName = "mcp-history.jsonl"
 // set is a tree that can be discarded.
 var stageableTools = []string{"breeze_add", "breeze_generate", "breeze_makemigration", "breeze_new"}
 
+// isStageable reports whether a change set will run the named tool.
+func isStageable(name string) bool {
+	for _, t := range stageableTools {
+		if t == name {
+			return true
+		}
+	}
+	return false
+}
+
 // stagedCall is one call recorded in a change set.
 type stagedCall struct {
 	// Tool and Arguments are what was asked for, kept verbatim so the history
@@ -355,6 +365,12 @@ func historyPath(projectPath string) string {
 // appendHistory adds one record to a project's history.
 func appendHistory(projectPath string, entry historyEntry) error {
 	path := historyPath(projectPath)
+
+	// MkdirAll and an O_APPEND open both follow links. A project whose .breeze is a link
+	// elsewhere would have this append — and the directory it creates — land outside it.
+	if err := ensureWriteStaysInside(projectPath, path); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

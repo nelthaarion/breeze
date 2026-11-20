@@ -455,6 +455,7 @@ var resolvedByCaller = map[string]string{
 	"ConfineToWorkspace":  "establishes the roots; there is nothing above it to resolve against",
 	"resolveExisting":     "resolves the path resolvePath is deciding about",
 	"unresolvedLinkBelow": "walks the components of an already-resolved path",
+	"firstEscapingLink":   "walks the project root runGenerator resolved, via preflightWrites, before any generator runs",
 
 	// workspace.go — the sandbox internals. newSandbox resolves; these move files
 	// between a resolved project and a temporary directory this package created.

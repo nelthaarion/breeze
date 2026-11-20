@@ -158,12 +158,12 @@ func TestEntrypointsPrintTheSameBanner(t *testing.T) {
 		// A supplied token must NOT be echoed, identically in both.
 		{"supplied token", []string{"--mode", "generator", "--port", "2000", "--token", "supplied-secret"}},
 		// A widened bind requires both --scope and --token; both must add the same lines.
-		{"widened bind", []string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0", "--scope", "fleet", "--token", "test-token"}},
+		{"widened bind", []string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0", "--scope", "fleet", "--token", "test-token-0123456789"}},
 		// A scoped token changes the banner's scope line, and suppresses the
 		// unscoped-off-host warning. Both entrypoints must agree on both changes.
 		{"scoped token", []string{"--mode", "generator", "--port", "2000", "--scope", "fleet"}},
 		{"scoped widened bind", []string{"--mode", "generator", "--port", "2000",
-			"--host", "0.0.0.0", "--scope", "fleet", "--token", "test-token"}},
+			"--host", "0.0.0.0", "--scope", "fleet", "--token", "test-token-0123456789"}},
 	}
 
 	for _, tc := range cases {
@@ -303,7 +303,7 @@ func TestOffHostWarningTracksScope(t *testing.T) {
 
 	// Unscoped generator on non-loopback: now an error, not a warning.
 	unscoped, err := ParseFlags("breeze-mcp",
-		[]string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0", "--token", "test-token"}, io.Discard)
+		[]string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0", "--token", "test-token-0123456789"}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestOffHostWarningTracksScope(t *testing.T) {
 
 	// Scoped generator on non-loopback: builds successfully, no warning.
 	scoped, err := ParseFlags("breeze-mcp",
-		[]string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0", "--scope", "fleet", "--token", "test-token"},
+		[]string{"--mode", "generator", "--port", "2000", "--host", "0.0.0.0", "--scope", "fleet", "--token", "test-token-0123456789"},
 		io.Discard)
 	if err != nil {
 		t.Fatal(err)

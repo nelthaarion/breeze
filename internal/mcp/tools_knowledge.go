@@ -515,6 +515,12 @@ func generateLLMS(a generateLLMSArgs) toolCallResult {
 	if a.Write {
 		for i := range result.Files {
 			target := filepath.Join(root, result.Files[i].Name)
+			// os.WriteFile follows a link at llms.txt and overwrites what it points at; a
+			// project can ship one. The target has to be a file in this project.
+			if err := ensureWriteStaysInside(root, target); err != nil {
+				result.Notes = append(result.Notes, "could not write "+result.Files[i].Name+": "+err.Error())
+				continue
+			}
 			if err := os.WriteFile(target, []byte(result.Files[i].Content), 0o644); err != nil {
 				result.Notes = append(result.Notes, "could not write "+result.Files[i].Name+": "+err.Error())
 				continue

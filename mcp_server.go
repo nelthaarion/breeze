@@ -55,6 +55,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nelthaarion/breeze/v2/internal/authguard"
 	"github.com/nelthaarion/breeze/v2/rpc"
 	"github.com/nelthaarion/breeze/v2/scalar"
 )
@@ -260,6 +261,20 @@ func (s *Breeze) EnableMCPWithToken(addr, token string) error {
 	// handed in by the caller (from a secret store, say) must never be logged
 	// just because BREEZE_MCP_TOKEN happens to be unset.
 	generated := token == ""
+	// Whether the listener can be reached from beyond this machine. A bind address that
+	// cannot even be split into host and port is treated as reachable: net.Listen will
+	// reject it a few lines down, and until then the stricter reading is the safe one.
+	remote := true
+	if host, _, splitErr := net.SplitHostPort(strings.TrimPrefix(listen, "tcp://")); splitErr == nil {
+		remote = !isLoopbackMCPHost(host)
+	}
+	if !generated && remote {
+		// A token somebody typed — "secret", "devtoken" — guards the application's
+		// business routes with nothing else in front of it once the listener is exposed.
+		if err := authguard.ValidateRemote(token); err != nil {
+			return fmt.Errorf("breeze: refusing to bind Auto-MCP to %q: %w", addr, err)
+		}
+	}
 	if generated {
 		host, _, splitErr := net.SplitHostPort(strings.TrimPrefix(listen, "tcp://"))
 		if splitErr == nil && !isLoopbackMCPHost(host) {
@@ -275,7 +290,7 @@ func (s *Breeze) EnableMCPWithToken(addr, token string) error {
 	if err != nil {
 		return fmt.Errorf("breeze: cannot listen for Auto-MCP on %s: %w", record, err)
 	}
-	handler := newAutoMCPHTTPHandler(srv, token)
+	handler := newAutoMCPHTTPHandlerFor(srv, token, remote)
 	httpServer := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,

@@ -114,8 +114,14 @@ func ParseFlags(name string, args []string, errOut io.Writer) (Options, error) {
 		"serve MCP Streamable HTTP on this control port instead of stdio (0 = stdio)")
 	fs.StringVar(&opts.Host, "host", mcp.DefaultNetworkHost,
 		"bind address for --port; the default is loopback only")
-	fs.StringVar(&opts.Token, "token", os.Getenv(TokenEnv),
-		"bearer token required on every network request (default $"+TokenEnv+"; generated and printed once if unset)")
+	// The default is empty, and $BREEZE_MCP_TOKEN is read after parsing. Giving the flag
+	// the environment's value as its default would print that value: flag.PrintDefaults
+	// renders "(default <value>)" for any non-empty default, so `breeze-mcp -h`, or any
+	// mistyped flag, would write the control token to stderr — a terminal scrollback, a CI
+	// log, an editor's output panel.
+	fs.StringVar(&opts.Token, "token", "",
+		"bearer token required on every network request (default $"+TokenEnv+"; generated and printed once if unset). "+
+			"Prefer the environment variable: a command-line value is visible to every user in the process list")
 	origins := fs.String("allow-origin", "",
 		"comma-separated Origin values to accept in addition to loopback, or * to disable the check")
 	scope := fs.String("scope", "",
@@ -142,6 +148,9 @@ func ParseFlags(name string, args []string, errOut io.Writer) (Options, error) {
 	}
 	if rest := fs.Args(); len(rest) > 0 {
 		return opts, fmt.Errorf("unexpected argument %q; %s takes flags only", rest[0], name)
+	}
+	if strings.TrimSpace(opts.Token) == "" {
+		opts.Token = os.Getenv(TokenEnv)
 	}
 	if opts.Port < 0 || opts.Port > 65535 {
 		return opts, fmt.Errorf("--port %d is not a port number", opts.Port)

@@ -59,7 +59,7 @@ func newProjectTool() *tool {
 				return errorResult(err.Error())
 			}
 
-			return runGenerator(a.Dir, func() error { return generator.New(argv) })
+			return runGenerator(a.Dir, func() error { return generator.New(argv) }, a.Name)
 		},
 	}
 }
@@ -260,11 +260,17 @@ func flagsToArgv(flags map[string]any) []string {
 // The refusal happens before the chdir rather than inside it, so a rejected call
 // has not moved the process. runInDir restores the previous directory on the way
 // out, but "restores correctly" is a weaker property than "never left".
-func runGenerator(dir string, fn func() error) toolCallResult {
+//
+// creates names what the generator will create under dir (breeze_new: the project
+// directory), so a link already standing at that name is refused before anything runs.
+func runGenerator(dir string, fn func() error, creates ...string) toolCallResult {
 	// An empty dir keeps its old meaning — run where the server already is — and
 	// resolvePath applies the workspace check to that default too.
 	target, err := resolvePath(dir)
 	if err != nil {
+		return errorResult(err.Error())
+	}
+	if err := preflightWrites(target, creates); err != nil {
 		return errorResult(err.Error())
 	}
 

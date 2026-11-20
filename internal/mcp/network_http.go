@@ -23,12 +23,14 @@ package mcp
 // reason rather than an empty body it has to infer from the status code.
 
 import (
-	"crypto/subtle"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nelthaarion/breeze/v2/internal/authguard"
 )
 
 // serveMCP is the MCP endpoint.
@@ -73,17 +75,9 @@ func (n *NetworkServer) serveMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !n.authorised(r) {
-		// The scheme is advertised so a client knows what kind of credential is
-		// missing. Nothing about the expected value appears in the response.
-		//
-		// This is the refusal worth having in a log. A run of these from one address is
-		// a token-guessing attempt, and it is otherwise entirely invisible.
-		n.refuse(http.StatusUnauthorized, ReasonNoToken, remote)
-		w.Header().Set("WWW-Authenticate", `Bearer realm="breeze-mcp"`)
-		writeRPCError(w, http.StatusUnauthorized,
-			"this endpoint requires a bearer token: send Authorization: Bearer <token>. "+
-				"The token is printed once at startup, or set with --token / BREEZE_MCP_TOKEN.")
+	if !n.authenticate(w, r,
+		"this endpoint requires a bearer token: send Authorization: Bearer <token>. "+
+			"The token is printed once at startup, or set with --token / BREEZE_MCP_TOKEN.") {
 		return
 	}
 
@@ -104,7 +98,14 @@ func (n *NetworkServer) serveMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The deadline covers only the body. It is lifted again before dispatch, because the
+	// handler below can run for minutes and net/http would otherwise read the expired
+	// deadline as a dropped connection and cancel the request under it. A writer that
+	// cannot take a deadline (a test recorder) simply goes without one.
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Now().Add(bodyReadTimeout))
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes+1))
+	_ = rc.SetReadDeadline(time.Time{})
 	if err != nil {
 		n.refuse(http.StatusBadRequest, ReasonBodyUnreadable, remote)
 		writeRPCError(w, http.StatusBadRequest, "the request body could not be read: "+err.Error())
@@ -179,16 +180,69 @@ func (n *NetworkServer) originAllowed(origin string) bool {
 
 // authorised reports whether the request carries the bearer token.
 //
-// The comparison is constant-time. A byte-by-byte early return would leak the
-// token's prefix to a caller willing to time enough attempts, and the token is
-// the only thing standing between a network peer and a code generator.
+// The comparison is constant-time and independent of length. A byte-by-byte early
+// return would leak the token's prefix to a caller willing to time enough attempts, and
+// comparing raw strings would leak its length; authguard.Equal compares fixed-size
+// digests, so neither is observable. The token is the only thing standing between a
+// network peer and a code generator.
 func (n *NetworkServer) authorised(r *http.Request) bool {
 	header := r.Header.Get("Authorization")
 	if len(header) <= len(bearerPrefix) || !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
 		return false
 	}
 	presented := strings.TrimSpace(header[len(bearerPrefix):])
-	return subtle.ConstantTimeCompare([]byte(presented), []byte(n.token)) == 1
+	return authguard.Equal(presented, n.token)
+}
+
+// authenticate decides whether r may proceed and writes the refusal when it may not.
+//
+// It is the single place a request is authenticated, used by the protocol endpoint and
+// by /mcp/features alike, so the two cannot differ on what they log, what they throttle
+// or how they compare the token. unauthorised is the sentence a 401 carries, which is
+// the only thing that differs between them.
+//
+// When the listener is reachable beyond loopback, a publicly routable client that keeps
+// presenting wrong tokens is locked out, and while it is locked out even a correct token
+// is refused: a lockout that still answered a right guess would let an attacker read the
+// result off the status code and carry on. Peers that are not publicly routable are never
+// counted — see authguard.Throttleable. Every refusal is logged, so a guessing run shows
+// up.
+func (n *NetworkServer) authenticate(w http.ResponseWriter, r *http.Request, unauthorised string) bool {
+	remote := r.RemoteAddr
+	key := authguard.ClientKey(r)
+	// Only a publicly routable peer is counted: behind a proxy or a container bridge every
+	// client shares one address, and a lockout there would let anyone lock everyone out.
+	throttled := n.limiter != nil && authguard.Throttleable(r)
+
+	if throttled {
+		if wait, blocked := n.limiter.Blocked(key); blocked {
+			n.refuse(http.StatusTooManyRequests, ReasonAuthThrottled, remote)
+			w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
+			writeRPCError(w, http.StatusTooManyRequests,
+				"too many failed authentication attempts from this address; wait and retry")
+			return false
+		}
+	}
+
+	if !n.authorised(r) {
+		if throttled {
+			n.limiter.Fail(key)
+		}
+		// The scheme is advertised so a client knows what kind of credential is
+		// missing. Nothing about the expected value appears in the response.
+		//
+		// This is the refusal worth having in a log. A run of these from one address is
+		// a token-guessing attempt, and it is otherwise entirely invisible.
+		n.refuse(http.StatusUnauthorized, ReasonNoToken, remote)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="breeze-mcp"`)
+		writeRPCError(w, http.StatusUnauthorized, unauthorised)
+		return false
+	}
+
+	if throttled {
+		n.limiter.Succeed(key)
+	}
+	return true
 }
 
 // httpError is a refusal with the status that goes with it.
@@ -245,6 +299,16 @@ func (n *NetworkServer) rememberSession(id string) {
 	defer n.mu.Unlock()
 
 	if len(n.sessions) >= maxSessions {
+		// Sessions that have outlived maxSessionAge go first: they are not valid any
+		// more, so dropping them costs no client anything.
+		now := time.Now()
+		for candidate, at := range n.sessions {
+			if now.Sub(at) > maxSessionAge {
+				delete(n.sessions, candidate)
+			}
+		}
+	}
+	if len(n.sessions) >= maxSessions {
 		var (
 			oldest   string
 			oldestAt time.Time
@@ -261,13 +325,22 @@ func (n *NetworkServer) rememberSession(id string) {
 
 // knownSession reports whether a session id is live, and refreshes its timestamp
 // so eviction removes the least recently used rather than the earliest created.
+//
+// A session unused for longer than maxSessionAge is not live: it is forgotten and the
+// client is told to initialize again, which is what the 404 this produces means.
 func (n *NetworkServer) knownSession(id string) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if _, ok := n.sessions[id]; !ok {
+	at, ok := n.sessions[id]
+	if !ok {
 		return false
 	}
-	n.sessions[id] = time.Now()
+	now := time.Now()
+	if now.Sub(at) > maxSessionAge {
+		delete(n.sessions, id)
+		return false
+	}
+	n.sessions[id] = now
 	return true
 }

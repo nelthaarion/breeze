@@ -32,8 +32,11 @@ var toolCapabilities = map[string]Capability{
 	// A change set writes only to its own temporary copy until commit, and commit is
 	// the one operation that touches the project — which is why the whole group is
 	// planning rather than generation, and why a token granted planning but not
-	// generation can still commit a change set it staged. That is deliberate: the
-	// staged calls were themselves subject to this same check when they ran.
+	// generation can still commit a change set it staged. That is only sound because
+	// breeze_stage_call checks every tool it stages against the token's scope before
+	// running it (see stageCallTool): a planning-only token cannot stage a generation
+	// tool, so nothing in its change set is something generation would have refused.
+	// A test pins this, because the grouping rests entirely on that check.
 	"breeze_plan_project":       CapPlanning,
 	"breeze_explain_project":    CapPlanning,
 	"breeze_diff_config":        CapPlanning,

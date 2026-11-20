@@ -26,7 +26,7 @@ func registerChangeSetTools(s *Server) {
 	sets := newChangeSetStore()
 
 	s.addTool(beginChangeSetTool(sets))
-	s.addTool(stageCallTool(sets))
+	s.addTool(stageCallTool(sets, s))
 	s.addTool(commitChangeSetTool(sets))
 	s.addTool(discardChangeSetTool(sets))
 	s.addTool(changeHistoryTool())
@@ -127,7 +127,16 @@ type stageResult struct {
 	AppliedToProject bool `json:"applied_to_project"`
 }
 
-func stageCallTool(sets *changeSetStore) *tool {
+// stageCallTool runs a generator tool inside a change set.
+//
+// It takes the Server so it can ask the token's scope about the tool being staged. That
+// matters because staging is a second way to *run* a generator that never passes through
+// tools/call: breeze_stage_call is classified as planning, and without this check a token
+// granted planning but not generation could stage breeze_add, breeze_generate or
+// breeze_new and then commit them — writing project files with a credential that was
+// minted precisely so that it could not. Scope is read when the call runs, not when the
+// tool is registered, because the transport installs it after the Server is built.
+func stageCallTool(sets *changeSetStore, s *Server) *tool {
 	return &tool{
 		name: "breeze_stage_call",
 		description: "Run one generator call inside an open change set, against its private " +
@@ -156,6 +165,14 @@ func stageCallTool(sets *changeSetStore) *tool {
 			}
 			if a.Tool == "" {
 				return errorResult("tool is required; stageable tools are: " + strings.Join(stageableTools, ", "))
+			}
+
+			// Checked before anything is looked up or run, and only for a tool that is
+			// stageable: an unknown name falls through to stagedRunner's own, more useful
+			// "stageable tools are ..." refusal rather than a scope message about a tool
+			// that does not exist.
+			if isStageable(a.Tool) && !s.scope.AllowsTool(a.Tool) {
+				return s.scopeRefusal(a.Tool)
 			}
 
 			set, err := sets.get(a.ChangeSet)

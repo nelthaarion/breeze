@@ -121,9 +121,20 @@ func (d *dockerClient) exec(ctx context.Context, args ...string) (string, error)
 // across them differently per subcommand, and a build's failure is only intelligible
 // with both in the order they were written.
 func runDockerCommand(ctx context.Context, binary string, args ...string) (string, error) {
+	// At most childSlots commands run at once, builds included; see procexec.go.
+	release, slotErr := acquireChild(ctx)
+	if slotErr != nil {
+		return "", fmt.Errorf("docker %s timed out waiting for a free slot: this server runs at most %d "+
+			"commands at once: %w", args[0], cap(childSlots), slotErr)
+	}
+	defer release()
+
 	cmd := exec.CommandContext(ctx, binary, args...)
-	out, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(out))
+	// Bounded output and a killable process group, with the server's own control token
+	// left out of the CLI's environment: see procexec.go.
+	captured := prepareChild(cmd)
+	err := cmd.Run()
+	text := strings.TrimSpace(captured.String())
 
 	if ctx.Err() != nil {
 		return text, fmt.Errorf("docker %s timed out: %w", args[0], ctx.Err())

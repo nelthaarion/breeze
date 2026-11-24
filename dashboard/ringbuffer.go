@@ -55,6 +55,36 @@ func (r *ringBuffer[T]) Snapshot() []T {
 	return out
 }
 
+// Last returns a copy of the newest n entries in insertion order (all of them when n is
+// not positive or exceeds what is held). Taking the tail of a Snapshot copied the whole
+// buffer to keep a few entries.
+func (r *ringBuffer[T]) Last(n int) []T {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if n <= 0 || n > r.count {
+		n = r.count
+	}
+	out := make([]T, n)
+	for i := 0; i < n; i++ {
+		out[i] = r.entries[(r.head+r.count-n+i)%r.capacity]
+	}
+	return out
+}
+
+// Find returns the newest entry for which match is true, without copying the buffer.
+func (r *ringBuffer[T]) Find(match func(*T) bool) (T, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := r.count - 1; i >= 0; i-- {
+		e := &r.entries[(r.head+i)%r.capacity]
+		if match(e) {
+			return *e, true
+		}
+	}
+	var zero T
+	return zero, false
+}
+
 // Len returns the current number of entries.
 func (r *ringBuffer[T]) Len() int {
 	r.mu.Lock()
@@ -66,6 +96,12 @@ func (r *ringBuffer[T]) Len() int {
 func (r *ringBuffer[T]) Clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Zeroed, not just forgotten: a record holds maps and slices, and the buffer would
+	// keep all of them alive until each slot happened to be overwritten.
+	var zero T
+	for i := range r.entries {
+		r.entries[i] = zero
+	}
 	r.head = 0
 	r.count = 0
 }

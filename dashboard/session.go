@@ -12,6 +12,10 @@ import (
 // sessionDuration is how long a login session stays valid.
 const sessionDuration = 24 * time.Hour
 
+// errSessionCapacity is returned by create when maxDashboardSessions live sessions
+// already exist.
+var errSessionCapacity = fmt.Errorf("dashboard session capacity reached")
+
 const maxDashboardSessions = 4096
 
 // sessionStore is an in-memory session token store. Each login creates a
@@ -72,7 +76,14 @@ func (s *sessionStore) create(username string) (string, error) {
 	if len(s.sessions) >= maxDashboardSessions {
 		// Expired entries were removed above. Never evict a live administrative
 		// session to make room for another login; fail closed instead.
-		return "", fmt.Errorf("dashboard session capacity reached")
+		//
+		// The lock MUST be released on this path. It used to return while still
+		// holding it, which wedged every later valid()/create()/destroy() call —
+		// and so every authenticated dashboard request — behind a mutex nobody
+		// would ever release: one burst of logins past the cap froze the dashboard
+		// (and whatever goroutine served it) until the process was restarted.
+		s.mu.Unlock()
+		return "", errSessionCapacity
 	}
 	s.sessions[token] = sessionEntry{
 		username: username,
@@ -101,6 +112,20 @@ func (s *sessionStore) valid(token string) (string, bool) {
 		return "", false
 	}
 	return entry.username, true
+}
+
+// count reports how many sessions are currently valid. It feeds the Overview's
+// "Active Sessions" card, which used to read a counter nothing ever incremented.
+func (s *sessionStore) count(now time.Time) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	n := 0
+	for _, e := range s.sessions {
+		if !now.After(e.expires) {
+			n++
+		}
+	}
+	return n
 }
 
 // destroy deletes a session token (logout).

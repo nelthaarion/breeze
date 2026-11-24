@@ -1,9 +1,20 @@
 package dashboard
 
 import (
+	"math"
 	"runtime"
+	"sync"
 	"time"
 )
+
+// finite replaces NaN and ±Inf with 0. A snapshot that holds one cannot be encoded to JSON, and
+// the WebSocket hub would then have nothing to send until the value moved on.
+func finite(x float64) float64 {
+	if math.IsNaN(x) || math.IsInf(x, 0) {
+		return 0
+	}
+	return x
+}
 
 // metricsSampler periodically captures MetricsSnapshot points into the
 // collector's ring buffer. The sampling rate is fixed at 1 Hz which gives
@@ -15,15 +26,18 @@ import (
 // NumGC, PauseTotalNs).
 //
 // CPU usage is computed as the change in process CPU time (user+system)
-// between samples divided by the wall-clock interval, normalised by the
-// number of cores.
+// between samples divided by the wall-clock interval. 100 is one core fully
+// busy, so a process using four cores reads 400 (the figure top and ps give);
+// NumCPU is in every snapshot for a reader that wants a share of the machine.
 type metricsSampler struct {
-	c        *Collector
-	stop     chan struct{}
-	lastUser time.Duration
-	lastSys  time.Duration
-	lastTime time.Time
-	lastReqs int64
+	c         *Collector
+	stop      chan struct{}
+	lastUser  time.Duration
+	lastSys   time.Duration
+	lastTime  time.Time
+	lastReqs  int64
+	lastErrs  int64
+	lastDurUS int64
 }
 
 // startMetricsSampler launches the sampler goroutine and returns a stop fn.
@@ -34,7 +48,8 @@ func startMetricsSampler(c *Collector) func() {
 		lastTime: time.Now(),
 	}
 	go s.loop()
-	return func() { close(s.stop) }
+	var once sync.Once
+	return func() { once.Do(func() { close(s.stop) }) }
 }
 
 func (s *metricsSampler) loop() {
@@ -75,31 +90,44 @@ func (s *metricsSampler) sample(now time.Time) {
 		}
 	}
 
-	// Average response time over the last 1s window.
-	recent := s.c.Requests(0)
-	avgRespMS := 0.0
-	if len(recent) > 0 {
-		var sum int64
-		for _, r := range recent {
-			sum += r.Duration
-		}
-		avgRespMS = float64(sum) / float64(len(recent)) / 1000.0
-	}
-
-	// Error rate over the last 1s window.
-	errRate := 0.0
-	if len(recent) > 0 {
-		var errs int64
-		for _, r := range recent {
-			if r.Status >= 500 {
-				errs++
+	// Average response time and error rate over the interval since the last sample.
+	//
+	// These were computed from the ring buffer of *captured* requests, which holds only the slow
+	// and the failed ones while nobody is watching (and copied all of it, once a second, to do
+	// it). So with the dashboard closed the "average response time" was the average of the slow
+	// requests, and the "error rate" the share of failures among the failures — routinely 100% —
+	// and neither covered the last second, as the comment said. The middleware keeps exact
+	// counters for every request; the change in them between two samples is the interval.
+	curErrs := s.c.errorsTotal.Load()
+	curDurUS := s.c.totalDurationUS()
+	avgRespMS, errRate := 0.0, 0.0
+	if !s.lastTime.IsZero() {
+		if dReqs := curReqs - s.lastReqs; dReqs > 0 {
+			avgRespMS = float64(curDurUS-s.lastDurUS) / float64(dReqs) / 1000.0
+			errRate = float64(curErrs-s.lastErrs) / float64(dReqs)
+			if avgRespMS < 0 {
+				avgRespMS = 0
 			}
+			errRate = math.Min(math.Max(errRate, 0), 1)
 		}
-		errRate = float64(errs) / float64(len(recent))
 	}
 
 	// Cache hit ratio.
 	cache := s.c.CacheStats()
+	queue := s.c.QueueStats()
+
+	// Sessions that are still valid. This read a counter nothing ever incremented, so the
+	// Overview's "Active Sessions" card said 0 however many people were signed in.
+	var sessions int64
+	if s.c.sessions != nil {
+		sessions = int64(s.c.sessions.count(now))
+	}
+
+	// time.Unix(0, 0) is 1970, which the page showed as a last GC fifty-six years ago.
+	var lastGC time.Time
+	if ms.LastGC > 0 {
+		lastGC = time.Unix(0, int64(ms.LastGC))
+	}
 
 	// Most recent GC pause duration.
 	//
@@ -127,10 +155,10 @@ func (s *metricsSampler) sample(now time.Time) {
 		// HTTP
 		RequestsTotal:  curReqs,
 		RequestsToday:  s.c.TodayCount(),
-		RequestsPerSec: rps,
-		AvgRespTimeMS:  avgRespMS,
-		ErrorRate:      errRate,
-		ActiveSessions: s.c.activeSessions.Load(),
+		RequestsPerSec: finite(rps),
+		AvgRespTimeMS:  finite(avgRespMS),
+		ErrorRate:      finite(errRate),
+		ActiveSessions: sessions,
 
 		// Runtime — heap (snapshots from runtime.MemStats)
 		Goroutines:   runtime.NumGoroutine(),
@@ -161,24 +189,24 @@ func (s *metricsSampler) sample(now time.Time) {
 
 		// GC
 		NumGC:         ms.NumGC,
-		LastGC:        time.Unix(0, int64(ms.LastGC)),
+		LastGC:        lastGC,
 		NextGC:        ms.NextGC,
 		PauseTotalNs:  ms.PauseTotalNs, // cumulative (only grows)
 		PauseNs:       lastPauseNs,     // most recent GC pause
-		GCCPUFraction: ms.GCCPUFraction,
+		GCCPUFraction: finite(ms.GCCPUFraction),
 		GCEnabled:     gcEnabled,
 
 		// CPU
-		CPUUsage:   cpuPct,
+		CPUUsage:   finite(cpuPct),
 		NumCPU:     runtime.NumCPU(),
 		GOMAXPROCS: runtime.GOMAXPROCS(0),
 		CGOCalls:   runtime.NumCgoCall(),
 
 		// Cache
-		CacheHitRatio: cache.HitRate,
+		CacheHitRatio: finite(cache.HitRate),
 
 		// Queue
-		QueueJobs: s.c.QueueStats().Pending + s.c.QueueStats().Running,
+		QueueJobs: queue.Pending + queue.Running,
 	}
 
 	s.c.metrics.Push(snap)
@@ -187,6 +215,8 @@ func (s *metricsSampler) sample(now time.Time) {
 	s.lastSys = sysTime
 	s.lastTime = now
 	s.lastReqs = curReqs
+	s.lastErrs = curErrs
+	s.lastDurUS = curDurUS
 }
 
 // cpuTimes returns process CPU time (user, system).

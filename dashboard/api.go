@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"runtime"
 	"strconv"
 	"strings"
@@ -17,8 +18,7 @@ import (
 	"github.com/nelthaarion/breeze/v2/scalar"
 )
 
-// jsonUnmarshal is a small wrapper around go-json so we don't pull in
-// github.com/goccy/go-json (which is slower) on the login hot path.
+// jsonUnmarshal is the one place the dashboard's handlers decode a request body.
 func jsonUnmarshal(body []byte, v any) error {
 	return json.Unmarshal(body, v)
 }
@@ -56,9 +56,11 @@ func jsonError(ctx *breeze.Context, status int, message string) error {
 //	GET  /dashboard/api/cache        → Cache monitor
 //	POST /dashboard/api/cache/clear  → Clear cache (optional prefix)
 //	GET  /dashboard/api/queue        → Queue monitor
-//	POST /dashboard/api/queue/retry  → Retry a failed job
+//	POST /dashboard/api/queue/retry  → Retry a failed job (needs SetJobRetrier)
 //	GET  /dashboard/api/scheduler    → Scheduler
 //	GET  /dashboard/api/logs         → Logs (level param)
+//	GET  /dashboard/api/logs/counts  → Lines held per log tab
+//	GET  /dashboard/api/db/tables    → Database Browser (needs SetDBInspector)
 //	GET  /dashboard/api/health       → Health checks
 //	GET  /dashboard/api/performance  → Runtime performance
 //	GET  /dashboard/api/traffic      → Exact request counts by route and status class
@@ -114,19 +116,7 @@ func (c *Collector) registerRoutes(router *breeze.Router, app *breeze.Breeze) {
 
 	// ── WebSocket endpoint for real-time updates ──────────────────────────
 	if app != nil {
-		app.WebSocketWithGuard(base+"/ws", func(ctx *breeze.Context) bool {
-			cookie := ctx.Req.Header["cookie"]
-			token := extractCookieValue(cookie, sessionCookieName)
-			if token == "" {
-				return false
-			}
-			username, ok := c.sessions.valid(token)
-			if !ok {
-				return false
-			}
-			ctx.Set("breeze.dashboard.user", username)
-			return true
-		}, &wsHandler{hub: c.hub})
+		app.WebSocketWithGuard(base+"/ws", c.wsGuard, &wsHandler{hub: c.hub})
 	}
 }
 
@@ -143,66 +133,105 @@ func (c *Collector) registerAuthRoutes(router *breeze.Router, base, dir string) 
 		DevMode:       false,
 	})
 
+	redirect := func(ctx *breeze.Context, loc string) error {
+		ctx.Res = &breeze.HTTPResponse{
+			Status:  302,
+			Headers: map[string]string{"Location": loc},
+			Body:    []byte("redirecting..."),
+		}
+		return nil
+	}
+
 	router.HandleBlocking(breeze.GET, base+"/login", func(ctx *breeze.Context) error {
+		// Where to go once signed in: the page the person was heading for, when it is a
+		// page of this dashboard, and the dashboard's home otherwise.
+		next := safeNext(base, ctx.Query("next"))
+		dest := base
+		if next != "" {
+			dest = next
+		}
+		// Authentication is switched off: there is nothing to sign in to.
+		if c.cfg.DisableAuth {
+			return redirect(ctx, dest)
+		}
 		// If already logged in, redirect to dashboard.
 		cookie := ctx.Req.Header["cookie"]
 		token := extractCookieValue(cookie, sessionCookieName)
 		if _, ok := c.sessions.valid(token); ok {
-			ctx.Res = &breeze.HTTPResponse{
-				Status: 302,
-				Headers: map[string]string{
-					"Location": base,
-				},
-				Body: []byte("redirecting..."),
-			}
-			return nil
+			return redirect(ctx, dest)
 		}
 		data := map[string]any{
-			"BasePath":  base,
-			"LoginPath": base + "/login",
-			"PageTitle": "Login",
+			"BasePath":   base,
+			"LoginPath":  base + "/login",
+			"PageTitle":  "Login",
+			"Next":       next,
+			"Configured": c.authConfigured(),
 		}
 		loginEngine.RenderView(ctx, "login", data)
+		if ctx.Res != nil {
+			setSecurityHeaders(ctx)
+		}
 
 		return nil
 	})
 
 	// ── Login POST — validates credentials, sets session cookie ────────
 	router.HandleBlocking(breeze.POST, base+"/login", func(ctx *breeze.Context) error {
+		defer func() {
+			if ctx.Res != nil {
+				setSecurityHeaders(ctx)
+			}
+		}()
+		fail := func(status int, message string) error {
+			ctx.Status(status)
+			return ctx.JSON(map[string]any{"ok": false, "error": message})
+		}
+		if !requestOriginOK(ctx, false) {
+			return fail(http.StatusForbidden, "cross-origin request blocked")
+		}
+		if c.cfg.DisableAuth {
+			return ctx.JSON(map[string]any{"ok": true, "redirect": base})
+		}
+		if !c.authConfigured() {
+			// With no credentials configured the comparison below would be between two
+			// empty strings, and an empty username and password would sign in.
+			return fail(http.StatusServiceUnavailable, "dashboard authentication is not configured")
+		}
 		var req struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
+			Next     string `json:"next"`
 		}
 		body := ctx.Req.Body
 		if err := jsonUnmarshal(body, &req); err != nil {
-			return ctx.JSON(map[string]any{"ok": false, "error": "invalid request body"})
+			return fail(http.StatusBadRequest, "invalid request body")
 		}
 		// The login endpoint is the primary brute-force target and was the one
 		// path with no throttle at all (only the Basic-auth fallback had one).
 		peer := dashboardPeer(ctx)
 		if !c.sessions.allowLogin(peer, time.Now()) {
-			ctx.Status(http.StatusTooManyRequests)
 			ctx.SetHeader("Retry-After", strconv.Itoa(int(loginBlockDuration.Seconds())))
-			return ctx.JSON(map[string]any{"ok": false, "error": "too many failed attempts"})
+			return fail(http.StatusTooManyRequests, "too many failed attempts")
 		}
-		wantUser := []byte(c.cfg.Username)
-		wantPass := hashPass(c.cfg.Password)
-		if subtle.ConstantTimeCompare([]byte(req.Username), wantUser) != 1 ||
-			subtle.ConstantTimeCompare(hashPass(req.Password), wantPass) != 1 {
+		if !credentialsMatch(hashPass(c.cfg.Username), hashPass(c.cfg.Password), req.Username, req.Password) {
 			c.sessions.recordLoginFailure(peer, time.Now())
-			return ctx.JSON(map[string]any{"ok": false, "error": "invalid username or password"})
+			return fail(http.StatusUnauthorized, "invalid username or password")
 		}
 		c.sessions.clearLoginFailures(peer)
 		token, err := c.sessions.create(req.Username)
 		if err != nil {
-			return jsonError(ctx, http.StatusInternalServerError, "could not create login session")
+			return fail(http.StatusInternalServerError, "could not create login session")
+		}
+		dest := base
+		if next := safeNext(base, req.Next); next != "" {
+			dest = next
 		}
 		// Build the response manually so Set-Cookie is included.
 		// (ctx.JSON then ctx.SetHeader doesn't work because JSON
 		// creates a response with shared headers that SetHeader
 		// would copy-on-write, but the cookie needs to be on the
 		// final response.)
-		respBody, _ := json.Marshal(map[string]any{"ok": true, "redirect": base})
+		respBody, _ := json.Marshal(map[string]any{"ok": true, "redirect": dest})
 		ctx.Res = &breeze.HTTPResponse{
 			Status: 200,
 			Headers: map[string]string{
@@ -236,44 +265,44 @@ func (c *Collector) registerAuthRoutes(router *breeze.Router, base, dir string) 
 // registerPageRoutes installs one HTML route per dashboard page.
 //
 // Every page renders the same way, so the list is data and the handler is written
-// once. auth is called inline rather than through c.wrap because a view route
-// answers an unauthenticated request with a redirect to the login page, while
-// wrap's callers are JSON endpoints that answer with a 401.
+// once. auth is run inline through authorize rather than through c.wrap because a view
+// route answers an unauthenticated request with a redirect to the login page, while
+// wrap's callers are JSON endpoints that answer with a 401. Either way the page renders
+// only when authorize says the request was let through: it used to render for every
+// answer the middleware gave except a 302 or 401, which included the 429 and 503 refusals.
 func (c *Collector) registerPageRoutes(router *breeze.Router, base string, auth breeze.HandlerFunc) {
 	pages := []string{
 		"overview", "routes", "api", "requests", "queries",
 		"cache", "logs",
 		"health", "performance", "timeline", "architecture",
-		"events", "video",
+		"events", "video", "database", "queue", "scheduler",
 	}
 	if c.cfg.FleetAggregatorURL != "" {
 		pages = append(pages, "fleet")
 	}
 
-	// Index route — auth + render overview
-	router.HandleBlocking(breeze.GET, base, func(ctx *breeze.Context) error {
-		auth(ctx)
-		if ctx.Res != nil && (ctx.Res.Status == 302 || ctx.Res.Status == 401) {
-			return nil
-		}
-		data := c.viewData(ctx, "overview")
-		c.engine.RenderView(ctx, "overview", data)
-
-		return nil
-	})
-
-	for _, page := range pages {
-		pageName := page
-		router.HandleBlocking(breeze.GET, base+"/"+pageName, func(ctx *breeze.Context) error {
-			auth(ctx)
-			if ctx.Res != nil && (ctx.Res.Status == 302 || ctx.Res.Status == 401) {
+	serve := func(page string) breeze.HandlerFunc {
+		return func(ctx *breeze.Context) error {
+			ok, err := authorize(auth, ctx)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				if ctx.Res != nil {
+					setSecurityHeaders(ctx)
+				}
 				return nil
 			}
-			data := c.viewData(ctx, pageName)
-			c.engine.RenderView(ctx, pageName, data)
+			c.renderPage(ctx, page)
 
 			return nil
-		})
+		}
+	}
+
+	// Index route — auth + render overview
+	router.HandleBlocking(breeze.GET, base, serve("overview"))
+	for _, page := range pages {
+		router.HandleBlocking(breeze.GET, base+"/"+page, serve(page))
 	}
 }
 
@@ -294,6 +323,10 @@ func (c *Collector) registerAPIRoutes(router *breeze.Router, base string, auth b
 	router.HandleBlocking(breeze.GET, api+"/cache", c.wrap(auth, c.handleCache))
 	router.HandleBlocking(breeze.POST, api+"/cache/clear", c.wrap(auth, c.handleCacheClear))
 	router.HandleBlocking(breeze.GET, api+"/logs", c.wrapService(auth, c.handleLogs))
+	router.HandleBlocking(breeze.GET, api+"/logs/counts", c.wrap(auth, c.handleLogCounts))
+	router.HandleBlocking(breeze.GET, api+"/queue", c.wrap(auth, c.handleQueue))
+	router.HandleBlocking(breeze.POST, api+"/queue/retry", c.wrap(auth, c.handleQueueRetry))
+	router.HandleBlocking(breeze.GET, api+"/scheduler", c.wrap(auth, c.handleScheduler))
 
 	router.HandleBlocking(breeze.GET, api+"/health", c.wrap(auth, c.handleHealth))
 	router.HandleBlocking(breeze.GET, api+"/performance", c.wrap(auth, c.handlePerformance))
@@ -332,6 +365,7 @@ func (c *Collector) viewData(ctx *breeze.Context, page string) map[string]any {
 		"ScriptFile":   script,
 		"PageTitle":    pageLabelFor(page),
 		"FleetEnabled": c.cfg.FleetAggregatorURL != "",
+		"VideoEnabled": c.VideoAttached(),
 	}
 }
 
@@ -360,16 +394,26 @@ func pageLabelFor(page string) string {
 	return page
 }
 
-// wrap runs the auth middleware then the given handler. The auth middleware
-// is responsible for short-circuiting unauthenticated requests; if it does
-// not abort, we call h.
+// wrap runs the auth middleware then the given handler.
+//
+// The handler runs only when authorize reports that the middleware let the request through.
+// Every other outcome — a redirect, a 401, a 429 from the login throttle, a 503 because no
+// credentials are configured, a 500 — is the middleware's finished answer, and is returned
+// as it is. (The previous check recognised 401, 403 and 302 and treated anything else as
+// "authenticated", so the throttle and the "not configured" refusals ran the handler and
+// returned the dashboard's data under their status code.)
 func (c *Collector) wrap(auth breeze.HandlerFunc, h breeze.HandlerFunc) breeze.HandlerFunc {
 	return func(ctx *breeze.Context) error {
-		auth(ctx)
-		if ctx.Res != nil && (ctx.Res.Status == 401 || ctx.Res.Status == 403 || ctx.Res.Status == 302) {
-			return nil
+		ok, err := authorize(auth, ctx)
+		if err != nil {
+			return err
 		}
-		h(ctx)
+		if ok {
+			_ = h(ctx)
+		}
+		if ctx.Res != nil {
+			setSecurityHeaders(ctx)
+		}
 
 		return nil
 	}
@@ -391,21 +435,25 @@ func (c *Collector) wrapService(auth breeze.HandlerFunc, h breeze.HandlerFunc) b
 	return func(ctx *breeze.Context) error {
 		if token := ctx.Req.Header["x-fleet-token"]; token != "" {
 			if c.cfg.ServiceToken == "" ||
-				subtle.ConstantTimeCompare([]byte(token), []byte(c.cfg.ServiceToken)) != 1 {
+				subtle.ConstantTimeCompare(hashPass(token), hashPass(c.cfg.ServiceToken)) != 1 {
 				// A presented-but-wrong token is rejected outright
 				// rather than falling through to session auth. Falling
 				// through would turn a token typo into a confusing
 				// login redirect instead of the 401 that names the
 				// actual problem.
 				ctx.Status(401)
-				return ctx.JSON(map[string]any{"error": "unauthorized"})
+				_ = ctx.JSON(map[string]any{"error": "unauthorized"})
+				setSecurityHeaders(ctx)
+				return nil
 			}
-			h(ctx)
+			_ = h(ctx)
+			if ctx.Res != nil {
+				setSecurityHeaders(ctx)
+			}
 			return nil
 		}
-		c.wrap(auth, h)(ctx)
 
-		return nil
+		return c.wrap(auth, h)(ctx)
 	}
 }
 
@@ -413,14 +461,15 @@ func (c *Collector) wrapService(auth breeze.HandlerFunc, h breeze.HandlerFunc) b
 
 func (c *Collector) handleOverview(ctx *breeze.Context) error {
 	m := c.Metrics()
-	recent := c.Requests(0)
-	// Compute today's date boundary.
+	// The count only. This used to copy every captured request (up to MaxRequests
+	// records) to take len() of the copy.
+	recent := c.requests.Len()
 	history := c.MetricsHistory(60)
 	return ctx.JSON(map[string]any{
 		"metrics":        m,
 		"history":        history,
 		"routes":         len(c.RouteStats()),
-		"requests":       len(recent),
+		"requests":       recent,
 		"cache":          c.CacheStats(),
 		"collector":      c.cfg.Enabled,
 		"total_views":    c.requestsTotal.Load(),
@@ -608,14 +657,6 @@ func (c *Collector) handleCache(ctx *breeze.Context) error {
 	return ctx.JSON(c.CacheStats())
 }
 
-func (c *Collector) handleCacheClear(ctx *breeze.Context) error {
-	prefix := ctx.Query("prefix")
-	_ = prefix
-	c.cacheHits.Store(0)
-	c.cacheMisses.Store(0)
-	return ctx.JSON(map[string]any{"ok": true})
-}
-
 func (c *Collector) handleLogs(ctx *breeze.Context) error {
 	return ctx.JSON(c.logsPayload(ctx))
 }
@@ -632,15 +673,20 @@ func (c *Collector) logsPayload(params query) []LogEntry {
 	q := params.Query("q")
 	traceID := params.Query("trace_id")
 	all := c.Logs(level, n)
+	if all == nil {
+		// A level nobody recognises: an empty list, not JSON null, which the page cannot map over.
+		all = []LogEntry{}
+	}
 	if q == "" && traceID == "" {
 		return all
 	}
+	needle := strings.ToLower(q)
 	out := make([]LogEntry, 0, len(all))
 	for _, e := range all {
 		if traceID != "" && e.TraceID != traceID {
 			continue
 		}
-		if q == "" || strings.Contains(strings.ToLower(e.Message), strings.ToLower(q)) {
+		if needle == "" || strings.Contains(strings.ToLower(e.Message), needle) {
 			out = append(out, e)
 		}
 	}
@@ -648,32 +694,58 @@ func (c *Collector) logsPayload(params query) []LogEntry {
 }
 
 func (c *Collector) handleCapabilities(ctx *breeze.Context) error {
-	return ctx.JSON(map[string]any{"fleet_enabled": c.cfg.FleetAggregatorURL != ""})
+	return ctx.JSON(c.capabilitiesPayload())
+}
+
+// redactURL drops any credentials embedded in a URL, so it can be shown in an error.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	u.User = nil
+	return u.String()
 }
 
 // handleFleetProxy keeps aggregator credentials and topology off the browser.
 // Only GET is registered: Fleet View is observability and must not mutate the
 // aggregator through the dashboard seam.
+//
+// What it forwards is deliberately narrow, because it attaches the dashboard's aggregator
+// credentials to a request whose path comes from the browser: the path must be plain URL
+// path characters with no dot segments (so it cannot climb out of /api/ to something the
+// credentials were never meant for), a redirect is returned rather than followed, and only a
+// JSON answer is passed back, so a page the aggregator (or something it proxies) serves cannot
+// be rendered under the dashboard's origin.
 func (c *Collector) handleFleetProxy(ctx *breeze.Context) error {
 	path := strings.TrimPrefix(ctx.GetParam("path"), "/")
 	base := strings.TrimSuffix(c.cfg.FleetAggregatorURL, "/")
+	if !validFleetPath(path) {
+		return jsonError(ctx, http.StatusBadRequest, "invalid fleet path")
+	}
 	u := base + "/api/" + path
 	if raw := ctx.Req.Query.Encode(); raw != "" {
 		u += "?" + raw
 	}
+	shown := redactURL(base)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
 	if err != nil {
 		ctx.Status(502)
-		return ctx.JSON(map[string]any{"error": "fleet aggregator unreachable", "url": base})
+		return ctx.JSON(map[string]any{"error": "fleet aggregator unreachable", "url": shown})
 	}
 	if c.cfg.FleetAggregatorUsername != "" && c.cfg.FleetAggregatorPassword != "" {
 		req.SetBasicAuth(c.cfg.FleetAggregatorUsername, c.cfg.FleetAggregatorPassword)
 	}
-	client := http.Client{Timeout: 2 * time.Second}
+	client := http.Client{
+		Timeout: 2 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		ctx.Status(502)
-		return ctx.JSON(map[string]any{"error": "fleet aggregator unreachable", "url": base})
+		return ctx.JSON(map[string]any{"error": "fleet aggregator unreachable", "url": shown})
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -681,7 +753,11 @@ func (c *Collector) handleFleetProxy(ctx *breeze.Context) error {
 		ctx.Status(502)
 		return ctx.JSON(map[string]any{"error": "fleet aggregator response unreadable"})
 	}
-	ctx.Res = &breeze.HTTPResponse{Status: resp.StatusCode, Headers: map[string]string{"Content-Type": resp.Header.Get("Content-Type")}, Body: body}
+	if ct := strings.ToLower(resp.Header.Get("Content-Type")); !strings.HasPrefix(ct, "application/json") {
+		ctx.Status(502)
+		return ctx.JSON(map[string]any{"error": "fleet aggregator answered with something other than JSON"})
+	}
+	ctx.Res = &breeze.HTTPResponse{Status: resp.StatusCode, Headers: map[string]string{"Content-Type": "application/json"}, Body: body}
 
 	return nil
 }
@@ -730,12 +806,7 @@ func (c *Collector) handleTimelineGet(ctx *breeze.Context) error {
 // timelineByID is what the timeline/:id endpoint serves: the timeline of one request, found by
 // the id of that request.
 func (c *Collector) timelineByID(id string) (Timeline, bool) {
-	for _, t := range c.Timelines(0) {
-		if t.ID == id {
-			return t, true
-		}
-	}
-	return Timeline{}, false
+	return c.timelines.Find(func(t *Timeline) bool { return t.ID == id })
 }
 
 func (c *Collector) handleArchitecture(ctx *breeze.Context) error {
@@ -746,6 +817,9 @@ func (c *Collector) handleArchitecture(ctx *breeze.Context) error {
 // application declared, with their status, and the counts by status.
 func (c *Collector) architecturePayload() map[string]any {
 	conns := c.Connections()
+	for i := range conns {
+		conns[i] = c.redactConnection(conns[i])
+	}
 
 	// Aggregate stats
 	total := len(conns)
@@ -794,15 +868,43 @@ func (c *Collector) handleDBTableData(ctx *breeze.Context) error {
 	if inspector == nil {
 		return ctx.JSON(TableData{Table: ctx.Param("name"), Page: 1, PageSize: 50, Total: 0, Rows: []map[string]any{}, Columns: []TableColumn{}})
 	}
-	page := atoiDefault(ctx.Query("page"), 1)
-	pageSize := atoiDefault(ctx.Query("page_size"), 50)
-	data, err := inspector.TableData(ctx.Param("name"), page, pageSize, ctx.Query("search"))
+	// Reads name a table too, and the inspector is the application's code: it may well put the
+	// name into a statement. Only a table the inspector itself lists is browsable, which is the
+	// rule the write path already applied (so a request cannot ask for sqlite_master or a
+	// system catalogue the application never meant to expose).
+	table := ctx.Param("name")
+	if listed, err := tableListed(inspector, table); err != nil {
+		ctx.Status(500)
+		return ctx.JSON(map[string]any{"error": err.Error()})
+	} else if !listed {
+		return jsonError(ctx, 404, "unknown table: "+table)
+	}
+	page, pageSize := clampPage(atoiDefault(ctx.Query("page"), 1), atoiDefault(ctx.Query("page_size"), 50))
+	search := ctx.Query("search")
+	if len(search) > maxDBSearch {
+		search = strings.ToValidUTF8(search[:maxDBSearch], "")
+	}
+	data, err := inspector.TableData(table, page, pageSize, search)
 	if err != nil {
 		ctx.Status(500)
 		return ctx.JSON(map[string]any{"error": err.Error()})
 	}
 	data.Writable = c.cfg.AllowWrites && c.DBWriter() != nil
 	return ctx.JSON(data)
+}
+
+// tableListed reports whether the inspector lists a table by that name.
+func tableListed(inspector DBInspector, name string) (bool, error) {
+	tables, err := inspector.Tables()
+	if err != nil {
+		return false, err
+	}
+	for _, t := range tables {
+		if t.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // writableGuard checks that the Database Browser's write path is enabled
@@ -823,20 +925,24 @@ func (c *Collector) writableGuard(ctx *breeze.Context, table string) (DBWriter, 
 		ctx.JSON(map[string]any{"error": "writes are not enabled"})
 		return nil, false
 	}
-	tables, err := inspector.Tables()
+	listed, err := tableListed(inspector, table)
 	if err != nil {
 		ctx.Status(500)
 		ctx.JSON(map[string]any{"error": err.Error()})
 		return nil, false
 	}
-	for _, t := range tables {
-		if t.Name == table {
-			return writer, true
-		}
+	if !listed {
+		ctx.Status(400)
+		ctx.JSON(map[string]any{"error": "unknown table: " + table})
+		return nil, false
 	}
+	return writer, true
+}
+
+// badWrite answers a write request that failed validation.
+func badWrite(ctx *breeze.Context, err error) error {
 	ctx.Status(400)
-	ctx.JSON(map[string]any{"error": "unknown table: " + table})
-	return nil, false
+	return ctx.JSON(map[string]any{"error": err.Error()})
 }
 
 func (c *Collector) handleDBTableInsert(ctx *breeze.Context) error {
@@ -852,13 +958,17 @@ func (c *Collector) handleDBTableInsert(ctx *breeze.Context) error {
 		ctx.Status(400)
 		return ctx.JSON(map[string]any{"error": "invalid request body"})
 	}
+	if err := validateWriteKeys(tableColumns(c.DBInspector(), table), req.Values, nil, false); err != nil {
+		return badWrite(ctx, err)
+	}
 	row, err := writer.InsertRow(table, req.Values)
 	if err != nil {
 		ctx.Status(400)
 		return ctx.JSON(map[string]any{"error": err.Error()})
 	}
 	c.invalidateTableCache(table)
-	c.RecordLog("app", LogEntry{Time: now(), Message: fmt.Sprintf("db write: insert into %s", table)})
+	c.RecordLog("app", LogEntry{Time: now(), Source: "dashboard",
+		Message: fmt.Sprintf("db write: insert into %s (by %s)", table, auditUser(ctx))})
 	ctx.Status(201)
 	return ctx.JSON(row)
 }
@@ -869,7 +979,10 @@ func (c *Collector) handleDBTableUpdate(ctx *breeze.Context) error {
 	if !ok {
 		return nil
 	}
-	pk := parsePK(ctx.Param("pk"))
+	pk, err := parsePKStrict(ctx.Param("pk"))
+	if err != nil {
+		return badWrite(ctx, err)
+	}
 	var req struct {
 		Values map[string]any `json:"values"`
 	}
@@ -877,7 +990,10 @@ func (c *Collector) handleDBTableUpdate(ctx *breeze.Context) error {
 		ctx.Status(400)
 		return ctx.JSON(map[string]any{"error": "invalid request body"})
 	}
-	err := writer.UpdateRow(table, pk, req.Values)
+	if err := validateWriteKeys(tableColumns(c.DBInspector(), table), req.Values, pk, true); err != nil {
+		return badWrite(ctx, err)
+	}
+	err = writer.UpdateRow(table, pk, req.Values)
 	if errors.Is(err, ErrRowNotFound) {
 		ctx.Status(404)
 		return ctx.JSON(map[string]any{"error": "row not found"})
@@ -887,7 +1003,8 @@ func (c *Collector) handleDBTableUpdate(ctx *breeze.Context) error {
 		return ctx.JSON(map[string]any{"error": err.Error()})
 	}
 	c.invalidateTableCache(table)
-	c.RecordLog("app", LogEntry{Time: now(), Message: fmt.Sprintf("db write: update %s pk=%s", table, ctx.Param("pk"))})
+	c.RecordLog("app", LogEntry{Time: now(), Source: "dashboard",
+		Message: fmt.Sprintf("db write: update %s pk=%s (by %s)", table, ctx.Param("pk"), auditUser(ctx))})
 	return ctx.JSON(map[string]any{"ok": true})
 }
 
@@ -897,8 +1014,14 @@ func (c *Collector) handleDBTableDelete(ctx *breeze.Context) error {
 	if !ok {
 		return nil
 	}
-	pk := parsePK(ctx.Param("pk"))
-	err := writer.DeleteRow(table, pk)
+	pk, err := parsePKStrict(ctx.Param("pk"))
+	if err != nil {
+		return badWrite(ctx, err)
+	}
+	if err := validateWriteKeys(tableColumns(c.DBInspector(), table), nil, pk, true); err != nil {
+		return badWrite(ctx, err)
+	}
+	err = writer.DeleteRow(table, pk)
 	if errors.Is(err, ErrRowNotFound) {
 		ctx.Status(404)
 		return ctx.JSON(map[string]any{"error": "row not found"})
@@ -908,7 +1031,8 @@ func (c *Collector) handleDBTableDelete(ctx *breeze.Context) error {
 		return ctx.JSON(map[string]any{"error": err.Error()})
 	}
 	c.invalidateTableCache(table)
-	c.RecordLog("app", LogEntry{Time: now(), Message: fmt.Sprintf("db write: delete from %s pk=%s", table, ctx.Param("pk"))})
+	c.RecordLog("app", LogEntry{Time: now(), Source: "dashboard",
+		Message: fmt.Sprintf("db write: delete from %s pk=%s (by %s)", table, ctx.Param("pk"), auditUser(ctx))})
 	ctx.Status(204)
 
 	return nil
@@ -932,6 +1056,7 @@ func statusMatch(filter string, status int) bool {
 	if filter == "" {
 		return true
 	}
+	filter = strings.ToLower(strings.TrimSpace(filter))
 	if strings.HasSuffix(filter, "xx") {
 		prefix := filter[:len(filter)-2]
 		class, err := strconv.Atoi(prefix)

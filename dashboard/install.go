@@ -2,7 +2,10 @@ package dashboard
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/nelthaarion/breeze/v2"
@@ -25,9 +28,19 @@ import (
 // to grow to the peak heap size and never shrink.
 //
 // Install is idempotent: calling it twice on the same router is safe (the
-// second call is a no-op). The middleware returned by Middleware(c) should
-// be installed via router.Use() before any application routes are added so
-// every request is instrumented.
+// second call returns the collector the first one built and does nothing else).
+// The middleware returned by Middleware(c) should be installed via router.Use()
+// before any application routes are added so every request is instrumented.
+//
+// With Config.Enabled false, Install builds an inert collector: nothing is counted
+// or sampled, no goroutine is started (no sampler, WebSocket loop or state saver) and
+// no runtime tuning is applied. The routes are still registered, behind the login, so
+// the read API keeps answering — with zero counts — and a tool that asks can tell a
+// dashboard that is switched off from one that has seen no traffic (the MCP routes
+// tool reports "not measured" from it). The live WebSocket is refused.
+//
+// Stop what Install started — the sampler, the WebSocket broadcast loop and the
+// state saver, which writes the counters one last time — with Collector.Close.
 //
 // Usage:
 //
@@ -37,7 +50,36 @@ import (
 //	// ... register application routes ...
 //	app.Run(3000, true)
 func Install(app *breeze.Breeze, router *breeze.Router, cfg Config) *Collector {
+	// The documented contract is that a second Install on the same router is a no-op. It was
+	// not: every call built a new collector, started another sampler and hub, tuned the GC
+	// again and registered every route a second time.
+	if router != nil {
+		if prev, ok := installed.Load(router); ok {
+			c := prev.(*Collector)
+			if c.cfg.Enabled {
+				c.MakeCurrent()
+			}
+			return c
+		}
+	}
+
 	cfg = cfg.withDefaults()
+	c := newCollector(cfg, router)
+	c.app = app
+
+	if !cfg.Enabled {
+		// Off means nothing runs. The sampler used to tick (a stop-the-world ReadMemStats every
+		// second), the hub's loop to spin and the GC to be retuned for a dashboard that was
+		// switched off. The read API stays (see Install's documentation).
+		diag.EnableCounters()
+		c.registerDiagnostics()
+		c.MakeCurrent()
+		c.registerRoutes(router, app)
+		if router != nil {
+			installed.Store(router, c)
+		}
+		return c
+	}
 
 	// ── Apply Go runtime memory tuning ────────────────────────────────────
 	//
@@ -54,16 +96,19 @@ func Install(app *breeze.Breeze, router *breeze.Router, cfg Config) *Collector {
 	// GOGC controls the GC trigger rate. Lower = more frequent GC =
 	// smaller heap. We default to 50 (vs Go's 100) to keep the heap
 	// from growing too large between GCs.
-	if cfg.GOGC != 0 {
+	//
+	// An operator's own GOGC / GOMEMLIMIT environment variables win: these are the
+	// library's defaults, and a default that silently overrides the setting someone chose for
+	// their deployment (a 4 GiB limit replaced by 512 MiB) is the worst kind of surprise.
+	if cfg.GOGC != 0 && os.Getenv("GOGC") == "" {
 		debug.SetGCPercent(cfg.GOGC)
 	}
-	if cfg.GOMEMLIMIT > 0 {
+	if cfg.GOMEMLIMIT > 0 && os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(cfg.GOMEMLIMIT)
 	}
 
-	c := newCollector(cfg, router)
-	c.app = app
 	c.hub = newWSHub(c)
+	c.onClose(c.hub.close)
 
 	// Counted diagnostics on. A process that installed the dashboard has already
 	// accepted per-request instrumentation — that is what the dashboard is — so
@@ -84,33 +129,60 @@ func Install(app *breeze.Breeze, router *breeze.Router, cfg Config) *Collector {
 		if err != nil || saveInterval <= 0 {
 			saveInterval = time.Minute
 		}
-		startSaveLoop(c, saveInterval)
+		c.onClose(startSaveLoop(c, saveInterval))
 	}
 
 	c.registerRoutes(router, app)
-	startMetricsSampler(c)
+	if cfg.Metrics {
+		c.onClose(startMetricsSampler(c))
+	}
+	installedAt := time.Now()
+
+	if !cfg.DisableAuth && !c.authConfigured() {
+		authWarnOnce.Do(func() {
+			log.Printf("breeze dashboard: %s is locked (HTTP 503) because no credentials are configured — "+
+				"set Config.Username and Config.Password, or Config.DisableAuth for a trusted local setup", cfg.BasePath)
+		})
+	}
 
 	// Register a real health check for the dashboard itself.
 	// This verifies the collector and metrics sampler are actually running,
 	// not just returning a hardcoded "green".
 	c.RegisterHealthCheck("dashboard", func() (string, string) {
-		if !c.cfg.Enabled {
-			return "yellow", "dashboard is disabled in config"
+		if !cfg.Metrics {
+			return "green", fmt.Sprintf("online — %d requests counted (runtime metrics are off)", c.requestsTotal.Load())
 		}
-		m := c.Metrics()
-		if m.Time.IsZero() {
-			return "yellow", "metrics sampler not yet started"
+		// Metrics() answers with the current time when nothing has been sampled, which
+		// made "not yet started" unreachable; ask the history instead.
+		snaps := c.MetricsHistory(1)
+		if len(snaps) == 0 {
+			// The sampler ticks once a second, so a check made just after Install has nothing to
+			// look at yet. Past a few seconds with still no sample, it never started.
+			if time.Since(installedAt) < 5*time.Second {
+				return "green", "starting — the metrics sampler has not ticked yet"
+			}
+			return "red", "metrics sampler has not produced a sample"
 		}
+		m := snaps[len(snaps)-1]
 		// Check that the metrics sampler has run recently (within last 5s).
-		if time.Since(m.Time) > 5*time.Second {
-			return "red", "metrics sampler stalled (last sample " + time.Since(m.Time).String() + " ago)"
+		if since := time.Since(m.Time); since > 5*time.Second {
+			return "red", "metrics sampler stalled (last sample " + since.Round(time.Millisecond).String() + " ago)"
 		}
 		return "green", fmt.Sprintf("online — %d requests captured, %d goroutines",
 			c.requestsTotal.Load(), m.Goroutines)
 	})
 
+	if router != nil {
+		installed.Store(router, c)
+	}
 	return c
 }
+
+// installed remembers the collector Install built for each router.
+var installed sync.Map // *breeze.Router → *Collector
+
+// authWarnOnce keeps the "locked" notice to one line per process however many dashboards are built.
+var authWarnOnce sync.Once
 
 // Middleware is re-exported here so consumers can install the instrumentation
 // middleware via router.Use(dashboard.Middleware(coll)) in a single import.

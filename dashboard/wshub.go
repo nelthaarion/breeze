@@ -20,6 +20,11 @@ const wsFlushInterval = 100 * time.Millisecond
 // 512 events is useful, one that queues unboundedly is a memory leak.
 const wsMaxBatch = 512
 
+// maxWSClients caps simultaneous dashboard connections. Every snapshot is written to every
+// client each second, so an unbounded number of open tabs (or a script opening sockets) is
+// unbounded work for the one goroutine that does the writing.
+const maxWSClients = 64
+
 // wsHub multiplexes dashboard WebSocket connections and broadcasts periodic
 // snapshots and live events to every connected client.
 //
@@ -39,9 +44,11 @@ type wsHub struct {
 	c       *Collector
 	stop    chan struct{}
 
-	// pending holds live events awaiting the next flush.
+	// pending holds live events awaiting the next flush. dropped counts the events that
+	// were discarded since the last flush because pending was full.
 	pmu     sync.Mutex
 	pending []wsEvent
+	dropped int
 
 	closeOnce sync.Once
 }
@@ -69,12 +76,20 @@ func (h *wsHub) close() {
 	h.closeOnce.Do(func() { close(h.stop) })
 }
 
-// register adds a client and immediately sends a snapshot.
+// register adds a client and immediately sends a snapshot. A client past maxWSClients is
+// closed with 1013 (try again later) instead.
 func (h *wsHub) register(conn *breeze.WSConn) {
 	h.mu.Lock()
+	if len(h.clients) >= maxWSClients {
+		h.mu.Unlock()
+		conn.Close(1013, "too many dashboard connections")
+		return
+	}
 	h.clients[conn] = struct{}{}
 	h.mu.Unlock()
-	_ = conn.SendText(h.snapshotMessage())
+	if msg := h.snapshotMessage(); msg != "" {
+		_ = conn.SendText(msg)
+	}
 }
 
 // unregister removes a client.
@@ -128,7 +143,9 @@ func (h *wsHub) broadcastLoop() {
 			h.flush()
 		case <-snap.C:
 			if h.clientCount() > 0 {
-				h.broadcast(h.snapshotMessage())
+				if msg := h.snapshotMessage(); msg != "" {
+					h.broadcast(msg)
+				}
 			}
 		}
 	}
@@ -145,17 +162,24 @@ func (h *wsHub) flush() {
 	// Hand off the slice and start a fresh one so producers are never
 	// blocked by the encode/write below.
 	h.pending = make([]wsEvent, 0, 64)
+	dropped := h.dropped
+	h.dropped = 0
 	h.pmu.Unlock()
 
 	if h.clientCount() == 0 {
 		return
 	}
 
-	msg, err := json.Marshal(map[string]any{
+	frame := map[string]any{
 		"type":   "batch",
 		"time":   time.Now().UTC().Format(time.RFC3339),
 		"events": batch,
-	})
+	}
+	if dropped > 0 {
+		// Said, not hidden: the page shows a notice that the live stream skipped events.
+		frame["dropped"] = dropped
+	}
+	msg, err := json.Marshal(frame)
 	if err != nil {
 		return
 	}
@@ -172,7 +196,12 @@ func (h *wsHub) snapshotMessage() string {
 		"queue":   h.c.QueueStats(),
 		"cache":   h.c.CacheStats(),
 	}
-	b, _ := json.Marshal(m)
+	b, err := json.Marshal(m)
+	if err != nil {
+		// Send nothing rather than an empty frame, which the page fails to parse and
+		// then shows no data until the next good one.
+		return ""
+	}
 	return string(b)
 }
 
@@ -195,9 +224,14 @@ func pushEvent[T any](h *wsHub, kind string, payload T) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	h.pmu.Lock()
 	if len(h.pending) >= wsMaxBatch {
-		// Drop the oldest to bound memory under a burst.
-		copy(h.pending, h.pending[1:])
-		h.pending = h.pending[:len(h.pending)-1]
+		// Drop the oldest quarter to bound memory under a burst. Dropping one at a time
+		// shifted the whole slice on every event once it was full — a 24 KB copy per request
+		// under the lock the request path takes, at exactly the moment the load is highest.
+		drop := wsMaxBatch / 4
+		n := copy(h.pending, h.pending[drop:])
+		clear(h.pending[n:]) // release the payloads the tail still references
+		h.pending = h.pending[:n]
+		h.dropped += drop
 	}
 	h.pending = append(h.pending, wsEvent{
 		Channel: kind,

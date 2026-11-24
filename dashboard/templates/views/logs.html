@@ -1,12 +1,12 @@
 {{define "content"}}
-<div class="log-tabs" id="log-tabs">
-  <div class="log-tab active" data-tab="app">Application<span class="count" id="log-count-app">0</span></div>
-  <div class="log-tab" data-tab="http">HTTP<span class="count" id="log-count-http">0</span></div>
-  <div class="log-tab" data-tab="error">Errors<span class="count" id="log-count-error">0</span></div>
-  <div class="log-tab" data-tab="panic">Panics<span class="count" id="log-count-panic">0</span></div>
-  <div class="log-tab" data-tab="warning">Warnings<span class="count" id="log-count-warning">0</span></div>
+<div class="log-tabs" id="log-tabs" role="tablist" aria-label="Log level">
+  <div class="log-tab active" data-tab="app" role="tab" tabindex="0" aria-selected="true">Application<span class="count" id="log-count-app">0</span></div>
+  <div class="log-tab" data-tab="http" role="tab" tabindex="0" aria-selected="false">HTTP<span class="count" id="log-count-http">0</span></div>
+  <div class="log-tab" data-tab="error" role="tab" tabindex="0" aria-selected="false">Errors<span class="count" id="log-count-error">0</span></div>
+  <div class="log-tab" data-tab="panic" role="tab" tabindex="0" aria-selected="false">Panics<span class="count" id="log-count-panic">0</span></div>
+  <div class="log-tab" data-tab="warning" role="tab" tabindex="0" aria-selected="false">Warnings<span class="count" id="log-count-warning">0</span></div>
 </div>
-<div style="margin-bottom:12px"><input id="log-search" placeholder="Search logs..." style="max-width:400px"></div>
+<div style="margin-bottom:12px"><input id="log-search" type="search" placeholder="Search logs..." aria-label="Search logs" style="max-width:400px"></div>
 <div class="log-viewer" id="log-viewer"></div>
 <script data-spa-run="always">
 window.__breezeDashPage='logs';

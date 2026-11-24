@@ -32,6 +32,14 @@ var S = {
   logSearch: '',
   _slowOnly: false,
   _routeSearch: '',
+  caps: {slow_request_ms: 500, slow_query_ms: 100},
+  reqPaused: false,
+  reqBuffer: [],
+  _fresh: {},
+  apiForm: {},
+  apiFilter: '',
+  dbTable: null,
+  dbState: {page:1, pageSize:50, search:''},
   fleet: {cursor:'', hasMore:false, loading:false, traces:[], topology:null, services:[], incidents:[], playback:null},
 };
 
@@ -53,6 +61,90 @@ function el(tag, attrs, kids){
   });
   return e;
 }
+// ─── Motion, safety and feedback helpers ───────────────────────────────
+// Every animation in this file asks motionOK() first: people who ask their OS for
+// reduced motion get the same dashboard, with the state changes and none of the movement.
+var _reducedMotion = null;
+try { _reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)'); } catch(e){}
+function motionOK(){ return !(_reducedMotion && _reducedMotion.matches); }
+
+// cls makes a server-supplied word safe to use as a CSS class name or inside a class attribute.
+function cls(s){ return String(s==null?'':s).replace(/[^A-Za-z0-9_-]/g, ''); }
+// attr makes a value safe inside a double-quoted HTML attribute.
+function attr(s){ return escapeHTML(s); }
+// num coerces to a finite number for places that print one unescaped.
+function num(n){ n = Number(n); return isFinite(n) ? n : 0; }
+// healthState maps whatever a probe reported onto the three states the page draws.
+function healthState(s){
+  s = String(s||'').toLowerCase();
+  return (s==='green'||s==='yellow'||s==='red') ? s : 'yellow';
+}
+// connState maps a connection status onto the classes the Architecture page styles.
+function connState(s){
+  s = String(s||'').toLowerCase();
+  return (s==='connected'||s==='disconnected'||s==='degraded') ? s : 'unknown';
+}
+function isZeroTime(d){ return d.getUTCFullYear() <= 1 || d.getTime() <= 0; }
+
+// rafBatch coalesces repeated render requests into one per animation frame. A live
+// batch can hold hundreds of events, and each one used to rebuild its whole table.
+var _batched = {};
+function rafBatch(name, fn){
+  if(_batched[name]) return;
+  var run = function(){ _batched[name] = 0; try { fn(); } catch(e){ if(window.console) console.error(e); } };
+  _batched[name] = (window.requestAnimationFrame ? requestAnimationFrame(run) : setTimeout(run, 16));
+}
+
+// toast shows a short message that does not block the page (the explorer used alert()).
+function toast(message, kind, ms){
+  var host = document.getElementById('toasts');
+  if(!host){
+    host = el('div', {id:'toasts', class:'toasts', 'aria-live':'polite', 'aria-atomic':'false'});
+    document.body.appendChild(host);
+  }
+  var t = el('div', {class:'toast '+(kind||'info'), role: kind==='error' ? 'alert' : 'status'}, [
+    el('span', {class:'toast-dot', 'aria-hidden':'true'}),
+    el('span', {class:'toast-msg', text:String(message)})
+  ]);
+  host.appendChild(t);
+  requestAnimationFrame(function(){ t.classList.add('in'); });
+  var closed = false;
+  function close(){
+    if(closed) return; closed = true;
+    t.classList.remove('in'); t.classList.add('out');
+    setTimeout(function(){ if(t.parentNode) t.parentNode.removeChild(t); }, motionOK() ? 240 : 0);
+  }
+  var timer = setTimeout(close, ms || (kind==='error' ? 6000 : 3600));
+  t.addEventListener('click', function(){ clearTimeout(timer); close(); });
+  while(host.children.length > 4) host.removeChild(host.firstChild);
+  return close;
+}
+var _noticeAt = {};
+// notifyError is toast('error') at most once per message every few seconds, so a page that
+// polls a failing endpoint does not bury the screen.
+function notifyError(message){
+  var now = Date.now();
+  if(_noticeAt[message] && now - _noticeAt[message] < 8000) return;
+  _noticeAt[message] = now;
+  toast(message, 'error');
+}
+
+// tween moves a number from a to b over ms, calling step(value) each frame.
+function tween(a, b, ms, step, done){
+  if(!motionOK() || !isFinite(a) || !isFinite(b) || a === b){ step(b); if(done) done(); return function(){}; }
+  var t0 = null, raf = 0, dead = false;
+  function frame(ts){
+    if(dead) return;
+    if(t0 === null) t0 = ts;
+    var p = Math.min(1, (ts - t0) / ms);
+    var e = 1 - Math.pow(1 - p, 3); // ease-out cubic
+    step(a + (b - a) * e);
+    if(p < 1) raf = requestAnimationFrame(frame); else if(done) done();
+  }
+  raf = requestAnimationFrame(frame);
+  return function(){ dead = true; if(raf) cancelAnimationFrame(raf); };
+}
+
 // reconcileList patches a container's children to match `items`, keyed by
 // keyFn(item), instead of replacing innerHTML wholesale. This is what most
 // render*() functions in this file don't do — they rebuild their whole
@@ -119,12 +211,14 @@ function fmtTime(t){
   if(!t) return '-';
   var d = new Date(t);
   if(isNaN(d)) return t;
+  if(isZeroTime(d)) return '-';
   return d.toLocaleTimeString([], {hour12:false}) + '.' + String(d.getMilliseconds()).padStart(3,'0');
 }
 function fmtDate(t){
   if(!t) return '-';
   var d = new Date(t);
   if(isNaN(d)) return t;
+  if(isZeroTime(d)) return '-';
   return d.toISOString().slice(0,19).replace('T',' ');
 }
 function fmtBytes(n){
@@ -172,6 +266,16 @@ function throwIfAborted(signal){
   error.name = 'AbortError';
   throw error;
 }
+// loginURL sends a signed-out person to the login page and brings them back to where they were.
+function loginURL(){
+  return S.base + '/login?next=' + encodeURIComponent(location.pathname + location.search);
+}
+function failure(r, data){
+  var e = new Error((data && data.error) ? data.error : ('HTTP ' + r.status));
+  e.status = r.status;
+  e.data = data;
+  return e;
+}
 function api(path, options){
   options = options || {};
   var signal = options.signal;
@@ -182,16 +286,29 @@ function api(path, options){
     throwIfAborted(signal);
     if(r.status === 401){
       // Session expired — redirect to login.
-      window.location.href = S.base + '/login';
+      window.location.href = loginURL();
       throw new Error('unauthorized');
     }
-    if(!r.ok) throw new Error('HTTP '+r.status);
+    if(!r.ok){
+      // A failed load used to be swallowed by every page's catch, which then drew its
+      // empty state ("No requests yet") as if the server had answered with nothing.
+      return r.json().catch(function(){ return null; }).then(function(d){
+        var e = failure(r, d);
+        notifyError('Could not load ' + path.split('?')[0] + ': ' + e.message);
+        throw e;
+      });
+    }
     return r.json().then(function(data){
       throwIfAborted(signal);
       return data;
     });
+  }, function(err){
+    if(!err || err.name !== 'AbortError') notifyError('Cannot reach the dashboard server');
+    throw err;
   });
 }
+// apiPost rejects on a non-2xx answer, with the server's message on the error. Its callers
+// say what they were doing; the generic toast api() raises would not.
 function apiPost(path, body, options){
   options = options || {};
   var signal = options.signal;
@@ -203,34 +320,57 @@ function apiPost(path, body, options){
   }).then(function(r){
     throwIfAborted(signal);
     if(r.status === 401){
-      window.location.href = S.base + '/login';
+      window.location.href = loginURL();
       throw new Error('unauthorized');
     }
-    return r.json().then(function(data){
+    return r.json().catch(function(){ return null; }).then(function(data){
       throwIfAborted(signal);
+      if(!r.ok) throw failure(r, data);
       return data;
     });
+  }, function(err){
+    if(!err || err.name !== 'AbortError') notifyError('Cannot reach the dashboard server');
+    throw err;
   });
 }
 
 // ─── WebSocket ─────────────────────────────────────────────────────────
+// Reconnection backs off (1s, 2s, 4s … 30s, with jitter) instead of retrying every two
+// seconds forever, and a socket that never opens is usually an expired session, so the
+// API is asked: its 401 sends the person to the login page.
+var _wsTries = 0, _wsTimer = 0;
+function scheduleWS(){
+  clearTimeout(_wsTimer);
+  var base = Math.min(30000, 1000 * Math.pow(2, Math.min(_wsTries, 5)));
+  _wsTimer = setTimeout(connectWS, base * (0.75 + Math.random() * 0.5));
+  _wsTries++;
+}
+function checkSession(){
+  fetch(S.base + '/api/capabilities').then(function(r){
+    if(r.status === 401) window.location.href = loginURL();
+  }).catch(function(){});
+}
 function connectWS(){
   var proto = location.protocol==='https:'?'wss:':'ws:';
   var url = proto + '//' + location.host + S.base + '/ws';
+  var opened = false;
   try {
     S.ws = new WebSocket(url);
   } catch(e){
-    setTimeout(connectWS, 3000);
+    scheduleWS();
     return;
   }
   S.ws.onopen = function(){
+    opened = true;
+    _wsTries = 0;
     S.wsConnected = true;
     updateWSIndicator();
   };
   S.ws.onclose = function(){
     S.wsConnected = false;
     updateWSIndicator();
-    setTimeout(connectWS, 2000);
+    if(!opened && _wsTries >= 1) checkSession();
+    scheduleWS();
   };
   S.ws.onerror = function(){try{S.ws.close();}catch(e){}};
   S.ws.onmessage = function(ev){
@@ -238,9 +378,16 @@ function connectWS(){
     try { msg = JSON.parse(ev.data); } catch(e){ return; }
     if(msg.type==='snapshot'){
       S.snapshot = msg;
+      var clock = $('#server-time');
+      if(clock && msg.time){
+        // The topbar's clock element was never filled. It now shows the time of the latest update, which
+        // doubles as a heartbeat: it stops moving when the stream does.
+        var when = new Date(msg.time);
+        if(!isNaN(when)) clock.textContent = when.toLocaleTimeString([], {hour12:false});
+      }
       if(S.history.length>120) S.history.shift();
       S.history.push(msg.metrics);
-      if(S.page==='overview') renderOverview();
+      if(S.page==='overview') rafBatch('overview', renderOverview);
     } else if(msg.type==='batch'){
       // The hub batches live records into one frame every 100ms. Each
       // entry carries its own channel, so unwrap and dispatch each one.
@@ -249,33 +396,52 @@ function connectWS(){
           onEvent(msg.events[i].channel, msg.events[i].data);
         }
       }
+      if(msg.dropped > 0) notifyInfo('The live stream skipped ' + msg.dropped + ' events: traffic is too fast to show every request.');
     } else if(msg.type==='event'){
       onEvent(msg.channel, msg.data);
     }
   };
 
 }
+var _infoAt = 0;
+function notifyInfo(message){
+  var now = Date.now();
+  if(now - _infoAt < 10000) return;
+  _infoAt = now;
+  toast(message, 'info');
+}
 function updateWSIndicator(){
   var dot = $('#ws-dot');
   if(dot) dot.className = 'ws-dot ' + (S.wsConnected?'on':'off');
   var txt = $('#ws-status');
   if(txt) txt.textContent = S.wsConnected?'live':'reconnecting...';
+  var box = $('#ws-box');
+  if(box) box.setAttribute('data-state', S.wsConnected?'live':'down');
 }
 
 // ─── Event dispatch ────────────────────────────────────────────────────
+// Renders are coalesced to one per animation frame: a batch can carry hundreds of events and each
+// used to rebuild its whole table before the next one was even applied.
 function onEvent(ch, data){
   if(ch==='request'){
+    if(S.reqPaused){
+      S.reqBuffer.push(data);
+      if(S.reqBuffer.length>500) S.reqBuffer.shift();
+      if(S.page==='requests') rafBatch('reqpaused', updateReqPaused);
+      return;
+    }
     S.requests.push(data);
     if(S.requests.length>500) S.requests.shift();
-    if(S.page==='requests') renderRequests();
+    if(data && data.id) S._fresh[data.id] = true;
+    if(S.page==='requests') rafBatch('requests', renderRequests);
   } else if(ch==='query'){
     S.queries.push(data);
     if(S.queries.length>300) S.queries.shift();
-    if(S.page==='queries') renderQueries();
+    if(S.page==='queries') rafBatch('queries', renderQueries);
   } else if(ch==='timeline'){
     S.timelines.unshift(data);
     if(S.timelines.length>50) S.timelines.pop();
-    if(S.page==='timeline') renderTimelineList();
+    if(S.page==='timeline') rafBatch('timelines', renderTimelineList);
   } else if(ch==='event'){
     if(data && data.query){
       var q=data.query;
@@ -285,11 +451,11 @@ function onEvent(ch, data){
         slow:!!q.slow,error:q.error||''
       });
       if(S.queries.length>300) S.queries.shift();
-      if(S.page==='queries') renderQueries();
+      if(S.page==='queries') rafBatch('queries', renderQueries);
     }
     S.events.unshift(data);
     if(S.events.length>500) S.events.pop();
-    if(S.page==='events') renderEvents();
+    if(S.page==='events') rafBatch('events', renderEvents);
   }
 }
 
@@ -365,6 +531,7 @@ function startPagePoll(page, fn, intervalMs){
     try { result = fn(controller.signal); }
     catch(e) { result = Promise.reject(e); }
     Promise.resolve(result).catch(function(e){
+      // api() has already told the person about a failed load; a poll just tries again.
       if(!e || e.name !== 'AbortError') return;
     }).finally(function(){
       if(poll.controller === controller) poll.controller = null;
@@ -389,6 +556,9 @@ var PAGES = {
   architecture: {title:'Architecture', init: initArchitecture},
   events: {title:'Events', init: initEvents},
   video: {title:'Video Streaming', init: initVideo},
+  database: {title:'Database Browser', init: initDatabase},
+  queue: {title:'Queue', init: initQueue},
+  scheduler: {title:'Scheduler', init: initScheduler},
   fleet: {title:'Fleet View', init: initFleet},
 };
 
@@ -403,10 +573,22 @@ function initPage(page){
   S.page = page;
   var titleEl = $('#page-title');
   if(titleEl && PAGES[page]) titleEl.textContent = PAGES[page].title;
+  // The tab's own title followed the page only on a full load.
+  if(PAGES[page]) document.title = PAGES[page].title + ' \u00b7 Breeze Dashboard';
   // Update nav active state — this runs on every SPA navigation.
   $$('.nav-item').forEach(function(n){
-    n.classList.toggle('active', n.getAttribute('data-nav') === page);
+    var on = n.getAttribute('data-nav') === page;
+    n.classList.toggle('active', on);
+    if(on) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
   });
+  closeNavDrawer();
+  var app = $('#breeze-app');
+  if(app && app.classList && motionOK()){
+    // The content area eases in on each navigation; the shell does not move.
+    app.classList.remove('page-enter');
+    void app.offsetWidth;
+    app.classList.add('page-enter');
+  }
   if(PAGES[page] && PAGES[page].init) PAGES[page].init(_activePageController.signal);
 }
 
@@ -516,8 +698,8 @@ function _fleetTraceBuild(t){
     '<span class="fleet-t-time">'+fmtTime(t.start_ns/1000000)+'</span>'+
     '<span class="fleet-t-services">'+escapeHTML((t.services||[]).join(' → '))+'</span>'+
     '<span class="fleet-t-dur">'+fmtMS(t.duration_ms)+'</span>'+
-    '<span class="status '+statusClass(t.status||0)+'">'+(t.has_error?'error':(t.status||'-'))+'</span>'+
-    '<span class="fleet-t-spans">'+t.span_count+' spans</span>'+
+    '<span class="status '+statusClass(t.status||0)+'">'+(t.has_error?'error':escapeHTML(t.status||'-'))+'</span>'+
+    '<span class="fleet-t-spans">'+num(t.span_count)+' spans</span>'+
     '<code class="fleet-t-id">'+escapeHTML(t.trace_id.slice(0,12))+'…</code>'+
     '<span class="accordion-caret">&#9656;</span>';
   var body = el('div', {class:'accordion-body', style:'display:none'});
@@ -536,8 +718,8 @@ function _fleetTraceUpdate(row, t){
     '<span class="fleet-t-time">'+fmtTime(t.start_ns/1000000)+'</span>'+
     '<span class="fleet-t-services">'+escapeHTML((t.services||[]).join(' → '))+'</span>'+
     '<span class="fleet-t-dur">'+fmtMS(t.duration_ms)+'</span>'+
-    '<span class="status '+statusClass(t.status||0)+'">'+(t.has_error?'error':(t.status||'-'))+'</span>'+
-    '<span class="fleet-t-spans">'+t.span_count+' spans</span>'+
+    '<span class="status '+statusClass(t.status||0)+'">'+(t.has_error?'error':escapeHTML(t.status||'-'))+'</span>'+
+    '<span class="fleet-t-spans">'+num(t.span_count)+' spans</span>'+
     '<code class="fleet-t-id">'+escapeHTML(t.trace_id.slice(0,12))+'…</code>'+
     '<span class="accordion-caret">&#9656;</span>';
   head.onclick = function(){ toggleFleetTrace(row, t.trace_id); };
@@ -576,7 +758,7 @@ function toggleFleetTrace(row, id){
   if(caret) caret.innerHTML = wasOpen ? '&#9656;' : '&#9662;';
   if(wasOpen || !bodyEl || row.dataset.loaded) return;
   row.dataset.loaded = '1';
-  api('fleet/traces/'+id, {signal:currentPageSignal()}).then(function(t){
+  api('fleet/traces/'+encodeURIComponent(id), {signal:currentPageSignal()}).then(function(t){
     function stepRow(n,d){
       var s=n||{}, tags=Object.keys(s.tags||{}).map(function(k){return '<span class="badge">'+escapeHTML(k)+'='+escapeHTML(s.tags[k])+'</span>';}).join(' ');
       var html='<div class="t-step" style="margin-left:'+(d*20)+'px"><div><strong>'+escapeHTML(s.service||'unknown')+'</strong> '+escapeHTML(s.method||'')+' '+escapeHTML(s.route||'')+' — '+fmtMS(s.duration_ms||0)+' '+(n.root_cause?'<span class="status s5">ROOT CAUSE</span>':'')+(n.skewed?' &#9888;':'')+'</div><div>'+tags+'</div></div>';
@@ -1042,35 +1224,78 @@ function initOverview(){
   if(S.snapshot) renderOverview();
   // Real-time updates are handled by WebSocket snapshots (pushed every 1s).
   // This interval is just a fallback to re-render if WS is disconnected.
-  startPagePoll('overview', renderOverview, 5000);
+  startPagePoll('overview', function(){ renderOverview(); return Promise.resolve(); }, 5000);
+}
+// The cards are built once and updated in place. They used to be rebuilt as HTML on every
+// snapshot (once a second), which restarted any animation on them and discarded text selection.
+var OV_CARDS = [
+  {key:'requests_today', label:'Requests Today', get:function(m){return m.requests_today;}, fmt:function(v){return fmtNum(v);}},
+  {key:'rps', label:'Requests / sec', get:function(m){return m.requests_per_sec;}, fmt:function(v){return fmtNum(v, 1);}},
+  {key:'avg', label:'Avg Response', get:function(m){return m.avg_resp_time_ms;}, fmt:fmtMS},
+  {key:'err', label:'Error Rate', get:function(m){return m.error_rate*100;}, fmt:function(v){return fmtNum(v, 2)+'%';}, state:function(m){return m.error_rate>0.05?'red':'';}},
+  {key:'sessions', label:'Active Sessions', get:function(m){return m.active_sessions;}, fmt:function(v){return fmtNum(v);}},
+  {key:'db', label:'DB Connections', get:function(m){return m.db_connections;}, fmt:function(v){return fmtNum(v);}},
+  {key:'cache', label:'Cache Hit', get:function(m){return m.cache_hit_ratio*100;}, fmt:function(v){return fmtNum(v, 1)+'%';}},
+  {key:'queue', label:'Queue Jobs', get:function(m){return m.queue_jobs;}, fmt:function(v){return fmtNum(v);}},
+  {key:'goroutines', label:'Goroutines', get:function(m){return m.goroutines;}, fmt:function(v){return fmtNum(v);}},
+  {key:'heap', label:'Heap Alloc', get:function(m){return m.heap_alloc;}, fmt:fmtBytes},
+  {key:'sys', label:'Mem Sys', get:function(m){return m.sys;}, fmt:fmtBytes},
+  {key:'cpu', label:'CPU Usage', get:function(m){return m.cpu_usage;}, fmt:function(v){return fmtNum(v, 1)+'%';}, hint:function(m){ return m.num_cpu ? 'of one core \u00b7 '+m.num_cpu+' cores' : 'live'; }},
+];
+function buildOverviewCards(container){
+  container.textContent = '';
+  OV_CARDS.forEach(function(c, i){
+    container.appendChild(el('div', {class:'card reveal', 'data-ov':c.key, style:'--i:'+i}, [
+      el('div', {class:'label', text:c.label}),
+      el('div', {class:'value', text:'-'}),
+      el('div', {class:'delta', text:'live'})
+    ]));
+  });
+  container.setAttribute('data-built', '1');
+}
+function setCard(node, card, m){
+  var valueEl = node.querySelector('.value');
+  var raw = card.get(m);
+  var shown = node._shown;
+  var state = card.state ? card.state(m) : '';
+  node.classList.toggle('red', state === 'red');
+  var hint = node.querySelector('.delta');
+  if(hint && card.hint){ var h = card.hint(m); if(hint.textContent !== h) hint.textContent = h; }
+  if(typeof raw !== 'number' || !isFinite(raw)){
+    node._raw = undefined; node._shown = undefined;
+    if(valueEl.textContent !== '-') valueEl.textContent = '-';
+    return;
+  }
+  if(node._raw === raw) return;
+  node._raw = raw;
+  if(node._stop) node._stop();
+  var from = (typeof shown === 'number') ? shown : raw;
+  node._stop = tween(from, raw, 520, function(v){
+    node._shown = v;
+    valueEl.textContent = card.fmt(v);
+  });
+  if(typeof shown === 'number' && motionOK()){
+    // a short highlight says "this one just moved"
+    node.classList.remove('tick');
+    void node.offsetWidth;
+    node.classList.add('tick');
+  }
 }
 function renderOverview(){
   var m = S.snapshot ? S.snapshot.metrics : (S.history[S.history.length-1]||{});
-  var cards = [
-    {label:'Requests Today', value:fmtNum(m.requests_today)},
-    {label:'Requests / sec', value:fmtNum(m.requests_per_sec, 1)},
-    {label:'Avg Response', value:fmtMS(m.avg_resp_time_ms)},
-    {label:'Error Rate', value:fmtNum(m.error_rate*100, 2)+'%', cls:m.error_rate>0.05?'red':''},
-    {label:'Active Sessions', value:fmtNum(m.active_sessions)},
-    {label:'DB Connections', value:fmtNum(m.db_connections)},
-    {label:'Cache Hit', value:fmtNum(m.cache_hit_ratio*100, 1)+'%'},
-    {label:'Queue Jobs', value:fmtNum(m.queue_jobs)},
-    {label:'Goroutines', value:fmtNum(m.goroutines)},
-    {label:'Heap Alloc', value:fmtBytes(m.heap_alloc)},
-    {label:'Mem Sys', value:fmtBytes(m.sys)},
-    {label:'CPU Usage', value:fmtNum(m.cpu_usage, 1)+'%'},
-  ];
-  var html = '';
-  cards.forEach(function(c){
-    html += '<div class="card'+(c.cls?' '+c.cls:'')+'"><div class="label">'+c.label+'</div><div class="value">'+c.value+'</div><div class="delta">live</div></div>';
-  });
   var container = $('#overview-cards');
-  if(container) container.innerHTML = html;
-
-  drawLineChart($('#chart-rps'), S.history.map(function(h){return h.requests_per_sec||0;}), chartColor(1));
-  drawLineChart($('#chart-latency'), S.history.map(function(h){return h.avg_resp_time_ms||0;}), chartColor(2));
-  drawLineChart($('#chart-mem'), S.history.map(function(h){return (h.heap_alloc||0)/1024/1024;}), chartColor(3));
-  drawLineChart($('#chart-goroutines'), S.history.map(function(h){return h.goroutines||0;}), chartColor(4));
+  if(container){
+    if(container.getAttribute('data-built') !== '1') buildOverviewCards(container);
+    OV_CARDS.forEach(function(c){
+      var node = container.querySelector('[data-ov="'+c.key+'"]');
+      if(node) setCard(node, c, m);
+    });
+  }
+  var times = S.history.map(function(h){return h.time;});
+  drawLineChart($('#chart-rps'), S.history.map(function(h){return h.requests_per_sec||0;}), chartColor(1), {times:times, label:'Requests per second', fmt:function(v){return fmtNum(v, 1)+' req/s';}});
+  drawLineChart($('#chart-latency'), S.history.map(function(h){return h.avg_resp_time_ms||0;}), chartColor(2), {times:times, label:'Response time', fmt:fmtMS});
+  drawLineChart($('#chart-mem'), S.history.map(function(h){return (h.heap_alloc||0)/1024/1024;}), chartColor(3), {times:times, label:'Heap memory', fmt:function(v){return fmtNum(v, 1)+' MB';}});
+  drawLineChart($('#chart-goroutines'), S.history.map(function(h){return h.goroutines||0;}), chartColor(4), {times:times, label:'Goroutines', fmt:function(v){return fmtNum(v);}});
 }
 
 // ─── Routes ────────────────────────────────────────────────────────────
@@ -1090,11 +1315,11 @@ function renderRoutes(){
   if(c) c.textContent = filtered.length;
   var html = '';
   filtered.forEach(function(r){
-    html += '<tr><td><span class="method-pill '+r.method+'">'+r.method+'</span></td>'+
+    html += '<tr><td><span class="method-pill '+cls(r.method)+'">'+escapeHTML(r.method)+'</span></td>'+
       '<td style="font-family:var(--mono);font-size:11px">'+escapeHTML(r.pattern)+'</td>'+
       '<td>'+fmtNum(r.requests)+'</td><td>'+fmtMS(r.avg_latency_ms)+'</td><td>'+fmtMS(r.max_latency_ms)+'</td>'+
       '<td style="font-size:11px;color:var(--text-dim)">'+(r.last_request?fmtDate(r.last_request):'-')+'</td>'+
-      '<td>'+(r.errors>0?'<span class="badge red">'+r.errors+'</span>':'-')+'</td></tr>';
+      '<td>'+(r.errors>0?'<span class="badge red">'+num(r.errors)+'</span>':'-')+'</td></tr>';
   });
   if(!filtered.length) html = '<tr><td colspan="7" class="empty">No routes registered</td></tr>';
   var tb = $('#routes-tbody');
@@ -1104,57 +1329,147 @@ function renderRoutes(){
 // ─── API Explorer ──────────────────────────────────────────────────────
 function initAPI(signal){
   if(!S.apiRoutes.length){
-    api('api-explorer', {signal:signal}).then(function(d){S.apiRoutes=d;renderAPIExplorer();}).catch(function(){});
+    api('api-explorer', {signal:signal}).then(function(d){S.apiRoutes=d||[];renderAPIExplorer();}).catch(function(){});
   } else {
     renderAPIExplorer();
   }
+}
+// What the person has typed is kept per endpoint. The form used to be rebuilt from the route on
+// every render, so sending a request cleared its body, headers and edited URL, and the custom
+// headers could not be sent at all (the selector that gathered them matched nothing).
+function apiFormFor(r){
+  var key = r.method + ' ' + r.path;
+  var f = S.apiForm[key];
+  if(f) return f;
+  f = {method:r.method, url:r.path, headers:[{k:'',v:''}], body:'', params:{}, query:{}};
+  // A pattern such as /users/{id} or /users/:id needs a value for id before it can be sent. A route
+  // with documented inputs lists them below; an undocumented one still has them in its path.
+  (String(r.path).match(/\{[A-Za-z0-9_]+\}|:[A-Za-z0-9_]+/g) || []).forEach(function(tok){
+    var name = tok.replace(/[{}:]/g, '');
+    if(!(name in f.params)) f.params[name] = '';
+  });
+  (r.inputs||[]).forEach(function(g){
+    var fields = g.fields || {};
+    Object.keys(fields).sort().forEach(function(name){
+      var fs = fields[name] || {};
+      var seed = fs.default != null ? String(fs.default) : '';
+      if(g.type === 'params') f.params[name] = seed;
+      else if(g.type === 'query') f.query[name] = seed;
+      else if(g.type === 'header') f.headers.unshift({k:name, v:seed});
+    });
+    if(g.type === 'body' && Object.keys(fields).length){
+      var sample = {};
+      Object.keys(fields).sort().forEach(function(name){
+        var fs = fields[name] || {};
+        if(fs.default != null) sample[name] = fs.default;
+        else sample[name] = ({integer:0, number:0, boolean:false, array:[], object:{}})[fs.type] != null ? ({integer:0, number:0, boolean:false, array:[], object:{}})[fs.type] : '';
+      });
+      f.body = JSON.stringify(sample, null, 2);
+      if(!f.headers.some(function(h){return h.k.toLowerCase()==='content-type';})) f.headers.push({k:'Content-Type', v:'application/json'});
+    }
+  });
+  S.apiForm[key] = f;
+  return f;
+}
+// apiTarget builds the URL that will be sent: path parameters substituted, query parameters appended.
+function apiTarget(r, f){
+  var url = f.url;
+  Object.keys(f.params).forEach(function(name){
+    if(f.params[name] !== '') url = url.split('{'+name+'}').join(encodeURIComponent(f.params[name])).split(':'+name).join(encodeURIComponent(f.params[name]));
+  });
+  var q = Object.keys(f.query).filter(function(k){return f.query[k] !== '';}).map(function(k){
+    return encodeURIComponent(k)+'='+encodeURIComponent(f.query[k]);
+  }).join('&');
+  if(q) url += (url.indexOf('?')>=0 ? '&' : '?') + q;
+  return url;
+}
+function copyText(text){
+  if(navigator.clipboard && window.isSecureContext){
+    return navigator.clipboard.writeText(text);
+  }
+  // http:// on a LAN address has no clipboard API
+  return new Promise(function(resolve, reject){
+    var ta = el('textarea', {style:'position:fixed;opacity:0;top:0', 'aria-hidden':'true'});
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch(e){}
+    document.body.removeChild(ta);
+    ok ? resolve() : reject(new Error('copy is not available here'));
+  });
 }
 function renderAPIExplorer(){
   var sel = S.apiRouteSel;
   var c = $('#api-detail');
   if(!c) return;
-  var listHtml = '<div style="padding:10px 12px;border-bottom:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);font-weight:600">Endpoints ('+S.apiRoutes.length+')</div>';
+  var filter = (S.apiFilter||'').toLowerCase();
+  var listHtml = '<div class="api-list-head"><span>Endpoints (<span id="api-count">'+S.apiRoutes.length+'</span>)</span>'+
+    '<input id="api-filter" type="search" placeholder="Filter" aria-label="Filter endpoints" value="'+attr(S.apiFilter)+'"></div>';
   S.apiRoutes.forEach(function(r, i){
-    listHtml += '<div class="item '+(sel===i?'active':'')+'" data-idx="'+i+'">'+
-      '<span class="method-pill '+r.method+'">'+r.method+'</span>'+
+    if(filter && (r.path+' '+r.method+' '+(r.summary||'')).toLowerCase().indexOf(filter) < 0) return;
+    listHtml += '<div class="item '+(sel===i?'active':'')+'" data-idx="'+i+'" role="button" tabindex="0">'+
+      '<span class="method-pill '+cls(r.method)+'">'+escapeHTML(r.method)+'</span>'+
       '<span style="font-family:var(--mono);font-size:11px">'+escapeHTML(r.path)+'</span></div>';
   });
   var listEl = $('#api-list');
-  if(listEl) listEl.innerHTML = listHtml;
+  // Re-rendering the list rebuilt the filter box too, which lost focus on every keystroke. It is
+  // only rebuilt when the endpoint selection or the response changes; typing patches the items.
+  if(listEl){
+    var keepFocus = document.activeElement && document.activeElement.id === 'api-filter';
+    listEl.innerHTML = listHtml;
+    if(keepFocus){
+      var fi = $('#api-filter'); fi.focus();
+      try { fi.setSelectionRange(fi.value.length, fi.value.length); } catch(e){}
+    }
+  }
+  var filterEl = $('#api-filter');
+  if(filterEl) pageOn(filterEl, 'input', function(){ S.apiFilter = filterEl.value; renderAPIExplorer(); });
   $$('#api-list .item').forEach(function(it){
-    pageOn(it, 'click', function(){
-      S.apiRouteSel = parseInt(it.dataset.idx);
+    var go = function(){
+      S.apiRouteSel = parseInt(it.dataset.idx, 10);
       S.apiResp = null;
       renderAPIExplorer();
-    });
+    };
+    pageOn(it, 'click', go);
+    pageOn(it, 'keydown', function(e){ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); go(); } });
   });
 
   var html = '';
-  if(sel!=null && S.apiRoutes[sel]){
-    var r = S.apiRoutes[sel];
-    html += '<div class="api-form">'+
-      '<div class="row"><label>Method</label><div class="controls"><select id="api-method">'+
-      ['GET','POST','PUT','PATCH','DELETE','OPTIONS'].map(function(m){return '<option '+(m===r.method?'selected':'')+'>'+m+'</option>';}).join('')+
+  var r = sel!=null ? S.apiRoutes[sel] : null;
+  var f = r ? apiFormFor(r) : null;
+  if(r){
+    html += '<div class="api-form">';
+    if(r.summary || r.description){
+      html += '<div class="api-doc"><strong>'+escapeHTML(r.summary||'')+'</strong>'+(r.description?'<p>'+escapeHTML(r.description)+'</p>':'')+'</div>';
+    }
+    html += '<div class="row"><label for="api-method">Method</label><div class="controls"><select id="api-method">'+
+      ['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS'].map(function(m){return '<option '+(m===f.method?'selected':'')+'>'+m+'</option>';}).join('')+
       '</select></div></div>'+
-      '<div class="row"><label>URL</label><div class="controls"><input id="api-url" value="'+escapeHTML(r.path)+'" placeholder="/path"></div></div>'+
-      '<div class="row"><label>Headers</label><div><div class="headers" id="api-headers">'+
-      '<input class="hk" placeholder="Key"><input class="hv" placeholder="Value"><button class="rm">-</button>'+
-      '<input class="hk" placeholder="Key"><input class="hv" placeholder="Value"><button class="rm">-</button>'+
-      '</div><button id="api-add-header" style="margin-top:6px">+ Header</button></div></div>'+
-      '<div class="row"><label>Body</label><div><textarea id="api-body" rows="5" placeholder="{}"></textarea></div></div>'+
-      '<div class="row"><label></label><div><button class="primary" id="api-send">Send</button></div></div>'+
+      '<div class="row"><label for="api-url">URL</label><div class="controls"><input id="api-url" value="'+attr(f.url)+'" placeholder="/path" spellcheck="false"></div></div>';
+    Object.keys(f.params).forEach(function(name){
+      html += '<div class="row"><label for="p-'+attr(name)+'">'+escapeHTML(name)+' <small>path</small></label><div class="controls"><input data-param="'+attr(name)+'" id="p-'+attr(name)+'" value="'+attr(f.params[name])+'" placeholder="value for {'+attr(name)+'}" spellcheck="false"></div></div>';
+    });
+    Object.keys(f.query).forEach(function(name){
+      html += '<div class="row"><label for="q-'+attr(name)+'">'+escapeHTML(name)+' <small>query</small></label><div class="controls"><input data-query="'+attr(name)+'" id="q-'+attr(name)+'" value="'+attr(f.query[name])+'" spellcheck="false"></div></div>';
+    });
+    html += '<div class="row"><label>Headers</label><div><div class="headers" id="api-headers">';
+    f.headers.forEach(function(h, i){
+      html += '<input class="hk" data-i="'+i+'" placeholder="Key" aria-label="Header name" value="'+attr(h.k)+'" spellcheck="false"><input class="hv" data-i="'+i+'" placeholder="Value" aria-label="Header value" value="'+attr(h.v)+'" spellcheck="false"><button class="rm" data-i="'+i+'" aria-label="Remove header" type="button">-</button>';
+    });
+    html += '</div><button id="api-add-header" type="button" style="margin-top:6px">+ Header</button></div></div>'+
+      '<div class="row"><label for="api-body">Body</label><div><textarea id="api-body" rows="6" placeholder="{}" spellcheck="false">'+escapeHTML(f.body)+'</textarea></div></div>'+
+      '<div class="row"><label></label><div><button class="primary" id="api-send" type="button">Send</button> <span class="api-hint">Ctrl/\u2318 + Enter</span></div></div>'+
       '</div>';
     if(S.apiResp){
       var r2 = S.apiResp;
-      html += '<div class="api-response"><div class="head"><div><span class="status-pill '+statusClass(r2.status)+'">'+r2.status+'</span> '+
+      html += '<div class="api-response reveal-in"><div class="head"><div><span class="status-pill '+statusClass(r2.status)+'">'+num(r2.status)+'</span> '+
         '<span style="margin-left:8px;font-size:11px;color:var(--text-dim)">'+fmtMS(r2.duration_ms)+' \u00b7 '+fmtBytes(r2.size)+'</span></div>'+
-        '<button id="api-clear">Clear</button></div>'+
+        '<button id="api-clear" type="button">Clear</button></div>'+
         '<div class="body"><pre>'+escapeHTML(r2.body_json?JSON.stringify(r2.body_json, null, 2):r2.body)+'</pre></div></div>';
-      html += '<div class="snippets"><div class="tabs">'+
+      html += '<div class="snippets reveal-in"><div class="tabs" role="tablist">'+
         ['curl','go','javascript','python','csharp','php'].map(function(l){
-          return '<div class="tab '+(S.apiSnippetLang===l?'active':'')+'" data-lang="'+l+'">'+l+'</div>';
+          return '<div class="tab '+(S.apiSnippetLang===l?'active':'')+'" data-lang="'+l+'" role="tab" tabindex="0" aria-selected="'+(S.apiSnippetLang===l)+'">'+l+'</div>';
         }).join('')+
-        '</div><div class="tab-content"><button class="copy-btn">Copy</button><pre>'+
+        '</div><div class="tab-content"><button class="copy-btn" type="button">Copy</button><pre>'+
         escapeHTML((r2.snippets||{})[S.apiSnippetLang]||'')+
         '</pre></div></div>';
     }
@@ -1162,55 +1477,103 @@ function renderAPIExplorer(){
     html = '<div class="empty"><div class="icon">\u2197</div>Select an endpoint to begin</div>';
   }
   c.innerHTML = html;
+  if(!r) return;
+
+  // Keep the form object in step with what is typed.
+  var bind = function(sel2, fn){ $$(sel2).forEach(function(n){ pageOn(n, 'input', function(){ fn(n); }); }); };
+  var m = $('#api-method'); if(m) pageOn(m, 'change', function(){ f.method = m.value; });
+  var u = $('#api-url'); if(u) pageOn(u, 'input', function(){ f.url = u.value; });
+  bind('[data-param]', function(n){ f.params[n.dataset.param] = n.value; });
+  bind('[data-query]', function(n){ f.query[n.dataset.query] = n.value; });
+  $$('#api-headers .hk').forEach(function(n){ pageOn(n, 'input', function(){ f.headers[n.dataset.i].k = n.value; }); });
+  $$('#api-headers .hv').forEach(function(n){ pageOn(n, 'input', function(){ f.headers[n.dataset.i].v = n.value; }); });
+  var bodyEl = $('#api-body'); if(bodyEl) pageOn(bodyEl, 'input', function(){ f.body = bodyEl.value; });
 
   var addHdr = $('#api-add-header');
   if(addHdr) pageOn(addHdr, 'click', function(){
-    var c2 = $('#api-headers');
-    c2.appendChild(el('input', {class:'hk', placeholder:'Key'}));
-    c2.appendChild(el('input', {class:'hv', placeholder:'Value'}));
-    var btn = el('button', {class:'rm', text:'-'});
-    pageOn(btn, 'click', function(){c2.removeChild(btn.previousSibling); c2.removeChild(btn.previousSibling); c2.removeChild(btn);});
-    c2.appendChild(btn);
+    f.headers.push({k:'', v:''});
+    renderAPIExplorer();
+    var ks = $$('#api-headers .hk'); if(ks.length) ks[ks.length-1].focus();
   });
-  $$('.headers .rm').forEach(function(b){
-    pageOn(b, 'click', function(){b.parentNode.removeChild(b.previousSibling); b.parentNode.removeChild(b.previousSibling); b.parentNode.removeChild(b);});
+  $$('#api-headers .rm').forEach(function(b){
+    pageOn(b, 'click', function(){
+      f.headers.splice(parseInt(b.dataset.i, 10), 1);
+      if(!f.headers.length) f.headers.push({k:'', v:''});
+      renderAPIExplorer();
+    });
   });
   var sendBtn = $('#api-send');
-  if(sendBtn) pageOn(sendBtn, 'click', function(){
+  var send = function(){
     var headers = {};
-    var ks = $$('.api-headers .hk');
-    var vs = $$('.api-headers .hv');
-    for(var i=0;i<ks.length;i++){
-      if(ks[i].value) headers[ks[i].value] = vs[i].value;
+    f.headers.forEach(function(h){ if(h.k.trim()) headers[h.k.trim()] = h.v; });
+    var unfilled = Object.keys(f.params).filter(function(n){ return f.params[n] === '' && (f.url.indexOf('{'+n+'}') >= 0 || f.url.indexOf(':'+n) >= 0); });
+    if(unfilled.length){
+      toast('Fill in the path parameter' + (unfilled.length > 1 ? 's' : '') + ': ' + unfilled.join(', '), 'error');
+      var firstEmpty = $('[data-param="' + unfilled[0].replace(/"/g, '\\"') + '"]');
+      if(firstEmpty) firstEmpty.focus();
+      return;
     }
-    var body = {
-      method: $('#api-method').value,
-      url: $('#api-url').value,
-      headers: headers,
-      body: $('#api-body').value
-    };
+    var payload = { method: f.method, url: apiTarget(r, f), headers: headers, body: f.body };
     sendBtn.textContent = 'Sending...';
-    apiPost('api-explorer', body, {signal:currentPageSignal()}).then(function(r){
-      S.apiResp = r;
+    sendBtn.disabled = true;
+    apiPost('api-explorer', payload, {signal:currentPageSignal()}).then(function(resp){
+      S.apiResp = resp;
       renderAPIExplorer();
+      var out = $('.api-response'); if(out && out.scrollIntoView) out.scrollIntoView({block:'nearest', behavior: motionOK() ? 'smooth' : 'auto'});
     }).catch(function(e){
       if(e && e.name === 'AbortError') return;
       sendBtn.textContent = 'Send';
-      alert('Error: '+e.message);
+      sendBtn.disabled = false;
+      toast('Request failed: ' + (e && e.message ? e.message : 'unknown error'), 'error');
     });
-  });
+  };
+  if(sendBtn) pageOn(sendBtn, 'click', send);
+  var form = $('.api-form');
+  if(form) pageOn(form, 'keydown', function(e){ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); send(); } });
   var clearBtn = $('#api-clear');
   if(clearBtn) pageOn(clearBtn, 'click', function(){S.apiResp=null; renderAPIExplorer();});
   $$('.snippets .tab').forEach(function(t){
-    pageOn(t, 'click', function(){
-      S.apiSnippetLang = t.dataset.lang;
-      renderAPIExplorer();
-    });
+    var pick = function(){ S.apiSnippetLang = t.dataset.lang; renderAPIExplorer(); };
+    pageOn(t, 'click', pick);
+    pageOn(t, 'keydown', function(e){ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); pick(); } });
   });
   var copyBtn = $('.copy-btn');
   if(copyBtn) pageOn(copyBtn, 'click', function(){
-    var txt = $('.snippets pre').textContent;
-    navigator.clipboard.writeText(txt).then(function(){copyBtn.textContent='Copied!'; setTimeout(function(){copyBtn.textContent='Copy';},1500);});
+    copyText($('.snippets pre').textContent).then(function(){
+      copyBtn.textContent='Copied!'; setTimeout(function(){copyBtn.textContent='Copy';},1500);
+    }).catch(function(){ toast('Copy is not available in this browser context', 'error'); });
+  });
+}
+
+// ─── Stat cards ────────────────────────────────────────────────────────
+// renderCards keeps a row of stat cards in place. The nodes are created once (with a staggered
+// entrance) and a later render touches only the text that changed, so a card that is refreshed
+// every few seconds neither flickers nor replays its entrance.
+function renderCards(container, cards){
+  if(!container) return;
+  var have = container._cards;
+  if(!have || have.length !== cards.length || have.some(function(e, i){ return e.key !== cards[i].label; })){
+    container.textContent = '';
+    have = cards.map(function(c, i){
+      var valueEl = el('div', {class:'value'});
+      var node = el('div', {class:'card reveal', style:'--i:'+i}, [el('div', {class:'label', text:c.label}), valueEl]);
+      container.appendChild(node);
+      return {key:c.label, node:node, valueEl:valueEl, text:null};
+    });
+    container._cards = have;
+  }
+  cards.forEach(function(c, i){
+    var e = have[i];
+    var text = String(c.value);
+    if(e.text !== text){
+      if(e.text !== null && motionOK()){ e.node.classList.remove('tick'); void e.node.offsetWidth; e.node.classList.add('tick'); }
+      e.valueEl.textContent = text;
+      e.text = text;
+    }
+    e.valueEl.style.color = c.color || '';
+    e.valueEl.style.fontSize = c.small ? '18px' : '';
+    e.node.classList.toggle('red', c.cls === 'red');
+    e.node.classList.toggle('yellow', c.cls === 'yellow');
   });
 }
 
@@ -1231,38 +1594,71 @@ function initRequests(signal){
       if(evt==='input') e.focus();
     });
   });
+  var pb = $('#req-pause');
+  if(pb) pageOn(pb, 'click', toggleReqPause);
+  var cb = $('#req-clear');
+  if(cb) pageOn(cb, 'click', function(){ S.requests = []; S.reqBuffer = []; renderRequests(); updateReqPaused(); });
+  updateReqPaused();
   startPagePoll('requests', loadRequests, 10000);
 }
+// Pause freezes the table so a row can be read or clicked while traffic keeps arriving; what
+// arrives meanwhile is held, counted on the button, and folded in on resume.
+function toggleReqPause(){
+  S.reqPaused = !S.reqPaused;
+  if(!S.reqPaused){
+    S.reqBuffer.forEach(function(r){ S.requests.push(r); if(r && r.id) S._fresh[r.id] = true; });
+    S.reqBuffer = [];
+    while(S.requests.length > 500) S.requests.shift();
+    renderRequests();
+  }
+  updateReqPaused();
+}
+function updateReqPaused(){
+  var b = $('#req-pause');
+  if(!b) return;
+  b.textContent = S.reqPaused ? ('Resume' + (S.reqBuffer.length ? ' (' + S.reqBuffer.length + ' new)' : '')) : 'Pause';
+  b.setAttribute('aria-pressed', S.reqPaused ? 'true' : 'false');
+  b.classList.toggle('active', S.reqPaused);
+}
 function loadRequests(signal){
-  return api('requests?limit=200', {signal:signal}).then(function(d){S.requests=d; renderRequests();}).catch(function(){});
+  // A frozen table is not replaced by a poll.
+  if(S.reqPaused) return Promise.resolve();
+  return api('requests?limit=200', {signal:signal}).then(function(d){S.requests=d||[]; renderRequests();}).catch(function(){});
 }
 function renderRequests(){
   var list = S.requests.slice().reverse();
   var f = S.reqFilter;
   if(f.method) list = list.filter(function(r){return r.method===f.method;});
-  if(f.status) list = list.filter(function(r){return (''+r.status).startsWith(f.status.replace('xx',''));});
+  if(f.status) list = list.filter(function(r){return (''+r.status).startsWith(f.status.toLowerCase().replace('xx',''));});
   if(f.route) list = list.filter(function(r){return (r.route||r.path||'').indexOf(f.route)>=0;});
   if(f.user) list = list.filter(function(r){return (r.user||'').toLowerCase().indexOf(f.user.toLowerCase())>=0;});
   var c = $('#req-count');
   if(c) c.textContent = list.length;
   var html = '';
   var max = 200;
+  // "Slow" is the configured threshold, which the server sends on each record and in its
+  // capabilities; the page used to hard-code 500 ms whatever slow_request_ms said.
+  var slowMS = S.caps.slow_request_ms;
   list.slice(0, max).forEach(function(r){
-    var durSlow = r.duration_ms > 500;
-    html += '<tr><td style="font-family:var(--mono);font-size:11px;color:var(--text-dim)">'+fmtTime(r.time)+'</td>'+
-      '<td><span class="method-pill '+r.method+'">'+r.method+'</span></td>'+
+    var durSlow = r.slow || (slowMS > 0 && r.duration_ms >= slowMS);
+    var fresh = r.id && S._fresh[r.id];
+    html += '<tr'+(fresh?' class="row-new"':'')+'><td style="font-family:var(--mono);font-size:11px;color:var(--text-dim)">'+fmtTime(r.time)+'</td>'+
+      '<td><span class="method-pill '+cls(r.method)+'">'+escapeHTML(r.method)+'</span></td>'+
       '<td style="font-family:var(--mono);font-size:11px;max-width:340px;overflow:hidden;text-overflow:ellipsis">'+escapeHTML(r.path)+'</td>'+
-      '<td><span class="status-pill '+statusClass(r.status)+'">'+(r.status||'-')+'</span></td>'+
+      '<td><span class="status-pill '+statusClass(r.status)+'">'+(r.status?num(r.status):'-')+'</span></td>'+
       '<td>'+(durSlow?'<span style="color:var(--err)">'+fmtMS(r.duration_ms)+'</span>':fmtMS(r.duration_ms))+'</td>'+
       '<td style="font-size:11px;color:var(--text-dim)">'+escapeHTML(r.ip)+'</td>'+
       '<td style="font-size:11px">'+escapeHTML(r.user||'-')+'</td>'+
       '<td style="font-size:11px;color:var(--text-dim)">'+fmtBytes(r.resp_size)+'</td>'+
-      '<td>'+(r.timeline_id?'<a href="'+S.base+'/timeline" data-tl="'+r.timeline_id+'">view</a>':'-')+'</td></tr>';
+      // The link only when a timeline was actually recorded: a request nobody was watching has an
+      // id but no timeline, and "view" led to an empty page.
+      '<td>'+(r.has_timeline && r.timeline_id?'<a href="'+attr(S.base)+'/timeline" data-tl="'+attr(r.timeline_id)+'">view</a>':'-')+'</td></tr>';
   });
   if(list.length>max) html += '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:8px">Showing latest '+max+' of '+list.length+'</td></tr>';
-  if(!list.length) html = '<tr><td colspan="9" class="empty">No requests yet</td></tr>';
+  if(!list.length) html = '<tr><td colspan="9" class="empty">'+(S.requests.length ? 'No requests match these filters' : 'No requests yet — send one to this service and it appears here')+'</td></tr>';
   var tb = $('#req-tbody');
   if(tb) tb.innerHTML = html;
+  S._fresh = {};
   $$('a[data-tl]').forEach(function(a){
     pageOn(a, 'click', function(e){
       e.preventDefault();
@@ -1298,10 +1694,10 @@ function renderQueries(){
       '<td class="query-sql">'+escapeHTML(q.sql)+'</td>'+
       '<td>'+(q.slow?'<span class="badge red">slow</span> ':'')+fmtDur(q.duration_us)+'</td>'+
       '<td style="font-family:var(--mono)">'+fmtNum(q.rows)+'</td>'+
-      '<td style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">'+escapeHTML(q.file)+':'+q.line+'</td>'+
+      '<td style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">'+escapeHTML(q.file)+(q.file?':'+num(q.line):'')+'</td>'+
       '<td>'+(q.error?'<span class="badge red">error</span>':'<span class="badge green">ok</span>')+'</td></tr>';
   });
-  if(!list.length) html = '<tr><td colspan="6" class="empty">No queries captured</td></tr>';
+  if(!list.length) html = '<tr><td colspan="6" class="empty">'+(S.queries.length ? 'No queries match' : 'No queries captured yet')+'</td></tr>';
   var tb = $('#q-tbody');
   if(tb) tb.innerHTML = html;
 }
@@ -1310,25 +1706,45 @@ function renderQueries(){
 function initCache(signal){
   loadCache(signal);
   var cc = $('#cache-clear');
-  if(cc) pageOn(cc, 'click', function(){apiPost('cache/clear',{}, {signal:currentPageSignal()}).then(function(){ loadCache(currentPageSignal()); }).catch(function(){});});
+  if(cc) pageOn(cc, 'click', function(){ clearCache('', cc); });
   var cp = $('#cache-clear-prefix');
-  if(cp) pageOn(cp, 'click', function(){apiPost('cache/clear',{prefix:$('#cache-prefix').value}, {signal:currentPageSignal()}).then(function(){ loadCache(currentPageSignal()); }).catch(function(){});});
+  if(cp) pageOn(cp, 'click', function(){
+    var p = ($('#cache-prefix').value || '').trim();
+    if(!p){ toast('Enter a key prefix first', 'error'); return; }
+    clearCache(p, cp);
+  });
   startPagePoll('cache', loadCache, 5000);
+}
+function clearCache(prefix, btn){
+  if(!prefix && !window.confirm('Clear the entire cache?')) return;
+  btn.disabled = true;
+  apiPost('cache/clear', {prefix:prefix}, {signal:currentPageSignal()}).then(function(d){
+    toast(prefix ? 'Cleared ' + num(d && d.cleared) + ' entries starting with "' + prefix + '"' : 'Cache cleared (' + num(d && d.cleared) + ' entries)', 'ok');
+    loadCache(currentPageSignal());
+  }).catch(function(e){
+    if(e && e.name === 'AbortError') return;
+    // 501 means the app never connected a cache; the buttons used to say "ok" while doing nothing.
+    toast(e && e.status === 501 ? 'No cache is attached to the dashboard yet. Connect one with Collector.SetCacheClearer.' : 'Could not clear the cache: ' + (e && e.message), 'error', 7000);
+  }).then(function(){ btn.disabled = false; });
 }
 function loadCache(signal){
   return api('cache', {signal:signal}).then(function(d){S.cache=d; renderCache();}).catch(function(){});
 }
 function renderCache(){
   var c = S.cache || {};
-  var html = '<div class="card"><div class="label">Driver</div><div class="value" style="font-size:18px">'+(c.driver||'-')+'</div></div>'+
-    '<div class="card"><div class="label">Keys</div><div class="value">'+fmtNum(c.keys)+'</div></div>'+
-    '<div class="card"><div class="label">Hits</div><div class="value" style="color:var(--green)">'+fmtNum(c.hits)+'</div></div>'+
-    '<div class="card"><div class="label">Misses</div><div class="value" style="color:var(--err)">'+fmtNum(c.misses)+'</div></div>'+
-    '<div class="card"><div class="label">Hit Rate</div><div class="value" style="color:var(--primary)">'+fmtNum(c.hit_rate*100, 1)+'%</div></div>'+
-    '<div class="card"><div class="label">Memory</div><div class="value">'+fmtBytes(c.memory_bytes)+'</div></div>';
-  var container = $('#cache-cards');
-  if(container) container.innerHTML = html;
-  drawLineChart($('#chart-cache'), S.history.map(function(h){return (h.cache_hit_ratio||0)*100;}), chartColor(2));
+  renderCards($('#cache-cards'), [
+    {label:'Driver', value:c.driver||'-', small:true},
+    // The counter is every lookup, hits plus misses: it was labelled "Keys", which it never was.
+    {label:'Lookups', value:fmtNum(c.keys)},
+    {label:'Hits', value:fmtNum(c.hits), color:'var(--green)'},
+    {label:'Misses', value:fmtNum(c.misses), color:'var(--err)'},
+    {label:'Hit Rate', value:fmtNum(c.hit_rate*100, 1)+'%', color:'var(--primary)'},
+    {label:'Memory', value:fmtBytes(c.memory_bytes)}
+  ]);
+  var tip = S.caps.can_clear_cache ? '' : 'No cache is attached: connect one with Collector.SetCacheClearer';
+  ['cache-clear', 'cache-clear-prefix'].forEach(function(id){ var b = $('#'+id); if(b) b.title = tip; });
+  var times = S.history.map(function(h){return h.time;});
+  drawLineChart($('#chart-cache'), S.history.map(function(h){return (h.cache_hit_ratio||0)*100;}), chartColor(2), {times:times, label:'Cache hit ratio', fmt:function(v){return fmtNum(v, 1)+'%';}});
 }
 
 // ─── Queue ─────────────────────────────────────────────────────────────
@@ -1343,37 +1759,48 @@ function renderQueue(){
   var q = S.queue || {};
   var s = q.summary || {};
   var jobs = q.jobs || [];
-  var cardsHtml = '<div class="card"><div class="label">Pending</div><div class="value" style="color:var(--yellow)">'+fmtNum(s.pending)+'</div></div>'+
-    '<div class="card"><div class="label">Running</div><div class="value" style="color:var(--primary)">'+fmtNum(s.running)+'</div></div>'+
-    '<div class="card"><div class="label">Completed</div><div class="value" style="color:var(--green)">'+fmtNum(s.completed)+'</div></div>'+
-    '<div class="card"><div class="label">Failed</div><div class="value" style="color:var(--err)">'+fmtNum(s.failed)+'</div></div>';
-  var cc = $('#queue-cards');
-  if(cc) cc.innerHTML = cardsHtml;
+  renderCards($('#queue-cards'), [
+    {label:'Pending', value:fmtNum(s.pending), color:'var(--yellow)'},
+    {label:'Running', value:fmtNum(s.running), color:'var(--primary)'},
+    {label:'Completed', value:fmtNum(s.completed), color:'var(--green)'},
+    {label:'Failed', value:fmtNum(s.failed), color:'var(--err)'}
+  ]);
   var jc = $('#job-count');
   if(jc) jc.textContent = jobs.length;
   var html = '';
   jobs.forEach(function(j){
-    var cls = {pending:'yellow', running:'blue', completed:'green', failed:'red'}[j.state]||'gray';
+    var badge = {pending:'yellow', running:'blue', completed:'green', failed:'red'}[j.state]||'gray';
     html += '<tr><td style="font-family:var(--mono);font-size:11px">'+escapeHTML(j.id)+'</td>'+
-      '<td>'+escapeHTML(j.queue)+'</td><td><span class="badge '+cls+'">'+j.state+'</span></td>'+
-      '<td>'+j.attempts+'</td><td style="font-size:11px;color:var(--text-dim)">'+fmtDate(j.queued_at)+'</td>'+
+      '<td>'+escapeHTML(j.queue)+'</td><td><span class="badge '+badge+'">'+escapeHTML(j.state)+'</span></td>'+
+      '<td>'+num(j.attempts)+'</td><td style="font-size:11px;color:var(--text-dim)">'+fmtDate(j.queued_at)+'</td>'+
       '<td>'+(j.duration_ms?fmtMS(j.duration_ms):'-')+'</td>'+
       '<td style="font-size:11px;color:var(--err)">'+escapeHTML(j.error||'')+'</td>'+
-      '<td>'+(j.state==='failed'?'<button class="retry" data-id="'+j.id+'">Retry</button>':'-')+'</td></tr>';
+      // The id goes into an attribute, and it is whatever the application called the job.
+      '<td>'+(j.state==='failed'&&q.can_retry?'<button class="retry" data-id="'+attr(j.id)+'">Retry</button>':(j.state==='failed'?'<span title="Connect your queue with Collector.SetJobRetrier to retry from here" style="color:var(--text-muted)">n/a</span>':'-'))+'</td></tr>';
   });
-  if(!jobs.length) html = '<tr><td colspan="8" class="empty">No jobs registered</td></tr>';
+  if(!jobs.length) html = '<tr><td colspan="8" class="empty">No jobs registered. Report them with Collector.RegisterJob / UpdateJob.</td></tr>';
   var tb = $('#job-tbody');
   if(tb) tb.innerHTML = html;
   $$('.retry').forEach(function(b){
-    pageOn(b, 'click', function(){apiPost('queue/retry',{id:b.dataset.id}, {signal:currentPageSignal()}).then(function(){ loadQueue(currentPageSignal()); }).catch(function(){});});
+    pageOn(b, 'click', function(){
+      b.disabled = true;
+      apiPost('queue/retry', {id:b.dataset.id}, {signal:currentPageSignal()}).then(function(){
+        toast('Job ' + b.dataset.id + ' queued for retry', 'ok');
+        loadQueue(currentPageSignal());
+      }).catch(function(e){
+        if(e && e.name === 'AbortError') return;
+        b.disabled = false;
+        toast(e && e.status === 501 ? 'No queue is attached to the dashboard (Collector.SetJobRetrier).' : 'Retry failed: ' + (e && e.message), 'error', 6000);
+      });
+    });
   });
 }
 
 // ─── Scheduler ─────────────────────────────────────────────────────────
 function initScheduler(signal){
-  api('scheduler', {signal:signal}).then(function(d){S.tasks=d; renderScheduler();}).catch(function(){});
+  api('scheduler', {signal:signal}).then(function(d){S.tasks=d||[]; renderScheduler();}).catch(function(){});
   startPagePoll('scheduler', function(signal){
-    return api('scheduler', {signal:signal}).then(function(d){S.tasks=d; renderScheduler();}).catch(function(){});
+    return api('scheduler', {signal:signal}).then(function(d){S.tasks=d||[]; renderScheduler();}).catch(function(){});
   }, 5000);
 }
 function renderScheduler(){
@@ -1382,56 +1809,69 @@ function renderScheduler(){
   if(c) c.textContent = tasks.length;
   var html = '';
   tasks.forEach(function(t){
-    var cls = {idle:'gray', running:'blue', failed:'red', ok:'green'}[t.status]||'gray';
+    var badge = {idle:'gray', running:'blue', failed:'red', ok:'green'}[t.status]||'gray';
     html += '<tr><td><strong>'+escapeHTML(t.name)+'</strong></td>'+
       '<td style="font-family:var(--mono);font-size:11px">'+escapeHTML(t.cron)+'</td>'+
       '<td style="font-size:11px;color:var(--text-dim)">'+(t.last_run?fmtDate(t.last_run):'-')+'</td>'+
       '<td>'+(t.last_run_ms?fmtMS(t.last_run_ms):'-')+'</td>'+
       '<td style="font-size:11px;color:var(--text-dim)">'+(t.next_run?fmtDate(t.next_run):'-')+'</td>'+
-      '<td><span class="badge '+cls+'">'+escapeHTML(t.status||'-')+'</span></td>'+
+      '<td><span class="badge '+badge+'">'+escapeHTML(t.status||'-')+'</span></td>'+
       '<td>'+fmtNum(t.run_count)+'</td>'+
-      '<td>'+(t.fail_count>0?'<span class="badge red">'+t.fail_count+'</span>':'-')+'</td></tr>';
+      '<td>'+(t.fail_count>0?'<span class="badge red">'+num(t.fail_count)+'</span>':'-')+'</td></tr>';
   });
-  if(!tasks.length) html = '<tr><td colspan="8" class="empty">No tasks registered</td></tr>';
+  if(!tasks.length) html = '<tr><td colspan="8" class="empty">No tasks registered. Report them with Collector.RegisterTask / UpdateTask.</td></tr>';
   var tb = $('#task-tbody');
   if(tb) tb.innerHTML = html;
 }
 
 // ─── Logs ──────────────────────────────────────────────────────────────
+function loadLogs(signal){
+  var tab = S.logTab;
+  // The counts of the tabs that are not open come from one cheap call; they read 0 until the tab was opened.
+  api('logs/counts', {signal:signal}).then(function(d){ S.logCounts = d || null; renderLogCounts(); }).catch(function(){});
+  return api('logs?level='+tab+'&limit=500', {signal:signal}).then(function(d){S.logs[tab]=d||[]; renderLogs();}).catch(function(){});
+}
 function initLogs(signal){
+  $$('.log-tab').forEach(function(t){
+    pageOn(t, 'keydown', function(e){ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); t.click(); } });
+  });
   $$('.log-tab').forEach(function(t){pageOn(t, 'click', function(){
     S.logTab=t.dataset.tab;
-    $$('.log-tab').forEach(function(x){x.classList.remove('active')});
+    $$('.log-tab').forEach(function(x){x.classList.remove('active'); x.setAttribute('aria-selected', 'false');});
     t.classList.add('active');
+    t.setAttribute('aria-selected', 'true');
     // Load the newly-active tab's data.
-    api('logs?level='+S.logTab+'&limit=500', {signal:currentPageSignal()}).then(function(d){S.logs[S.logTab]=d||[]; renderLogs();}).catch(function(){});
+    loadLogs(currentPageSignal());
     renderLogs();
   });});
   var s = $('#log-search');
   if(s) pageOn(s, 'input', function(){S.logSearch=s.value; renderLogs(); s.focus();});
   // Poll only the active tab every 10 seconds (not all 5 tabs).
-  startPagePoll('logs', function(signal){
-    return api('logs?level='+S.logTab+'&limit=500', {signal:signal}).then(function(d){S.logs[S.logTab]=d||[]; renderLogs();}).catch(function(){});
-  }, 10000);
+  startPagePoll('logs', loadLogs, 10000);
   // Initial load — only the active tab.
-  api('logs?level='+S.logTab+'&limit=500', {signal:signal}).then(function(d){S.logs[S.logTab]=d||[]; renderLogs();}).catch(function(){});
+  loadLogs(signal);
+}
+function renderLogCounts(){
+  ['app','http','error','panic','warning'].forEach(function(l){
+    var c = $('#log-count-'+l);
+    if(!c) return;
+    var n = (S.logCounts && S.logCounts[l] != null) ? S.logCounts[l] : (S.logs[l]||[]).length;
+    c.textContent = n;
+  });
 }
 function renderLogs(){
   var tab = S.logTab;
   var list = (S.logs[tab]||[]).slice().reverse();
   var q = S.logSearch.toLowerCase();
   if(q) list = list.filter(function(e){return (e.message||'').toLowerCase().indexOf(q)>=0;});
-  ['app','http','error','panic','warning'].forEach(function(l){
-    var c = $('#log-count-'+l);
-    if(c) c.textContent = (S.logs[l]||[]).length;
-  });
+  renderLogCounts();
   var html = '';
   list.slice(0,500).forEach(function(e){
     html += '<div class="log-line"><span class="time">'+fmtTime(e.time)+'</span>'+
-      '<span class="level '+tab+'">'+escapeHTML(e.level||tab)+'</span>'+
+      '<span class="level '+cls(tab)+'">'+escapeHTML(e.level||tab)+'</span>'+
       '<span class="msg">'+escapeHTML(e.message)+(e.source?'<span style="color:var(--text-muted);margin-left:8px">'+escapeHTML(e.source)+'</span>':'')+'</span></div>';
   });
-  if(!list.length) html = '<div class="empty">No log entries</div>';
+  if(!list.length) html = '<div class="empty">'+((S.logs[tab]||[]).length ? 'No log lines match' : 'No log entries')+'</div>';
   var v = $('#log-viewer');
   if(v) v.innerHTML = html;
 }
@@ -1440,33 +1880,61 @@ function renderLogs(){
 function initHealth(signal){
   loadHealth(signal);
   var rb = $('#health-refresh');
-  if(rb) pageOn(rb, 'click', function(){ loadHealth(currentPageSignal()); });
-  startPagePoll('health', loadHealth, 5000);
+  if(rb) pageOn(rb, 'click', function(){
+    rb.disabled = true;
+    rb.setAttribute('aria-busy', 'true');
+    loadHealth(currentPageSignal()).then(function(){ rb.disabled = false; rb.removeAttribute('aria-busy'); });
+  });
+  // Each refresh runs every probe (a database ping, a cache round trip). Ten seconds, not five.
+  startPagePoll('health', loadHealth, 10000);
 }
 function loadHealth(signal){
-  return api('health', {signal:signal}).then(function(d){S.health=d; renderHealth();}).catch(function(){});
+  return api('health', {signal:signal}).then(function(d){S.health=d||[]; renderHealth();}).catch(function(){});
 }
+function healthIcon(state){ return state==='green'?'\u2713':(state==='yellow'?'\u26a0':'\u2717'); }
+function healthMeta(h){ return fmtDur(h.latency_us)+' \u00b7 '+fmtTime(h.checked); }
 function renderHealth(){
-  var list = S.health || [];
-  var green=list.filter(function(h){return h.status==='green';}).length;
-  var yellow=list.filter(function(h){return h.status==='yellow';}).length;
-  var red=list.filter(function(h){return h.status==='red';}).length;
-  var cardsHtml = '<div class="card"><div class="label">Healthy</div><div class="value" style="color:var(--green)">'+green+'</div></div>'+
-    '<div class="card"><div class="label">Warnings</div><div class="value" style="color:var(--yellow)">'+yellow+'</div></div>'+
-    '<div class="card"><div class="label">Failing</div><div class="value" style="color:var(--err)">'+red+'</div></div>';
-  var cc = $('#health-cards');
-  if(cc) cc.innerHTML = cardsHtml;
-  var html = '';
-  list.forEach(function(h){
-    var icon = h.status==='green'?'\u2713':(h.status==='yellow'?'\u26a0':'\u2717');
-    html += '<div class="health-card '+h.status+'"><div class="indicator">'+icon+'</div>'+
-      '<div class="info"><div class="name">'+escapeHTML(h.name)+'</div>'+
-      '<div class="msg">'+escapeHTML(h.message||'')+'</div>'+
-      '<div class="msg" style="margin-top:4px;font-size:10px">'+fmtDur(h.latency_us)+' \u00b7 '+fmtTime(h.checked)+'</div></div></div>';
-  });
-  if(!list.length) html = '<div class="empty" style="grid-column:1/-1"><div class="icon">\u2764</div>No health checks registered</div>';
+  // The status becomes a CSS class, and it is whatever the probe returned. The server maps it onto
+  // green/yellow/red; the page does the same so a probe that says anything else cannot inject markup.
+  var list = (S.health || []).map(function(h){ return Object.assign({}, h, {state: healthState(h.status)}); });
+  var green=list.filter(function(h){return h.state==='green';}).length;
+  var yellow=list.filter(function(h){return h.state==='yellow';}).length;
+  var red=list.filter(function(h){return h.state==='red';}).length;
+  renderCards($('#health-cards'), [
+    {label:'Healthy', value:green, color:'var(--green)'},
+    {label:'Warnings', value:yellow, color:'var(--yellow)'},
+    {label:'Failing', value:red, color:'var(--err)'}
+  ]);
   var g = $('#health-grid');
-  if(g) g.innerHTML = html;
+  if(!g) return;
+  if(!list.length){
+    g.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="icon">\u2764</div>No health checks registered. Add one with Collector.RegisterHealthCheck.</div>';
+    return;
+  }
+  if(g.querySelector('.empty')) g.textContent = '';
+  reconcileList(g, list, function(h){return h.name;},
+    function(h){return h.state+'|'+h.message+'|'+h.latency_us+'|'+h.checked;},
+    function(h){
+      var node = el('div', {class:'health-card '+h.state}, [
+        el('div', {class:'indicator', text:healthIcon(h.state)}),
+        el('div', {class:'info'}, [
+          el('div', {class:'name', text:h.name}),
+          el('div', {class:'msg', 'data-role':'message', text:h.message||''}),
+          el('div', {class:'msg', 'data-role':'meta', style:'margin-top:4px;font-size:10px', text:healthMeta(h)})
+        ])
+      ]);
+      node.setAttribute('data-state', h.state);
+      return node;
+    },
+    function(node, h){
+      var changed = node.getAttribute('data-state') !== h.state;
+      node.className = 'health-card '+h.state;
+      node.setAttribute('data-state', h.state);
+      node.querySelector('.indicator').textContent = healthIcon(h.state);
+      node.querySelector('[data-role="message"]').textContent = h.message||'';
+      node.querySelector('[data-role="meta"]').textContent = healthMeta(h);
+      if(changed && motionOK()){ node.classList.add('changed'); setTimeout(function(){ node.classList.remove('changed'); }, 1100); }
+    });
 }
 
 // ─── Performance ───────────────────────────────────────────────────────
@@ -1498,7 +1966,7 @@ function renderPerformance(){
     {label:'Mallocs', value:fmtNum(cur.heap?cur.heap.mallocs:0)},
     {label:'Frees', value:fmtNum(cur.heap?cur.heap.frees:0)},
     {label:'Total Alloc', value:fmtBytes(cur.heap?cur.heap.total_alloc:0)},
-    {label:'CPU Usage', value:fmtNum(cur.cpu?cur.cpu.usage_pct:0, 1)+'%'},
+    {label:'CPU Usage (of one core)', value:fmtNum(cur.cpu?cur.cpu.usage_pct:0, 1)+'%'},
     {label:'Mem Sys (OS)', value:fmtBytes(cur.memory?cur.memory.sys:0)},
     {label:'Mem Usage %', value:fmtNum(cur.memory?cur.memory.usage_pct:0, 1)+'%'},
     {label:'CGO Calls', value:fmtNum(cur.cpu?cur.cpu.cgo_calls:0)},
@@ -1507,12 +1975,7 @@ function renderPerformance(){
     {label:'GOGC', value:rt.gogc!==undefined?(rt.gogc===-1?'disabled':String(rt.gogc)):'—', cls:rt.gogc===-1?'red':''},
     {label:'GOMEMLIMIT', value:rt.gomemlimit>0?fmtBytes(rt.gomemlimit):'no limit', cls:rt.gomemlimit<=0?'yellow':''},
   ];
-  var html = '';
-  cards.forEach(function(c){
-    html += '<div class="card'+(c.cls?' '+c.cls:'')+'"><div class="label">'+c.label+'</div><div class="value">'+c.value+'</div></div>';
-  });
-  var container = $('#perf-cards');
-  if(container) container.innerHTML = html;
+  renderCards($('#perf-cards'), cards);
 
   // Heap Allocation chart — plots HeapAlloc ONLY (live heap bytes).
   // This DROPS after GC. Never mix with TotalAlloc or HeapSys.
@@ -1542,11 +2005,13 @@ function renderPerformance(){
 }
 
 // ─── Timeline ──────────────────────────────────────────────────────────
+function loadTimelines(signal){
+  return api('timeline?limit=50', {signal:signal}).then(function(d){S.timelines=d||[]; renderTimelineList();}).catch(function(){});
+}
 function initTimeline(signal){
-  api('timeline?limit=50', {signal:signal}).then(function(d){S.timelines=d; renderTimelineList();}).catch(function(){});
-  startPagePoll('timeline', function(signal){
-    return api('timeline?limit=50', {signal:signal}).then(function(d){S.timelines=d; renderTimelineList();}).catch(function(){});
-  }, 10000);
+  S._tlShown = null;
+  loadTimelines(signal);
+  startPagePoll('timeline', loadTimelines, 10000);
 }
 function renderTimelineList(){
   var list = S.timelines.slice();
@@ -1555,30 +2020,73 @@ function renderTimelineList(){
   var html = '';
   list.slice(0,100).forEach(function(t){
     html += '<tr><td style="font-family:var(--mono);font-size:11px;color:var(--text-dim)">'+fmtTime(t.time)+'</td>'+
-      '<td><span class="method-pill '+t.method+'">'+t.method+'</span></td>'+
+      '<td><span class="method-pill '+cls(t.method)+'">'+escapeHTML(t.method)+'</span></td>'+
       '<td style="font-family:var(--mono);font-size:11px">'+escapeHTML(t.path)+'</td>'+
-      '<td><span class="status-pill '+statusClass(t.status)+'">'+(t.status||'-')+'</span></td>'+
+      '<td><span class="status-pill '+statusClass(t.status)+'">'+(t.status?num(t.status):'-')+'</span></td>'+
       '<td>'+fmtDur(t.total_us)+'</td><td>'+fmtNum((t.steps||[]).length)+'</td>'+
-      '<td><a href="#" data-id="'+t.id+'">view</a></td></tr>';
+      '<td><a href="#" data-id="'+attr(t.id)+'">view</a></td></tr>';
   });
-  if(!list.length) html = '<tr><td colspan="7" class="empty">No timelines yet</td></tr>';
+  if(!list.length) html = '<tr><td colspan="7" class="empty">No timelines yet. A timeline is recorded for a request that arrives while this dashboard is open.</td></tr>';
   var tb = $('#tl-tbody');
   if(tb) tb.innerHTML = html;
   $$('a[data-id]').forEach(function(a){
     pageOn(a, 'click', function(e){e.preventDefault(); S._tlSelected=a.dataset.id; renderTimelineDetail();});
   });
-  if(S._tlSelected) renderTimelineDetail();
+  // The detail is drawn when the selection changes, not on every list refresh: redrawing it
+  // closed every step the person had opened.
+  if(S._tlSelected && S._tlShown !== S._tlSelected) renderTimelineDetail();
+}
+// A timeline lists every step once (flat, in start order) and also nests each step's
+// descendants in its children. Drawn naively that shows every nested step twice, so the page
+// draws the tree from the steps that are nobody's child.
+function stepKey(s){ return s.name+'|'+s.start+'|'+s.end; }
+function timelineRoots(steps){
+  var nested = {};
+  (function mark(list){
+    list.forEach(function(s){
+      (s.children||[]).forEach(function(c){ nested[stepKey(c)] = true; });
+      mark(s.children||[]);
+    });
+  })(steps);
+  return steps.filter(function(s){ return !nested[stepKey(s)]; });
 }
 function renderTimelineDetail(){
-  var t = S.timelines.find(function(x){return x.id===S._tlSelected;});
   var d = $('#tl-detail');
-  if(!d || !t) return;
-  d.innerHTML = '<div class="chart-card"><div class="head"><h3>Timeline '+escapeHTML(t.id)+'</h3><button id="tl-close">Close</button></div>'+
-    '<div class="timeline">'+renderTimelineSteps(t.steps||[], 0)+'</div></div>';
+  if(!d) return;
+  var id = S._tlSelected;
+  if(!id){ d.innerHTML = ''; S._tlShown = null; return; }
+  var t = S.timelines.find(function(x){return x.id===id;});
+  if(!t){
+    // Reached from the Requests page, the timeline may be older than the latest fifty the list holds.
+    if(S._tlFetching === id) return;
+    S._tlFetching = id;
+    d.innerHTML = '<div class="empty">Loading timeline\u2026</div>';
+    api('timeline/'+encodeURIComponent(id), {signal:currentPageSignal()}).then(function(tl){
+      S._tlFetching = null;
+      if(tl && tl.id){ S.timelines.unshift(tl); }
+      renderTimelineDetail();
+    }).catch(function(e){
+      S._tlFetching = null;
+      if(e && e.name === 'AbortError') return;
+      S._tlSelected = null;
+      d.innerHTML = '';
+    });
+    return;
+  }
+  S._tlShown = id;
+  d.innerHTML = '<div class="chart-card reveal-in"><div class="head"><h3>Timeline '+escapeHTML(t.id)+'</h3><button id="tl-close" type="button">Close</button></div>'+
+    (t.dropped_steps ? '<div class="notice">This request produced '+num(t.dropped_steps)+' more steps than the recorder keeps; they are not shown.</div>' : '')+
+    '<div class="timeline">'+renderTimelineSteps(timelineRoots(t.steps||[]), 0)+'</div></div>';
   var cl = $('#tl-close');
-  if(cl) pageOn(cl, 'click', function(){S._tlSelected=null; d.innerHTML='';});
-  $$('#tl-detail .t-step').forEach(function(s){
-    pageOn(s, 'click', function(e){e.stopPropagation(); s.classList.toggle('open');});
+  if(cl) pageOn(cl, 'click', function(){S._tlSelected=null; S._tlShown=null; d.innerHTML='';});
+  $$('#tl-detail .t-step > .head').forEach(function(h){
+    var toggle = function(){
+      var step = h.parentNode;
+      var open = step.classList.toggle('open');
+      h.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    pageOn(h, 'click', function(e){ e.stopPropagation(); toggle(); });
+    pageOn(h, 'keydown', function(e){ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); toggle(); } });
   });
 }
 function renderTimelineSteps(steps, depth){
@@ -1586,9 +2094,9 @@ function renderTimelineSteps(steps, depth){
   steps.forEach(function(s){
     var slow = s.duration_us > 100000;
     html += '<div class="t-step '+(slow?'slow':'')+'" style="margin-left:'+(depth*12)+'px">'+
-      '<div class="head"><span class="name">'+escapeHTML(s.name)+'</span>'+
+      '<div class="head" role="button" tabindex="0" aria-expanded="false"><span class="name">'+escapeHTML(s.name)+'</span>'+
       '<span class="dur '+(slow?'slow':'')+'">'+fmtDur(s.duration_us)+'</span></div>'+
-      '<div class="expand">';
+      '<div class="expand"><div class="expand-inner">';
     if(s.metadata){
       for(var k in s.metadata){
         html += '<div><span style="color:var(--primary)">'+escapeHTML(k)+':</span> '+escapeHTML(JSON.stringify(s.metadata[k]))+'</div>';
@@ -1596,7 +2104,7 @@ function renderTimelineSteps(steps, depth){
     }
     html += '<div><span style="color:var(--text-muted)">start:</span> '+fmtTime(s.start)+'</div>';
     html += '<div><span style="color:var(--text-muted)">end:</span> '+fmtTime(s.end)+'</div>';
-    html += '</div>';
+    html += '</div></div>';
     if(s.children && s.children.length) html += '<div class="children">'+renderTimelineSteps(s.children, depth+1)+'</div>';
     html += '</div>';
   });
@@ -1792,7 +2300,7 @@ function renderArchitecture(){
       var x = cx + Math.cos(angle) * radius;
       var y = cy + Math.sin(angle) * radius;
 
-      var cls = conns[i].status || 'unknown';
+      var cls = connState(conns[i].status);
       // Line stops short of the icon (icon is ~48px, so stop 28px before)
       var lineEndX = cx + Math.cos(angle) * (radius - 28);
       var lineEndY = cy + Math.sin(angle) * (radius - 28);
@@ -1812,7 +2320,7 @@ function renderArchitecture(){
       var yPct = ((cy + Math.sin(angle) * radius) / 700) * 100;
 
       var conn = conns[i];
-      var cls = conn.status || 'unknown';
+      var cls = connState(conn.status);
       var hostLabel = conn.host || conn.database || '';
 
       overlayHtml += '<div class="arch-node '+cls+'" style="left:'+xPct+'%;top:'+yPct+'%">'+
@@ -1837,7 +2345,7 @@ function renderArchitecture(){
   }
   var html = '';
   conns.forEach(function(c){
-    var cls = c.status || 'unknown';
+    var cls = connState(c.status);
     var poolHtml = '';
     if(c.pool_max > 0){
       var pct = Math.round(c.pool_in_use / c.pool_max * 100);
@@ -2297,6 +2805,238 @@ function renderVideo(){
   if(tb) tb.innerHTML = html;
 }
 
+// ─── Database Browser ──────────────────────────────────────────────────
+// The server side (table list, paged rows, search, and — with Config.AllowWrites and a DBWriter —
+// insert, update and delete) existed, with a template, but the page was neither routed nor linked,
+// and the script had no code for it.
+function initDatabase(signal){
+  S.dbTables = S.dbTables || [];
+  loadDBTables(signal);
+  startPagePoll('database', loadDBTables, 30000);
+  if(S.dbTable) loadDBData(signal);
+}
+function loadDBTables(signal){
+  return api('db/tables', {signal:signal}).then(function(d){ S.dbTables = (d && d.tables) || []; renderDBTables(); }).catch(function(){});
+}
+function renderDBTables(){
+  var box = $('#db-tables');
+  if(!box) return;
+  var tables = S.dbTables || [];
+  if(!box.querySelector('.db-side-head')){
+    box.innerHTML = '<div class="db-side-head">Tables <span class="count-pill" id="db-count">0</span></div>'+
+      '<input id="db-filter" type="search" placeholder="Filter tables" aria-label="Filter tables" value="'+attr(S._dbFilter||'')+'">'+
+      '<div class="db-list" id="db-list"></div>';
+    var fi = $('#db-filter');
+    pageOn(fi, 'input', function(){ S._dbFilter = fi.value; renderDBTables(); });
+  }
+  var cnt = $('#db-count'); if(cnt) cnt.textContent = tables.length;
+  var list = $('#db-list');
+  var q = (S._dbFilter||'').toLowerCase();
+  var shown = tables.filter(function(t){ return !q || t.name.toLowerCase().indexOf(q) >= 0; });
+  if(!tables.length){
+    list.innerHTML = '<div class="empty" style="padding:24px"><div class="icon">\u25a3</div>No database attached.<br><small>Call Collector.SetDBInspector to browse your tables here.</small></div>';
+    return;
+  }
+  if(list.querySelector('.empty')) list.textContent = '';
+  reconcileList(list, shown, function(t){return t.name;},
+    function(t){return t.name+'|'+t.rows+'|'+(S.dbTable===t.name);},
+    function(t){
+      var node = el('div', {class:'db-table-item', role:'button', tabindex:'0'}, [
+        el('span', {class:'nm', text:t.name}), el('span', {class:'ct', text:fmtNum(t.rows)})
+      ]);
+      var go = function(){ selectDBTable(t.name); };
+      node.addEventListener('click', go);
+      node.addEventListener('keydown', function(e){ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); go(); } });
+      node.classList.toggle('active', S.dbTable === t.name);
+      return node;
+    },
+    function(node, t){
+      node.querySelector('.ct').textContent = fmtNum(t.rows);
+      node.classList.toggle('active', S.dbTable === t.name);
+    });
+  $$('#db-list .db-table-item').forEach(function(n){ n.classList.toggle('active', n.querySelector('.nm').textContent === S.dbTable); });
+}
+function selectDBTable(name){
+  S.dbTable = name;
+  S.dbState = {page:1, pageSize:S.dbState.pageSize||50, search:''};
+  S.dbData = null;
+  renderDBTables();
+  loadDBData(currentPageSignal());
+}
+function loadDBData(signal){
+  var st = S.dbState, name = S.dbTable;
+  if(!name) return Promise.resolve();
+  var path = 'db/tables/'+encodeURIComponent(name)+'?page='+st.page+'&page_size='+st.pageSize+(st.search?'&search='+encodeURIComponent(st.search):'');
+  var box = $('#db-data');
+  if(box && !S.dbData) box.innerHTML = '<div class="empty" style="padding:40px">Loading '+escapeHTML(name)+'\u2026</div>';
+  return api(path, {signal:signal}).then(function(d){
+    if(S.dbTable !== name) return;
+    S.dbData = d;
+    renderDBData();
+  }).catch(function(e){
+    if(e && e.name === 'AbortError') return;
+    if(box && !S.dbData) box.innerHTML = '<div class="empty" style="padding:40px"><div class="icon">!</div>Could not read '+escapeHTML(name)+'.</div>';
+  });
+}
+function dbCell(v){
+  if(v === null || v === undefined) return '<span class="null">NULL</span>';
+  var s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  var more = s.length > 140;
+  return '<span'+(more ? ' title="'+attr(s.slice(0, 600))+'"' : '')+'>'+escapeHTML(more ? s.slice(0, 140)+'\u2026' : s)+'</span>';
+}
+function dbPK(cols, row){
+  return cols.filter(function(c){ return c.primary_key; }).map(function(c){
+    return encodeURIComponent(c.name)+'='+encodeURIComponent(row[c.name]==null ? '' : row[c.name]);
+  }).join(',');
+}
+function renderDBData(){
+  var box = $('#db-data'), d = S.dbData;
+  if(!box || !d) return;
+  var cols = d.columns || [], rows = d.rows || [];
+  var writable = !!d.writable && cols.some(function(c){ return c.primary_key; });
+  var pages = Math.max(1, Math.ceil((d.total||0) / (d.page_size||S.dbState.pageSize)));
+  var head = '<div class="db-toolbar"><h3>'+escapeHTML(d.table)+' <span class="count-pill">'+fmtNum(d.total)+'</span></h3>'+
+    '<input id="db-search" type="search" placeholder="Search rows" aria-label="Search rows" value="'+attr(S.dbState.search)+'">'+
+    '<select id="db-size" aria-label="Rows per page">'+[25,50,100,200].map(function(n){return '<option'+(n===S.dbState.pageSize?' selected':'')+'>'+n+'</option>';}).join('')+'</select>'+
+    '<button id="db-refresh" type="button">Refresh</button>'+
+    (writable ? '<button class="primary" id="db-new" type="button">+ New row</button>' : '')+'</div>';
+  var th = cols.map(function(c){
+    return '<th title="'+attr(c.type||'')+'">'+escapeHTML(c.name)+(c.primary_key?' <span class="pk">PK</span>':'')+'</th>';
+  }).join('') + (writable ? '<th></th>' : '');
+  var body = rows.map(function(r, i){
+    return '<tr'+(S._dbFresh && S._dbFresh===i ? ' class="row-new"' : '')+'>'+cols.map(function(c){ return '<td>'+dbCell(r[c.name])+'</td>'; }).join('')+
+      (writable ? '<td class="db-actions"><button class="db-edit" data-i="'+i+'" type="button">Edit</button> <button class="db-del" data-i="'+i+'" type="button">Delete</button></td>' : '')+'</tr>';
+  }).join('');
+  if(!rows.length) body = '<tr><td colspan="'+(cols.length+(writable?1:0)||1)+'" class="empty">'+(S.dbState.search ? 'No rows match "'+escapeHTML(S.dbState.search)+'"' : 'This table is empty')+'</td></tr>';
+  box.innerHTML = head+'<div class="table-scroll"><table><thead><tr>'+th+'</tr></thead><tbody>'+body+'</tbody></table></div>'+
+    '<div class="db-pager"><button id="db-prev" type="button"'+(S.dbState.page<=1?' disabled':'')+'>\u2039 Prev</button>'+
+    '<span>Page '+S.dbState.page+' of '+pages+'</span>'+
+    '<button id="db-next" type="button"'+(S.dbState.page>=pages?' disabled':'')+'>Next \u203a</button>'+
+    (d.writable && !writable ? '<span class="db-note">Writes need a primary key; this table has none.</span>' : '')+'</div>';
+
+  var go = function(){ loadDBData(currentPageSignal()); };
+  var si = $('#db-search'), timer = 0;
+  pageOn(si, 'input', function(){
+    clearTimeout(timer);
+    timer = setTimeout(function(){ S.dbState.search = si.value.trim(); S.dbState.page = 1; go(); }, 300);
+  });
+  pageOn($('#db-size'), 'change', function(){ S.dbState.pageSize = parseInt(this.value, 10) || 50; S.dbState.page = 1; go(); });
+  pageOn($('#db-refresh'), 'click', go);
+  pageOn($('#db-prev'), 'click', function(){ if(S.dbState.page > 1){ S.dbState.page--; go(); } });
+  pageOn($('#db-next'), 'click', function(){ if(S.dbState.page < pages){ S.dbState.page++; go(); } });
+  var nb = $('#db-new'); if(nb) pageOn(nb, 'click', function(){ openDBForm(null); });
+  $$('.db-edit').forEach(function(b){ pageOn(b, 'click', function(){ openDBForm(rows[parseInt(b.dataset.i, 10)]); }); });
+  $$('.db-del').forEach(function(b){
+    pageOn(b, 'click', function(){
+      var row = rows[parseInt(b.dataset.i, 10)];
+      if(!window.confirm('Delete this row from '+d.table+'? This cannot be undone.')) return;
+      b.disabled = true;
+      fetch(S.base+'/api/db/tables/'+encodeURIComponent(d.table)+'/rows/'+dbPK(cols, row)+'', {method:'DELETE'}).then(function(r){
+        if(r.status === 401){ window.location.href = loginURL(); return; }
+        if(r.ok){ toast('Row deleted', 'ok'); loadDBData(currentPageSignal()); loadDBTables(currentPageSignal()); return; }
+        return r.json().catch(function(){ return null; }).then(function(e){ b.disabled = false; toast('Delete failed: '+((e && e.error) || 'HTTP '+r.status), 'error', 6000); });
+      }).catch(function(){ b.disabled = false; toast('Cannot reach the dashboard server', 'error'); });
+    });
+  });
+}
+// openDBForm shows the row editor: row is null for a new row.
+function openDBForm(row){
+  var d = S.dbData, cols = d.columns || [];
+  var editing = !!row;
+  closeDBForm();
+  var fields = cols.map(function(c, i){
+    var v = editing ? row[c.name] : '';
+    var isNull = editing && v == null;
+    var long = typeof v === 'string' && (v.length > 80 || v.indexOf('\n') >= 0);
+    var input = long
+      ? '<textarea data-col="'+attr(c.name)+'" rows="4"'+(editing && c.primary_key ? ' readonly' : '')+'>'+escapeHTML(isNull ? '' : v)+'</textarea>'
+      : '<input data-col="'+attr(c.name)+'" value="'+attr(isNull || v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : v))+'"'+(editing && c.primary_key ? ' readonly' : '')+' spellcheck="false">';
+    return '<div class="db-field"><label>'+escapeHTML(c.name)+' <small>'+escapeHTML(c.type||'')+(c.primary_key?' \u00b7 PK':'')+'</small></label>'+input+
+      (c.nullable && !(editing && c.primary_key) ? '<label class="db-null"><input type="checkbox" class="chk" data-null="'+attr(c.name)+'"'+(isNull?' checked':'')+'> NULL</label>' : '')+'</div>';
+  }).join('');
+  var dlg = el('div', {class:'modal-scrim', id:'db-modal'}, []);
+  dlg.innerHTML = '<div class="modal" role="dialog" aria-modal="true" aria-labelledby="db-modal-title">'+
+    '<h3 id="db-modal-title">'+(editing?'Edit row':'New row')+' \u00b7 '+escapeHTML(d.table)+'</h3>'+
+    '<div class="db-fields">'+fields+'</div>'+
+    '<div class="db-error" id="db-form-error" role="alert"></div>'+
+    '<div class="modal-actions"><button type="button" id="db-cancel">Cancel</button><button type="button" class="primary" id="db-save">Save</button></div></div>';
+  document.body.appendChild(dlg);
+  requestAnimationFrame(function(){ dlg.classList.add('in'); });
+  var first = dlg.querySelector('input:not([readonly]):not([type=checkbox]), textarea:not([readonly])');
+  if(first) first.focus();
+  var opener = document.activeElement;
+  function close(){ closeDBForm(); }
+  dlg.addEventListener('click', function(e){ if(e.target === dlg) close(); });
+  dlg.addEventListener('keydown', function(e){ if(e.key === 'Escape'){ e.preventDefault(); close(); } });
+  $('#db-cancel').addEventListener('click', close);
+  $('#db-save').addEventListener('click', function(){
+    var values = {};
+    $$('#db-modal [data-col]').forEach(function(inp){
+      var col = cols.filter(function(c){ return c.name === inp.dataset.col; })[0];
+      if(editing && col.primary_key) return;
+      var nullBox = $('#db-modal [data-null="'+inp.dataset.col.replace(/"/g, '\\"')+'"]');
+      if(nullBox && nullBox.checked){ values[col.name] = null; return; }
+      var s = inp.value;
+      if(/^(bool|boolean)$/i.test(col.type||'')) values[col.name] = (s === 'true' || s === '1' || s === 't');
+      else if(/int|serial|numeric|decimal|float|double|real|number/i.test(col.type||'') && s !== '' && isFinite(Number(s))) values[col.name] = Number(s);
+      else values[col.name] = s;
+    });
+    var btn = $('#db-save'); btn.disabled = true; btn.textContent = 'Saving\u2026';
+    var url = S.base+'/api/db/tables/'+encodeURIComponent(d.table)+'/rows'+(editing ? '/'+dbPK(cols, row) : '');
+    fetch(url, {method: editing ? 'PUT' : 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({values: values})}).then(function(r){
+      if(r.status === 401){ window.location.href = loginURL(); return; }
+      return r.json().catch(function(){ return null; }).then(function(res){
+        if(r.ok){
+          closeDBForm();
+          toast(editing ? 'Row updated' : 'Row added', 'ok');
+          loadDBData(currentPageSignal()); loadDBTables(currentPageSignal());
+        } else {
+          btn.disabled = false; btn.textContent = 'Save';
+          $('#db-form-error').textContent = (res && res.error) || ('HTTP '+r.status);
+        }
+      });
+    }).catch(function(){ btn.disabled = false; btn.textContent = 'Save'; $('#db-form-error').textContent = 'Cannot reach the dashboard server'; });
+  });
+  dlg._opener = opener;
+}
+function closeDBForm(){
+  var m = document.getElementById('db-modal');
+  if(!m) return;
+  m.classList.remove('in');
+  setTimeout(function(){ if(m.parentNode) m.parentNode.removeChild(m); }, motionOK() ? 200 : 0);
+}
+
+// ─── Mobile navigation ─────────────────────────────────────────────────
+// Below 900px the sidebar is hidden, and nothing replaced it: the pages could only be reached by
+// typing their addresses. The topbar's menu button opens it as a drawer.
+function openNavDrawer(){
+  document.body.classList.add('nav-open');
+  var b = $('#nav-toggle'); if(b) b.setAttribute('aria-expanded', 'true');
+  var first = $('#dashboard-nav .nav-item.active') || $('#dashboard-nav .nav-item');
+  if(first) first.focus();
+}
+function navIsOpen(){
+  return !!(document.body && document.body.classList && document.body.classList.contains('nav-open'));
+}
+function closeNavDrawer(){
+  if(!navIsOpen()) return;
+  document.body.classList.remove('nav-open');
+  var b = $('#nav-toggle'); if(b){ b.setAttribute('aria-expanded', 'false'); }
+}
+function initNavDrawer(){
+  var b = $('#nav-toggle');
+  if(b) b.addEventListener('click', function(){
+    if(navIsOpen()) closeNavDrawer(); else openNavDrawer();
+  });
+  var scrim = $('#nav-scrim');
+  if(scrim) scrim.addEventListener('click', function(){ closeNavDrawer(); if(b) b.focus(); });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && navIsOpen()){ closeNavDrawer(); if(b) b.focus(); }
+  });
+  var nav = $('#dashboard-nav');
+  if(nav) nav.addEventListener('click', function(e){ if(e.target.closest && e.target.closest('.nav-item')) closeNavDrawer(); });
+}
+
 // ─── Theme ─────────────────────────────────────────────────────────────
 // Canvas can't inherit CSS, so the chart palette is read back out of the
 // stylesheet. That keeps every colour defined in dashboard.css.
@@ -2319,7 +3059,14 @@ function currentTheme(){
 }
 
 function setTheme(t){
-  document.documentElement.setAttribute('data-theme', t);
+  var root = document.documentElement;
+  // Surfaces cross-fade into the new palette instead of snapping (not for reduced motion). The
+  // typeof guard keeps this function self-contained: the root-level poll harness evaluates it alone.
+  if(typeof motionOK === 'function' && motionOK() && root.classList){
+    root.classList.add('theme-fade');
+    setTimeout(function(){ root.classList.remove('theme-fade'); }, 380);
+  }
+  root.setAttribute('data-theme', t);
   try{ localStorage.setItem('breeze-theme', t); }catch(e){}
   // Repaint from the data already in memory. A theme switch is purely
   // presentational; it must not trigger fresh API traffic or race a page
@@ -2347,10 +3094,77 @@ function initTheme(){
 }
 
 // ─── Canvas charts ─────────────────────────────────────────────────────
-function drawLineChart(canvas, data, color){
+// withAlpha returns the colour with an alpha, for the fade under the line. It understands the
+// forms the stylesheet and a custom theme use (#rgb, #rrggbb, rgb(), rgba()); the old code
+// appended hex digits to whatever it was given, and a colour in any other form threw from
+// addColorStop and left the chart blank.
+function withAlpha(color, a){
+  var c = String(color||'').trim(), m;
+  if((m = /^#([0-9a-f]{3})$/i.exec(c))) c = '#' + m[1].split('').map(function(x){return x+x;}).join('');
+  if((m = /^#([0-9a-f]{6})$/i.exec(c))){
+    var n = parseInt(m[1], 16);
+    return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')';
+  }
+  if((m = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(c))) return 'rgba('+m[1]+','+m[2]+','+m[3]+','+a+')';
+  return null;
+}
+function roundRectPath(ctx, x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x+r, y); ctx.lineTo(x+w-r, y); ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r); ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h); ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r); ctx.quadraticCurveTo(x, y, x+r, y); ctx.closePath();
+}
+// drawLineChart(canvas, data, color, opts): opts.times (ISO strings, one per point), opts.fmt
+// (value -> text for the hover label) and opts.label (the accessible name). The first draw of a
+// canvas sweeps the line in from the left; later draws are immediate, so a chart that updates
+// every second does not keep re-animating.
+function drawLineChart(canvas, data, color, opts){
   if(!canvas) return;
+  opts = opts || {};
+  var st = canvas._chart || (canvas._chart = {hover:null});
+  st.data = data || [];
+  st.color = color || chartColor(1);
+  st.times = opts.times || null;
+  st.fmt = opts.fmt || formatLabel;
+  canvas.setAttribute('role', 'img');
+  var last = st.data.length ? st.data[st.data.length-1] : null;
+  canvas.setAttribute('aria-label', (opts.label || 'Chart') + (last==null ? ': no data' : ': latest ' + st.fmt(last)));
+  if(!canvas._wired){
+    canvas._wired = true;
+    canvas.addEventListener('mousemove', function(e){
+      var s = canvas._chart;
+      if(!s || s.data.length < 2) return;
+      var rect = canvas.getBoundingClientRect();
+      var idx = Math.round(((e.clientX - rect.left - 40) / Math.max(1, rect.width - 50)) * (s.data.length - 1));
+      idx = Math.max(0, Math.min(s.data.length - 1, idx));
+      if(s.hover !== idx){ s.hover = idx; paintChart(canvas, 1); }
+    });
+    canvas.addEventListener('mouseleave', function(){
+      var s = canvas._chart;
+      if(s && s.hover != null){ s.hover = null; paintChart(canvas, 1); }
+    });
+  }
+  if(!canvas._seen && st.data.length > 1 && motionOK()){
+    canvas._seen = true;
+    var t0 = null;
+    var frame = function(ts){
+      if(t0 === null) t0 = ts;
+      var p = Math.min(1, (ts - t0) / 700);
+      paintChart(canvas, 1 - Math.pow(1 - p, 3));
+      if(p < 1 && canvas.isConnected) requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+    return;
+  }
+  canvas._seen = true;
+  paintChart(canvas, 1);
+}
+function paintChart(canvas, progress){
+  var st = canvas._chart;
+  if(!st) return;
+  var data = st.data, lineColor = st.color;
   // Resolved per draw, so a theme switch repaints in the new palette.
-  var lineColor = color || chartColor(1);
   var gridColor = cssVar('--chart-grid', '#e4e5f7');
   var labelColor = cssVar('--chart-label', '#8b87ab');
 
@@ -2358,10 +3172,12 @@ function drawLineChart(canvas, data, color){
 
   var w = canvas.clientWidth || 600;
   var h = canvas.clientHeight || 200;
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
+  if(canvas.width !== Math.round(w*dpr) || canvas.height !== Math.round(h*dpr)){
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
   var ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   ctx.strokeStyle = gridColor;
   ctx.lineWidth = 1;
@@ -2387,31 +3203,73 @@ function drawLineChart(canvas, data, color){
   ctx.fillStyle = labelColor;
   ctx.font = '10px monospace';
   ctx.textAlign = 'right';
-  for(var i=0;i<=4;i++){
-    var v = max - (i/4)*(max-min);
-    var y = (i/4)*(h-20)+14;
-    ctx.fillText(formatLabel(v), 36, y);
+  // The axis shows as many decimals as its range needs to keep neighbouring labels distinct: a
+  // 6.0-7.0 axis used to print 7, 7, 7, 6, 6.
+  var step = (max - min) / 4;
+  for(var j=0;j<=4;j++){
+    var v = max - (j/4)*(max-min);
+    var ly = (j/4)*(h-20)+14;
+    ctx.fillText(axisLabel(v, step), 36, ly);
+  }
+  var x0 = 40, w0 = w - 50;
+  function px(k){ return x0 + (k/Math.max(1,data.length-1))*w0; }
+  function py(val){ return (h-20) - ((val-min)/(max-min))*(h-30) + 10; }
+
+  ctx.save();
+  if(progress < 1){
+    ctx.beginPath(); ctx.rect(0, 0, x0 + w0 * progress + 2, h); ctx.clip();
   }
   ctx.strokeStyle = lineColor;
   ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
   ctx.beginPath();
-  var x0 = 40, w0 = w - 50;
-  for(var i=0;i<data.length;i++){
-    var x = x0 + (i/Math.max(1,data.length-1))*w0;
-    var y = (h-20) - ((data[i]-min)/(max-min))*(h-30) + 10;
-    if(i===0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  for(var k=0;k<data.length;k++){
+    if(k===0) ctx.moveTo(px(k), py(data[k])); else ctx.lineTo(px(k), py(data[k]));
   }
   ctx.stroke();
   ctx.lineTo(x0 + w0, h-10);
   ctx.lineTo(x0, h-10);
   ctx.closePath();
   // Vertical fade under the line reads as depth without hiding the grid.
-  var grad = ctx.createLinearGradient(0, 10, 0, h-10);
-  grad.addColorStop(0, lineColor + '3d');
-  grad.addColorStop(1, lineColor + '05');
-  ctx.fillStyle = grad;
+  var top = withAlpha(lineColor, 0.24), bottom = withAlpha(lineColor, 0.02);
+  if(top){
+    var grad = ctx.createLinearGradient(0, 10, 0, h-10);
+    grad.addColorStop(0, top);
+    grad.addColorStop(1, bottom);
+    ctx.fillStyle = grad;
+  } else {
+    ctx.globalAlpha = 0.12; ctx.fillStyle = lineColor;
+  }
   ctx.fill();
+  ctx.restore();
 
+  // Hover: a guide, the point, and its value (and time).
+  if(st.hover != null && progress >= 1 && st.hover < data.length){
+    var hx = px(st.hover), hy = py(data[st.hover]);
+    ctx.strokeStyle = labelColor; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(hx, 10); ctx.lineTo(hx, h-10); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = lineColor;
+    ctx.beginPath(); ctx.arc(hx, hy, 4, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = cssVar('--surface', '#fff'); ctx.lineWidth = 2; ctx.stroke();
+    var text = st.fmt(data[st.hover]);
+    var when = st.times && st.times[st.hover] ? fmtTime(st.times[st.hover]) : '';
+    ctx.font = '600 11px sans-serif';
+    var tw = Math.max(ctx.measureText(text).width, when ? ctx.measureText(when).width : 0) + 16;
+    var th = when ? 34 : 22;
+    var bx = hx + 10; if(bx + tw > w - 4) bx = hx - 10 - tw;
+    var by = Math.max(4, Math.min(h - th - 4, hy - th/2));
+    roundRectPath(ctx, bx, by, tw, th, 6);
+    ctx.fillStyle = cssVar('--surface', '#fff'); ctx.fill();
+    ctx.strokeStyle = gridColor; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = cssVar('--text', '#222'); ctx.textAlign = 'left';
+    ctx.fillText(text, bx + 8, by + 15);
+    if(when){ ctx.font = '10px sans-serif'; ctx.fillStyle = labelColor; ctx.fillText(when, bx + 8, by + 28); }
+  }
+}
+function axisLabel(v, step){
+  if(Math.abs(v) >= 1000) return formatLabel(v);
+  var decimals = step >= 1 ? 0 : (step >= 0.1 ? 1 : (step >= 0.01 ? 2 : 3));
+  return v.toFixed(decimals);
 }
 function formatLabel(v){
   if(Math.abs(v) >= 1000000) return (v/1000000).toFixed(1)+'M';
@@ -2421,13 +3279,24 @@ function formatLabel(v){
 }
 
 // ─── Init ──────────────────────────────────────────────────────────────
+function loadCaps(){
+  api('capabilities').then(function(c){ S.caps = Object.assign(S.caps, c || {}); }).catch(function(){});
+}
 function init(){
-  // Detect base path from the current URL
-  var path = location.pathname;
-  var match = path.match(/^(\/[^\/]*dashboard)/);
-  S.base = match ? match[1] : '/dashboard';
+  // The server writes its base path into the page. Guessing it from the address (the pattern was
+  // /^(\/[^\/]*dashboard)/) was wrong for every base_path that does not end in "dashboard": the
+  // API calls and the WebSocket then went to /dashboard and the page never loaded any data.
+  var declared = document.body && document.body.getAttribute('data-base-path');
+  if(declared){
+    S.base = declared.replace(/\/+$/, '');
+  } else {
+    var match = location.pathname.match(/^(\/[^\/]*dashboard)/);
+    S.base = match ? match[1] : '/dashboard';
+  }
   initTheme();
+  initNavDrawer();
   connectWS();
+  loadCaps();
 
 
   // Fix: if a page script already set __breezeDashPage before dashboard.js
@@ -2440,4 +3309,7 @@ function init(){
 }
 init();
 window.BreezeDash = {initPage: initPage, api: api, apiPost: apiPost, S: S};
+// The line above is the anchor the fleet playback harness (testdata/fleet_playback_harness.js)
+// appends its test seam to, so it is left exactly as it was; additions go on their own line.
+window.BreezeDash.toast = toast;
 })();

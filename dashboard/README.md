@@ -22,8 +22,14 @@ func main() {
     pool   := breeze.NewWorkerPool(runtime.NumCPU())
     app    := breeze.New(router, pool)
 
-    // 1. Install the dashboard (registers /dashboard, /dashboard/api/*, /dashboard/ws)
-    coll := dashboard.Install(app, router, dashboard.DefaultConfig())
+    // 1. Install the dashboard (registers /dashboard, /dashboard/api/*, /dashboard/ws).
+    //    There are no default credentials: without a username and password the
+    //    dashboard stays locked (HTTP 503). DisableAuth is for trusted local setups.
+    cfg := dashboard.DefaultConfig()
+    cfg.Username = os.Getenv("DASHBOARD_USER")
+    cfg.Password = os.Getenv("DASHBOARD_PASSWORD")
+    coll := dashboard.Install(app, router, cfg)
+    defer coll.Close() // stops the sampler and WebSocket loop, and saves state one last time
 
     // 2. Install the instrumentation middleware (must come before your routes)
     router.Use(coll.Middleware())
@@ -35,9 +41,9 @@ func main() {
 }
 ```
 
-Visit `http://localhost:3000/dashboard` (default credentials `admin` / `admin`).
+Visit `http://localhost:3000/dashboard` and sign in with the credentials you configured.
 
-A fully runnable example is at `cmd/dashboard-example/main.go`.
+A fully runnable example is at `cmd/dashboard-example/main.go` (it configures `admin` / `admin` for the demo; do not copy that).
 
 ---
 
@@ -150,13 +156,14 @@ dashboard:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `enabled` | `true` | Master switch. When `false`, the middleware short-circuits before any work — zero overhead. |
+| `enabled` | `true` | Master switch. When `false`, nothing is counted, sampled or tuned, no goroutine starts, and the middleware short-circuits before any work — zero overhead. The read API still answers (behind the login, with zero counts) so tools can tell "switched off" from "no traffic"; the live WebSocket is refused. |
 | `timeline` | `true` | Per-request timeline profiler. |
 | `queries` | `true` | ORM/SQL query capture. |
 | `metrics` | `true` | Go runtime metrics (GC, heap, goroutines). |
 | `requests` | `true` | Live request tracking. |
 | `base_path` | `/dashboard` | URL prefix for the SPA and API. |
-| `username` / `password` | `admin` / `admin` | HTTP Basic Auth credentials. Both must be non-empty for auth to be enforced. |
+| `username` / `password` | *(empty)* | Login credentials (session cookie for the browser, HTTP Basic for API clients). Both must be non-empty; otherwise the dashboard is **locked** and answers `503`. There is no default password. |
+| `disable_auth` | `false` | Turns authentication off for a trusted local or reverse-proxy setup. Cross-origin browser writes are still refused. |
 | `max_requests` | `1000` | Rolling window size for the live requests buffer. |
 | `max_queries` | `500` | Rolling window size for the query monitor. |
 | `max_logs` | `1000` | Per-tab log buffer size. |
@@ -199,17 +206,30 @@ for a full `UserStore` implementation of both interfaces.
 The dashboard uses a single WebSocket connection at `/dashboard/ws` for all live updates. The server pushes two kinds of messages:
 
 - **`snapshot`** — full overview metrics, sent every second.
-- **`event`** — a single live record (request / query / timeline) pushed the moment it is recorded.
+- **`batch`** — the live records (requests / queries / timelines / events) recorded in the last 100 ms, in one frame. When a burst overflows the buffer the oldest are dropped and the frame carries `dropped: N`, which the page shows as a notice.
 
-No polling. The SPA reconnects automatically on disconnect with a 2-second backoff.
+The SPA reconnects automatically with an exponential backoff (1 s up to 30 s, with jitter); a socket that never opens is usually an expired session, so it asks the API, which answers 401 and sends the person to the login page. At most 64 dashboard connections are served at once.
 
 ---
 
 ## Security
 
-- **Authentication**: HTTP Basic Auth with constant-time password comparison (SHA-256 + `subtle.ConstantTimeCompare`).
-- **Secret Masking**: Authorization, Cookie, API-Key, Token, and Password headers are masked in the request inspector. The `maskLine` helper also redacts `key=value`-style secrets in log messages.
-- **Zero Overhead When Disabled**: When `enabled: false`, the middleware returns immediately after `ctx.Next()` — no allocations, no locks.
+- **Authentication**: the login page issues a 24 h `HttpOnly`, `SameSite=Strict` session cookie (`Secure` behind HTTPS); API clients may use HTTP Basic. Credentials are compared in constant time (both the username and the password, over fixed-size keyed digests), and failed sign-ins are throttled per client address. A request is served only when the auth middleware explicitly says it passed — a throttled (429) or unconfigured (503) answer is final and carries no data.
+- **Browser requests are origin-checked**: `SameSite=Strict` does not stop another origin of the same site (another `localhost` port, a sibling subdomain), so unsafe requests and the WebSocket handshake are refused when `Sec-Fetch-Site` / `Origin` say they came from somewhere else. This applies with `disable_auth` too.
+- **Responses** carry `Cache-Control: no-store`, `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy` and a framing-only `Content-Security-Policy`.
+- **Secret Masking**: `authorization`, `proxy-authorization`, `cookie`, `set-cookie`, `x-api-key`, `x-auth-token`, `api-key`, `password`, `secret` and `token` headers are always masked in the request inspector, whatever `masked_headers` says (it adds to that list). The `maskLine` helper redacts `key=value`, `key:value` and JSON secrets in log messages, including `access_token=…`, `client_secret=…`, `?token=…` and `Authorization: Bearer …`. Referrer headers lose their query string; credentials in connection URLs are masked on the Architecture page.
+- **Database Browser writes** name only a table the inspector lists, columns the table has (or plain identifiers when the inspector reports none) and a complete primary key; a malformed or empty key is a 400 and never reaches your `DBWriter`.
+- **Zero Overhead When Disabled**: When `enabled: false`, no goroutine is started and nothing is counted or tuned.
+
+### Connecting the page's controls to your application
+
+The Cache and Queue pages can only act on what the dashboard is told about. Until you connect them their buttons answer `501` with a message saying so (they used to report success and do nothing):
+
+```go
+coll.SetCacheClearer(func(prefix string) (int, error) { return myCache.DeletePrefix(prefix) })
+coll.SetJobRetrier(func(id string) error { return myQueue.Retry(id) })
+coll.SetDBInspector(inspector) // Database Browser; add SetDBWriter + Config.AllowWrites for edits
+```
 
 ---
 

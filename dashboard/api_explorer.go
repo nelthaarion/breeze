@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,7 +71,7 @@ func (c *Collector) handleAPIExplorerList(ctx *breeze.Context) error {
 	for _, rt := range c.router.RoutesInfo() {
 		pattern := rt.Pattern()
 		// Skip dashboard's own routes to keep the explorer focused on the app.
-		if strings.HasPrefix(pattern, c.cfg.BasePath) {
+		if base := strings.TrimSuffix(c.cfg.BasePath, "/"); base != "" && (pattern == base || strings.HasPrefix(pattern, base+"/")) {
 			continue
 		}
 		// Skip static file routes.
@@ -234,9 +236,14 @@ func (c *Collector) handleAPIExplorerExec(ctx *breeze.Context) error {
 	if req.URL == "" {
 		return jsonError(ctx, 400, "url required")
 	}
-	method := strings.ToUpper(req.Method)
+	method := strings.ToUpper(strings.TrimSpace(req.Method))
 	if method == "" {
 		method = "GET"
+	}
+	switch method {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+	default:
+		return jsonError(ctx, 400, "unsupported method: "+method)
 	}
 
 	target, err := explorerTarget(req.URL, ctx.Req.Header["host"], c.listenPort())
@@ -249,6 +256,11 @@ func (c *Collector) handleAPIExplorerExec(ctx *breeze.Context) error {
 		return jsonError(ctx, 400, err.Error())
 	}
 	for k, v := range req.Headers {
+		switch strings.ToLower(strings.TrimSpace(k)) {
+		case "host", "content-length", "connection", "transfer-encoding", "upgrade", "te", "expect", "":
+			// Not the caller's to set: the transport owns framing and the target is pinned.
+			continue
+		}
 		httpReq.Header.Set(k, v)
 	}
 
@@ -283,7 +295,8 @@ func (c *Collector) handleAPIExplorerExec(ctx *breeze.Context) error {
 			continue
 		}
 		if len(vs) > 0 {
-			headers[lower] = vs[0]
+			// Every value, not just the first: a repeated header (Link, Vary, Cache-Control) was cut to one.
+			headers[lower] = strings.Join(vs, ", ")
 		}
 	}
 
@@ -294,7 +307,7 @@ func (c *Collector) handleAPIExplorerExec(ctx *breeze.Context) error {
 	}
 
 	// Generate code snippets.
-	snippets := generateSnippets(req)
+	snippets := generateSnippetsFor(req, snippetBase(ctx))
 
 	out := APIExplorerExecResponse{
 		Status:     resp.StatusCode,
@@ -308,12 +321,50 @@ func (c *Collector) handleAPIExplorerExec(ctx *breeze.Context) error {
 	return ctx.JSON(out)
 }
 
+// snippetBase is the origin a relative URL in a snippet is completed with: the one the dashboard was
+// reached on. A snippet that says `curl -X GET '/users/1'` is not something anyone can run.
+func snippetBase(ctx *breeze.Context) string {
+	host := strings.TrimSpace(ctx.Req.Header["host"])
+	if host == "" || len(host) > 255 {
+		return ""
+	}
+	for i := 0; i < len(host); i++ {
+		ch := host[i]
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9':
+		case ch == '.', ch == '-', ch == ':', ch == '[', ch == ']':
+		default:
+			return "" // text that is not a host name never reaches the generated code
+		}
+	}
+	scheme := "http"
+	if requestIsSecure(ctx) {
+		scheme = "https"
+	}
+	return scheme + "://" + host
+}
+
 // generateSnippets produces curl, Go, JavaScript, Python, C#, and PHP code
 // for the given request.
 func generateSnippets(req APIExplorerExecRequest) map[string]string {
-	method := strings.ToUpper(req.Method)
+	return generateSnippetsFor(req, "")
+}
+
+// generateSnippetsFor is generateSnippets with a base origin for relative URLs.
+//
+// Each generator quotes for its own language. They used to splice the URL, every header and the
+// body into the source with, at best, the body escaped — and for the wrong rules: a header value
+// with a single quote ended the curl argument and let the rest run as shell commands when a
+// developer pasted the snippet; a quote in a URL broke the Go and JavaScript literals; a PHP double-quoted
+// string interpolates $variables and {$expressions} in a JSON body; a multi-line body was a syntax
+// error in Python and C#. What the generated code contains is the caller's input, so it is quoted as data.
+func generateSnippetsFor(req APIExplorerExecRequest, base string) map[string]string {
+	method := strings.ToUpper(strings.TrimSpace(req.Method))
 	if method == "" {
 		method = "GET"
+	}
+	if base != "" && strings.HasPrefix(req.URL, "/") {
+		req.URL = strings.TrimSuffix(base, "/") + req.URL
 	}
 	return map[string]string{
 		"curl":       snippetCurl(req, method),
@@ -325,14 +376,29 @@ func generateSnippets(req APIExplorerExecRequest) map[string]string {
 	}
 }
 
+// sortedHeaders returns a request's headers in a stable order. Ranging over the map gave every
+// call its own, so the snippet panel rewrote itself with each send.
+func sortedHeaders(m map[string]string) [][2]string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return strings.ToLower(keys[i]) < strings.ToLower(keys[j]) })
+	out := make([][2]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, [2]string{k, m[k]})
+	}
+	return out
+}
+
 func snippetCurl(req APIExplorerExecRequest, method string) string {
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "curl -X %s '%s'", method, req.URL)
-	for k, v := range req.Headers {
-		fmt.Fprintf(&b, " \\\n  -H '%s: %s'", k, v)
+	fmt.Fprintf(&b, "curl -X %s %s", method, shQuote(req.URL))
+	for _, h := range sortedHeaders(req.Headers) {
+		fmt.Fprintf(&b, " \\\n  -H %s", shQuote(h[0]+": "+h[1]))
 	}
 	if req.Body != "" {
-		fmt.Fprintf(&b, " \\\n  -d '%s'", strings.ReplaceAll(req.Body, "'", "'\\''"))
+		fmt.Fprintf(&b, " \\\n  -d %s", shQuote(req.Body))
 	}
 	return b.String()
 }
@@ -349,15 +415,14 @@ import (
 )
 
 func main() {
-	url := "%s"
-	body := strings.NewReader(%#v)
-	req, _ := http.NewRequest("%s", url, body)
-`, req.URL, req.Body, method)
-	for k, v := range req.Headers {
-		fmt.Fprintf(&b, `	req.Header.Set("%s", "%s")
-`, k, v)
+	url := %s
+	body := strings.NewReader(%s)
+	req, _ := http.NewRequest(%s, url, body)
+`, strconv.Quote(req.URL), strconv.Quote(req.Body), strconv.Quote(method))
+	for _, h := range sortedHeaders(req.Headers) {
+		fmt.Fprintf(&b, "\treq.Header.Set(%s, %s)\n", strconv.Quote(h[0]), strconv.Quote(h[1]))
 	}
-	fmt.Fprintf(&b, `	resp, err := http.DefaultClient.Do(req)
+	b.WriteString(`	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		panic(err)
 	}
@@ -372,112 +437,124 @@ func main() {
 
 func snippetJS(req APIExplorerExecRequest, method string) string {
 	var b bytes.Buffer
-	fmt.Fprintf(&b, `const resp = await fetch("%s", {
-  method: "%s",`, req.URL, method)
-	if len(req.Headers) > 0 || req.Body != "" {
-		fmt.Fprintln(&b, "")
-	}
-	if len(req.Headers) > 0 {
-		fmt.Fprintln(&b, "  headers: {")
-		first := true
-		for k, v := range req.Headers {
-			if !first {
-				fmt.Fprintln(&b, ",")
+	fmt.Fprintf(&b, "const resp = await fetch(%s, {\n  method: %s,\n", jsString(req.URL), jsString(method))
+	if hs := sortedHeaders(req.Headers); len(hs) > 0 {
+		b.WriteString("  headers: {\n")
+		for i, h := range hs {
+			sep := ","
+			if i == len(hs)-1 {
+				sep = ""
 			}
-			fmt.Fprintf(&b, "    \"%s\": \"%s\"", k, v)
-			first = false
+			fmt.Fprintf(&b, "    %s: %s%s\n", jsString(h[0]), jsString(h[1]), sep)
 		}
-		fmt.Fprintln(&b, "\n  },")
+		b.WriteString("  },\n")
 	}
 	if req.Body != "" {
 		fmt.Fprintf(&b, "  body: %s,\n", jsString(req.Body))
 	}
-	fmt.Fprintln(&b, "});")
-	fmt.Fprintln(&b, "const data = await resp.text();")
-	fmt.Fprintln(&b, "console.log(resp.status, data);")
+	b.WriteString("});\n")
+	b.WriteString("const data = await resp.text();\n")
+	b.WriteString("console.log(resp.status, data);\n")
 	return b.String()
 }
 
 func snippetPython(req APIExplorerExecRequest, method string) string {
 	var b bytes.Buffer
-	fmt.Fprintln(&b, "import requests")
-	fmt.Fprintln(&b)
-	fmt.Fprintf(&b, "url = \"%s\"\n", req.URL)
+	b.WriteString("import requests\n\n")
+	fmt.Fprintf(&b, "url = %s\n", pyString(req.URL))
 	fmt.Fprintf(&b, "headers = %s\n", pyDict(req.Headers))
 	if req.Body != "" {
 		fmt.Fprintf(&b, "data = %s\n", pyString(req.Body))
 	}
-	fmt.Fprintf(&b, "resp = requests.request(\"%s\", url", method)
+	fmt.Fprintf(&b, "resp = requests.request(%s, url", pyString(method))
 	if len(req.Headers) > 0 {
-		fmt.Fprint(&b, ", headers=headers")
+		b.WriteString(", headers=headers")
 	}
 	if req.Body != "" {
-		fmt.Fprint(&b, ", data=data")
+		b.WriteString(", data=data")
 	}
-	fmt.Fprintln(&b, ")")
-	fmt.Fprintln(&b, "print(resp.status_code)")
-	fmt.Fprintln(&b, "print(resp.text)")
+	b.WriteString(")\n")
+	b.WriteString("print(resp.status_code)\n")
+	b.WriteString("print(resp.text)\n")
 	return b.String()
 }
 
 func snippetCSharp(req APIExplorerExecRequest, method string) string {
 	var b bytes.Buffer
-	fmt.Fprintln(&b, "using System.Net.Http;")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "var client = new HttpClient();")
-	fmt.Fprintf(&b, "var request = new HttpRequestMessage(HttpMethod.%s, \"%s\");\n", csharpMethod(method), req.URL)
-	for k, v := range req.Headers {
-		fmt.Fprintf(&b, "request.Headers.Add(\"%s\", \"%s\");\n", k, v)
+	b.WriteString("using System.Net.Http;\n\n")
+	b.WriteString("var client = new HttpClient();\n")
+	fmt.Fprintf(&b, "var request = new HttpRequestMessage(HttpMethod.%s, %s);\n", csharpMethod(method), csharpString(req.URL))
+	contentType := "application/json"
+	for _, h := range sortedHeaders(req.Headers) {
+		switch strings.ToLower(h[0]) {
+		case "content-type":
+			// A content header cannot go on request.Headers (Add throws); it belongs to the content.
+			contentType = h[1]
+			continue
+		case "content-length":
+			continue
+		}
+		fmt.Fprintf(&b, "request.Headers.TryAddWithoutValidation(%s, %s);\n", csharpString(h[0]), csharpString(h[1]))
 	}
 	if req.Body != "" {
-		fmt.Fprintf(&b, "request.Content = new StringContent(%s, System.Text.Encoding.UTF8, \"application/json\");\n", csharpString(req.Body))
+		mediaType := strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0])
+		fmt.Fprintf(&b, "request.Content = new StringContent(%s, System.Text.Encoding.UTF8, %s);\n", csharpString(req.Body), csharpString(mediaType))
 	}
-	fmt.Fprintln(&b, "var response = await client.SendAsync(request);")
-	fmt.Fprintln(&b, "var body = await response.Content.ReadAsStringAsync();")
-	fmt.Fprintln(&b, "Console.WriteLine((int)response.StatusCode);")
-	fmt.Fprintln(&b, "Console.WriteLine(body);")
+	b.WriteString("var response = await client.SendAsync(request);\n")
+	b.WriteString("var body = await response.Content.ReadAsStringAsync();\n")
+	b.WriteString("Console.WriteLine((int)response.StatusCode);\n")
+	b.WriteString("Console.WriteLine(body);\n")
 	return b.String()
 }
 
 func snippetPHP(req APIExplorerExecRequest, method string) string {
 	var b bytes.Buffer
-	fmt.Fprintln(&b, "<?php")
-	fmt.Fprintln(&b, "$ch = curl_init();")
-	fmt.Fprintf(&b, "curl_setopt($ch, CURLOPT_URL, \"%s\");\n", req.URL)
-	fmt.Fprintf(&b, "curl_setopt($ch, CURLOPT_CUSTOMREQUEST, \"%s\");\n", method)
-	fmt.Fprintln(&b, "curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);")
-	if len(req.Headers) > 0 {
-		fmt.Fprintln(&b, "$headers = [")
-		for k, v := range req.Headers {
-			fmt.Fprintf(&b, "    \"%s: %s\",\n", k, v)
+	b.WriteString("<?php\n")
+	b.WriteString("$ch = curl_init();\n")
+	fmt.Fprintf(&b, "curl_setopt($ch, CURLOPT_URL, %s);\n", phpString(req.URL))
+	fmt.Fprintf(&b, "curl_setopt($ch, CURLOPT_CUSTOMREQUEST, %s);\n", phpString(method))
+	b.WriteString("curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);\n")
+	if hs := sortedHeaders(req.Headers); len(hs) > 0 {
+		b.WriteString("$headers = [\n")
+		for _, h := range hs {
+			fmt.Fprintf(&b, "    %s,\n", phpString(h[0]+": "+h[1]))
 		}
-		fmt.Fprintln(&b, "];")
-		fmt.Fprintln(&b, "curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);")
+		b.WriteString("];\n")
+		b.WriteString("curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);\n")
 	}
 	if req.Body != "" {
 		fmt.Fprintf(&b, "curl_setopt($ch, CURLOPT_POSTFIELDS, %s);\n", phpString(req.Body))
 	}
-	fmt.Fprintln(&b, "$response = curl_exec($ch);")
-	fmt.Fprintln(&b, "$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);")
-	fmt.Fprintln(&b, "curl_close($ch);")
-	fmt.Fprintln(&b, "echo $httpCode . \"\\n\";")
-	fmt.Fprintln(&b, "echo $response;")
+	b.WriteString("$response = curl_exec($ch);\n")
+	b.WriteString("$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);\n")
+	b.WriteString("curl_close($ch);\n")
+	b.WriteString("echo $httpCode . \"\\n\";\n")
+	b.WriteString("echo $response;\n")
 	return b.String()
 }
 
-// ─── Small string formatting helpers ──────────────────────────────────────
+// ─── Quoting, one function per language ──────────────────────────────────
 
+// shQuote quotes s as one POSIX shell word: single quotes, with each embedded single quote
+// closing the quoting, adding an escaped quote, and reopening it.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// jsString is a JavaScript string literal. It is also valid Python and valid JSON.
 func jsString(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false) // keep < > & readable in a snippet
+	if err := enc.Encode(s); err != nil {
+		return strconv.Quote(s)
+	}
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
-func pyString(s string) string {
-	if strings.Contains(s, "\"") && !strings.Contains(s, "'") {
-		return "'" + s + "'"
-	}
-	return "\"" + strings.ReplaceAll(s, "\"", "\\\"") + "\""
-}
+// pyString is a Python string literal. A JSON string literal is one: the escapes JSON uses
+// (\n, \", \\, \uXXXX) mean the same in Python.
+func pyString(s string) string { return jsString(s) }
 
 func pyDict(m map[string]string) string {
 	if len(m) == 0 {
@@ -485,13 +562,11 @@ func pyDict(m map[string]string) string {
 	}
 	var b bytes.Buffer
 	b.WriteString("{")
-	first := true
-	for k, v := range m {
-		if !first {
+	for i, h := range sortedHeaders(m) {
+		if i > 0 {
 			b.WriteString(", ")
 		}
-		fmt.Fprintf(&b, "%s: %s", pyString(k), pyString(v))
-		first = false
+		fmt.Fprintf(&b, "%s: %s", pyString(h[0]), pyString(h[1]))
 	}
 	b.WriteString("}")
 	return b.String()
@@ -511,15 +586,41 @@ func csharpMethod(method string) string {
 		return "Delete"
 	case "OPTIONS":
 		return "Options"
+	case "HEAD":
+		return "Head"
 	default:
 		return "Post"
 	}
 }
 
+// csharpString is a C# regular string literal: backslash, quote and every control character escaped.
 func csharpString(s string) string {
-	return "\"" + strings.ReplaceAll(strings.ReplaceAll(s, "\\", "\\\\"), "\"", "\\\"") + "\""
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '\\':
+			b.WriteString(`\\`)
+		case r == '"':
+			b.WriteString(`\"`)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
+// phpString is a PHP single-quoted string: nothing in one is interpolated (a double-quoted one
+// expands $name and {$expression}), and only \ and ' need escaping.
 func phpString(s string) string {
-	return "\"" + strings.ReplaceAll(s, "\"", "\\\"") + "\""
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
 }

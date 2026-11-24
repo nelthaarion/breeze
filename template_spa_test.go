@@ -208,6 +208,7 @@ func TestDashboardViewInitialization(t *testing.T) {
 	pages := []string{
 		"overview", "routes", "api", "requests", "queries", "cache", "logs",
 		"health", "performance", "timeline", "architecture", "events", "video", "fleet",
+		"database", "queue", "scheduler",
 	}
 	for _, page := range pages {
 		t.Run(page, func(t *testing.T) {

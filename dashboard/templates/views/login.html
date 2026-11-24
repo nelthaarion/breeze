@@ -2,21 +2,28 @@
 <div class="login-wrap">
   <div class="login-card">
     <div class="login-header">
-      <div class=" "><img  style="width: 64px; height: 64px;" src="/dashboard/assets/logo.png"/></div>
+      <div class="login-logo-wrap"><img class="login-logo-img" width="64" height="56" style="width:64px;height:64px;object-fit:contain" src="{{.Data.BasePath}}/assets/logo.png" alt=""/></div>
       <h1>Breeze Dashboard</h1>
       <p>Sign in to continue</p>
     </div>
-    <form id="login-form" class="login-form" autocomplete="off">
+    {{if not .Data.Configured}}<div class="login-note" role="alert"><strong>Authentication is not configured.</strong> Set <code>Config.Username</code> and <code>Config.Password</code> (or <code>Config.DisableAuth</code> for a trusted local setup) and restart the service.</div>{{end}}
+    <form id="login-form" class="login-form" autocomplete="on"{{if not .Data.Configured}} aria-disabled="true"{{end}}>
       <div class="field">
         <label for="username">Username</label>
-        <input id="username" name="username" type="text" placeholder="admin" required autofocus>
+        <input id="username" name="username" type="text" placeholder="admin" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus{{if not .Data.Configured}} disabled{{end}}>
       </div>
       <div class="field">
         <label for="password">Password</label>
-        <input id="password" name="password" type="password" placeholder="••••••" required>
+        <div class="pw-wrap">
+          <input id="password" name="password" type="password" placeholder="••••••" autocomplete="current-password" required{{if not .Data.Configured}} disabled{{end}}>
+          <button type="button" class="pw-toggle" id="pw-toggle" aria-label="Show password" aria-pressed="false" title="Show password"{{if not .Data.Configured}} disabled{{end}}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+        <div id="caps-hint" class="caps-hint" style="display:none">Caps Lock is on</div>
       </div>
-      <div id="login-error" class="login-error" style="display:none"></div>
-      <button type="submit" class="login-btn">Sign In</button>
+      <div id="login-error" class="login-error" role="alert" aria-live="assertive" style="display:none"></div>
+      <button type="submit" class="login-btn"{{if not .Data.Configured}} disabled{{end}}>Sign In</button>
     </form>
     <div class="login-footer">
       <span>Breeze Framework · Developer Dashboard</span>
@@ -56,7 +63,31 @@
   .login-card{background:var(--surface);border-color:var(--border)}
 }
 
-@media (prefers-reduced-motion:reduce){.login-btn:hover{transform:none}}
+/* Motion: the card settles in once; an error shakes the message, not the page. */
+.login-card{animation:cardIn .5s cubic-bezier(.2,.7,.2,1) both}
+.login-header .login-logo-wrap{animation:logoIn .7s cubic-bezier(.2,.8,.2,1) .1s both}
+.login-form .field{animation:fieldIn .45s cubic-bezier(.2,.7,.2,1) both}
+.login-form .field:nth-child(1){animation-delay:.12s}
+.login-form .field:nth-child(2){animation-delay:.2s}
+@keyframes cardIn{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes logoIn{from{opacity:0;transform:translateY(-8px) scale(.92)}to{opacity:1;transform:none}}
+@keyframes fieldIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-6px)}40%{transform:translateX(5px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}}
+.login-error.shake{animation:shake .38s ease-in-out}
+.login-btn{position:relative}
+.login-btn.busy::after{content:"";position:absolute;right:16px;top:50%;width:14px;height:14px;margin-top:-7px;border-radius:50%;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.pw-wrap{position:relative}
+.pw-wrap input{padding-right:42px}
+.pw-toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;border-radius:10px;color:var(--text-muted);cursor:pointer;transition:color .15s,background .15s}
+.pw-toggle:hover{color:var(--primary);background:var(--surface)}
+.pw-toggle:focus-visible{outline:none;box-shadow:var(--sh-focus)}
+.pw-toggle[aria-pressed="true"]{color:var(--primary)}
+.caps-hint{margin-top:6px;font-size:11px;font-weight:600;color:var(--text-dim)}
+.login-note{background:var(--t-red);border:1px solid var(--t-red-b);color:var(--text);padding:11px 14px;border-radius:14px;font-size:12px;line-height:1.5;margin-bottom:18px}
+.login-note code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
+.login-form input:disabled{opacity:.55;cursor:not-allowed}
+@media (prefers-reduced-motion:reduce){.login-btn:hover{transform:none}.login-card,.login-header .login-logo-wrap,.login-form .field,.login-error.shake,.login-btn.busy::after{animation:none}}
 
 </style>
 <script>
@@ -64,31 +95,76 @@
   var form = document.getElementById('login-form');
   var err = document.getElementById('login-error');
   var btn = form.querySelector('.login-btn');
+  var pw = document.getElementById('password');
+  var next = '{{.Data.Next}}';
+
+  function fail(message){
+    err.textContent = message;
+    err.style.display = 'block';
+    err.classList.remove('shake');
+    void err.offsetWidth;
+    err.classList.add('shake');
+    btn.disabled = false;
+    btn.classList.remove('busy');
+    btn.textContent = 'Sign In';
+  }
+
+  // Show / hide the password.
+  var toggle = document.getElementById('pw-toggle');
+  toggle.addEventListener('click', function(){
+    var show = pw.type === 'password';
+    pw.type = show ? 'text' : 'password';
+    toggle.setAttribute('aria-pressed', show ? 'true' : 'false');
+    toggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    toggle.title = show ? 'Hide password' : 'Show password';
+    pw.focus();
+  });
+  // A hint when Caps Lock is on, which is the usual reason a correct password is refused.
+  var caps = document.getElementById('caps-hint');
+  function capsState(e){
+    if(!e.getModifierState) return;
+    caps.style.display = e.getModifierState('CapsLock') ? 'block' : 'none';
+  }
+  pw.addEventListener('keydown', capsState);
+  pw.addEventListener('keyup', capsState);
+  pw.addEventListener('blur', function(){ caps.style.display = 'none'; });
+
   form.addEventListener('submit', function(e){
     e.preventDefault();
     var u = document.getElementById('username').value;
-    var p = document.getElementById('password').value;
+    var p = pw.value;
     err.style.display = 'none';
     btn.disabled = true;
+    btn.classList.add('busy');
     btn.textContent = 'Signing in...';
     fetch('{{.Data.LoginPath}}', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({username: u, password: p})
-    }).then(function(r){return r.json()}).then(function(d){
-      if(d.ok){
-        window.location.href = '{{.Data.BasePath}}';
-      } else {
-        err.textContent = d.error || 'Login failed';
-        err.style.display = 'block';
-        btn.disabled = false;
-        btn.textContent = 'Sign In';
+      body: JSON.stringify({username: u, password: p, next: next})
+    }).then(function(r){
+      // The answer is read whatever its status: a refusal carries a message, and a throttled or
+      // unconfigured server answers with a status that used to be parsed as if it were a login result.
+      return r.json().catch(function(){ return null; }).then(function(d){ return {r: r, d: d || {}}; });
+    }).then(function(x){
+      if(x.r.ok && x.d.ok){
+        window.location.href = x.d.redirect || '{{.Data.BasePath}}';
+        return;
       }
+      var msg = x.d.error || 'Login failed';
+      if(x.r.status === 429){
+        var s = parseInt(x.r.headers.get('Retry-After') || '0', 10);
+        msg = 'Too many attempts. Try again in ' + (s >= 60 ? Math.ceil(s / 60) + ' minutes' : (s > 0 ? s + ' seconds' : 'a moment')) + '.';
+      } else if(x.r.status === 503){
+        msg = 'Authentication is not configured for this service.';
+      } else if(x.r.status === 403){
+        msg = 'The sign-in was blocked because it came from another site. Open the dashboard directly and try again.';
+      } else if(x.r.status === 401){
+        msg = 'Wrong username or password.';
+        pw.select();
+      }
+      fail(msg);
     }).catch(function(e){
-      err.textContent = 'Network error: ' + e.message;
-      err.style.display = 'block';
-      btn.disabled = false;
-      btn.textContent = 'Sign In';
+      fail('Cannot reach the server (' + e.message + ').');
     });
   });
 })();

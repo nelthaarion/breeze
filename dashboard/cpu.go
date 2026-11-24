@@ -7,7 +7,8 @@ import (
 // cpuUsage returns process CPU time (user, system).
 //
 // The per-platform reader is getCPUTime: a /proc/self/stat parse on Linux
-// (cpu_linux.go) and a zero-returning stub elsewhere. The dashboard renders CPU
+// (cpu_linux.go), GetProcessTimes on Windows (cpu_windows.go), getrusage on macOS and the
+// BSDs (cpu_rusage.go), and a zero-returning stub elsewhere. The dashboard renders CPU
 // as a relative percentage derived from delta-over-interval, so any monotonic
 // source works and a platform without one shows a flat 0% rather than a wrong
 // number.

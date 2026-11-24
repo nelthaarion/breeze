@@ -6,6 +6,7 @@
   </div>
 </div>
 <script data-spa-run="always">
-BreezeDash.initPage('database');
+window.__breezeDashPage='database';
+if(window.BreezeDash) { window.BreezeDash.initPage('database'); window.__breezeDashPage=null; }
 </script>
 {{end}}

@@ -4,8 +4,9 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
+	"encoding/json"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -18,47 +19,66 @@ import (
 // Auth flow:
 //  1. Check for a valid session cookie. If present and valid, attach the
 //     username to the context and continue.
-//  2. If no valid session, redirect to the login page (HTTP 302).
+//  2. If no valid session, redirect to the login page (HTTP 302), remembering
+//     where the person was going so the login can send them back.
 //  3. The login page POSTs to /dashboard/login which validates credentials
 //     and sets a session cookie.
 //
 // When DisableAuth is true, authentication is explicitly disabled. Missing
 // credentials never open the dashboard; they fail closed with HTTP 503.
 //
+// The middleware marks a request it lets through with authPassedKey. Callers that
+// run it inline must go through authorize rather than inspect the response: see the
+// note on authPassedKey.
+//
 // Security: password comparison uses a per-process keyed HMAC-SHA-256 plus
 // subtle.ConstantTimeCompare, so the comparison runs over fixed-size digests.
 func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
-	if cfg.DisableAuth {
-		return func(ctx *breeze.Context) error { return ctx.Next() }
-	}
-	if strings.TrimSpace(cfg.Username) == "" || cfg.Password == "" {
-		// Never interpret missing credentials as "open dashboard". That turns a
-		// single omitted environment variable into an administrative bypass.
-		return func(ctx *breeze.Context) error {
-			ctx.Status(503)
-			return ctx.WriteString("Dashboard authentication is not configured")
-		}
-	}
-	wantUser := []byte(cfg.Username)
-	wantPass := hashPass(cfg.Password)
 	base := strings.TrimSuffix(cfg.BasePath, "/")
 	if base == "" {
 		base = "/dashboard"
 	}
 	loginPath := base + "/login"
+
+	if cfg.DisableAuth {
+		return func(ctx *breeze.Context) error {
+			// No credentials to check, but not a free pass for any web page: with auth off, the
+			// browser the developer is using is the only barrier, and a page on another site can make it
+			// send a POST (or a simple-request body) to localhost. Cross-origin writes are refused here
+			// just as they are behind a login.
+			if !requestOriginOK(ctx, false) {
+				return respondCrossOrigin(ctx)
+			}
+			ctx.Set(authPassedKey, true)
+			return ctx.Next()
+		}
+	}
+	if strings.TrimSpace(cfg.Username) == "" || cfg.Password == "" {
+		// Never interpret missing credentials as "open dashboard". That turns a
+		// single omitted environment variable into an administrative bypass.
+		return func(ctx *breeze.Context) error {
+			return respondAuthUnconfigured(ctx, base)
+		}
+	}
+	wantUser := hashPass(cfg.Username)
+	wantPass := hashPass(cfg.Password)
+
 	return func(ctx *breeze.Context) error {
-		// Allow the login page itself and the login POST endpoint without auth.
 		p := ctx.Req.Path
-		// For base path, redirect is handled further down in the handler.
-		// Check session cookie.
-		cookie := ctx.Req.Header["cookie"]
-		token := extractCookieValue(cookie, sessionCookieName)
+
+		// A valid session cookie is the normal way in.
+		token := extractCookieValue(ctx.Req.Header["cookie"], sessionCookieName)
 		if token != "" {
 			if username, ok := sessions.valid(token); ok {
+				if !requestOriginOK(ctx, false) {
+					return respondCrossOrigin(ctx)
+				}
 				ctx.Set("breeze.dashboard.user", username)
+				ctx.Set(authPassedKey, true)
 				return ctx.Next()
 			}
 		}
+
 		// No valid session — check for Basic Auth as a fallback (API clients).
 		ah := ctx.Req.Header["authorization"]
 		parts := strings.Fields(ah)
@@ -70,10 +90,13 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 				return ctx.WriteString("Too many authentication failures")
 			}
 			user, pass, ok := decodeBasic(parts[1])
-			if ok &&
-				subtle.ConstantTimeCompare([]byte(user), wantUser) == 1 &&
-				subtle.ConstantTimeCompare(hashPass(pass), wantPass) == 1 {
+			if ok && credentialsMatch(wantUser, wantPass, user, pass) {
 				sessions.clearLoginFailures(peer)
+				// A browser can hold Basic credentials and replay them on any request
+				// to this origin, so the same cross-origin rule applies here.
+				if !requestOriginOK(ctx, false) {
+					return respondCrossOrigin(ctx)
+				}
 				ctx.Set("breeze.dashboard.user", user)
 
 				// If a browser reached the dashboard as http(s)://user:pass@host/…,
@@ -83,15 +106,19 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 				// navigation/history entries while retaining Basic Auth for API clients.
 				accept := ctx.Req.Header["accept"]
 				isBrowser := strings.Contains(accept, "text/html") && !strings.Contains(accept, "application/json")
-				if isBrowser && p != base+"/login" {
+				if isBrowser && p != loginPath {
 					token, err := sessions.create(user)
 					if err != nil {
 						return jsonError(ctx, 500, "could not create login session")
 					}
+					loc := localPath(p)
+					if q := ctx.Req.Query.Encode(); q != "" {
+						loc += "?" + q
+					}
 					ctx.Res = &breeze.HTTPResponse{
 						Status: 302,
 						Headers: map[string]string{
-							"Location":   p,
+							"Location":   loc,
 							"Set-Cookie": buildSessionCookie(token, base, int(sessionDuration.Seconds()), requestIsSecure(ctx)),
 						},
 						Body: []byte("redirecting..."),
@@ -99,21 +126,24 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 					ctx.Abort()
 					return nil
 				}
+				ctx.Set(authPassedKey, true)
 				return ctx.Next()
 			}
 			sessions.recordLoginFailure(peer, time.Now())
 		}
+
 		// For API requests (JSON), return 401 JSON. For browser requests,
 		// redirect to login page.
 		accept := ctx.Req.Header["accept"]
 		isAPI := strings.Contains(accept, "application/json") || strings.HasPrefix(p, base+"/api/")
 		if isAPI {
+			body, _ := json.Marshal(map[string]string{"error": "unauthorized", "login": loginPath})
 			ctx.Res = &breeze.HTTPResponse{
 				Status: 401,
 				Headers: map[string]string{
 					"Content-Type": "application/json",
 				},
-				Body: []byte(`{"error":"unauthorized","login":"` + loginPath + `"}`),
+				Body: body,
 			}
 			ctx.Abort()
 			return nil
@@ -131,11 +161,20 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 			ctx.Abort()
 			return nil
 		}
-		// Browser navigation: redirect to login.
+		// Browser navigation: redirect to login, remembering the destination so a deep
+		// link (a bookmark to /dashboard/requests, a link from a chat) survives the sign-in.
+		loc := loginPath
+		dest := p
+		if q := ctx.Req.Query.Encode(); q != "" {
+			dest += "?" + q
+		}
+		if next := safeNext(base, dest); next != "" {
+			loc += "?next=" + url.QueryEscape(next)
+		}
 		ctx.Res = &breeze.HTTPResponse{
 			Status: 302,
 			Headers: map[string]string{
-				"Location": loginPath,
+				"Location": loc,
 			},
 			Body: []byte("redirecting to login..."),
 		}
@@ -145,14 +184,41 @@ func AuthMiddleware(cfg Config, sessions *sessionStore) breeze.HandlerFunc {
 	}
 }
 
-func requestIsSecure(ctx *breeze.Context) bool {
-	// Prefer the actual connection state when available. X-Forwarded-Proto is only
-	// a hint from a trusted reverse proxy; take the first comma-delimited value and
-	// never treat arbitrary values as secure.
-	if strings.EqualFold(ctx.Req.Header["x-forwarded-proto"], "https") {
-		return true
+// respondAuthUnconfigured is the answer when no credentials are configured and auth has
+// not been explicitly disabled: a 503 that says how to fix it, in the shape the caller asked for.
+func respondAuthUnconfigured(ctx *breeze.Context, base string) error {
+	setSecurityHeaders(ctx)
+	ctx.Status(503)
+	accept := ctx.Req.Header["accept"]
+	if strings.Contains(accept, "application/json") || strings.HasPrefix(ctx.Req.Path, base+"/api/") {
+		return ctx.JSON(map[string]string{
+			"error": "dashboard authentication is not configured",
+			"hint":  "set Config.Username and Config.Password, or Config.DisableAuth for a trusted local setup",
+		})
 	}
-	return false
+	return ctx.WriteString("Dashboard authentication is not configured. " +
+		"Set Config.Username and Config.Password (or Config.DisableAuth for a trusted local or reverse-proxy setup) and restart.")
+}
+
+// respondCrossOrigin refuses a browser request that another origin caused.
+func respondCrossOrigin(ctx *breeze.Context) error {
+	setSecurityHeaders(ctx)
+	return jsonError(ctx, 403, "cross-origin request blocked")
+}
+
+func requestIsSecure(ctx *breeze.Context) bool {
+	// X-Forwarded-Proto is a hint from a trusted reverse proxy: take the first
+	// comma-delimited value and never treat arbitrary values as secure.
+	h := ctx.Req.Header
+	if xfp := h["x-forwarded-proto"]; xfp != "" {
+		if i := strings.IndexByte(xfp, ','); i >= 0 {
+			xfp = xfp[:i]
+		}
+		if strings.EqualFold(strings.TrimSpace(xfp), "https") {
+			return true
+		}
+	}
+	return strings.EqualFold(strings.TrimSpace(h["x-forwarded-ssl"]), "on")
 }
 
 // dashboardPeer identifies the client for login throttling. It is the IP only:

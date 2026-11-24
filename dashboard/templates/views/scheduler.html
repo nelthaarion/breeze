@@ -9,6 +9,7 @@
   </div>
 </div>
 <script data-spa-run="always">
-BreezeDash.initPage('scheduler');
+window.__breezeDashPage='scheduler';
+if(window.BreezeDash) { window.BreezeDash.initPage('scheduler'); window.__breezeDashPage=null; }
 </script>
 {{end}}

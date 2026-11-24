@@ -15,12 +15,13 @@ import (
 // The recorder is allocation-free for the common case where the timeline
 // feature is disabled (no steps are recorded).
 type TimelineRecorder struct {
-	mu     sync.Mutex
-	steps  []TimelineStep
-	stack  []int // indices into steps[] forming the current parent chain
-	start  time.Time
-	cfg    Config
-	maxCap int
+	mu      sync.Mutex
+	steps   []TimelineStep
+	stack   []int // indices into steps[] forming the current parent chain
+	start   time.Time
+	cfg     Config
+	maxCap  int
+	dropped int // steps that arrived after maxCap was reached and were not recorded
 }
 
 // NewTimelineRecorder returns a recorder bounded by cfg.MaxTimelineEntries.
@@ -47,6 +48,10 @@ func (r *TimelineRecorder) Step(name string) func(metadata map[string]any) {
 		Name:  name,
 		Start: now,
 	})
+	if idx < 0 {
+		// The recorder is full: this step is not recorded, and neither is its end.
+		return func(map[string]any) {}
+	}
 	r.mu.Lock()
 	r.stack = append(r.stack, idx)
 	r.mu.Unlock()
@@ -81,27 +86,39 @@ func (r *TimelineRecorder) Step(name string) func(metadata map[string]any) {
 	}
 }
 
+// appendStep records a step and returns its index, or -1 when the recorder is full.
+//
+// A full recorder keeps what it has and refuses new steps. It used to drop the oldest step
+// and shift every index down — but each end func a caller is holding closed over its step's
+// index at the time, so after the first shift every one of them updated (and popped, and
+// attached children to) the wrong step, and the timeline of a long request came out scrambled
+// rather than merely short. The refused steps are counted (see Dropped) so the page can say
+// the timeline is incomplete.
 func (r *TimelineRecorder) appendStep(s TimelineStep) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.maxCap > 0 && len(r.steps) >= r.maxCap {
-		// Drop the oldest step (only at the root; we accept lossy timelines
-		// for very long requests).
-		r.steps = r.steps[1:]
-		// Re-index stack to compensate — simpler than chasing pointers.
-		for i := range r.stack {
-			r.stack[i]--
-			if r.stack[i] < 0 {
-				r.stack[i] = 0
-			}
-		}
+		r.dropped++
+		return -1
 	}
 	r.steps = append(r.steps, s)
 	return len(r.steps) - 1
 }
 
-// Build returns the final timeline. Children are nested inside their parent
-// steps; top-level steps are returned directly.
+// Dropped reports how many steps were not recorded because the recorder was full.
+func (r *TimelineRecorder) Dropped() int {
+	if r == nil {
+		return 0
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dropped
+}
+
+// Build returns the final timeline: every step once, in the order it started, with each step's
+// descendants also nested in its Children. A reader that draws a tree takes the steps that are
+// not anyone's child as its roots (the dashboard page does); one that wants a flat list takes
+// the list as it is.
 func (r *TimelineRecorder) Build() []TimelineStep {
 	if r == nil {
 		return nil

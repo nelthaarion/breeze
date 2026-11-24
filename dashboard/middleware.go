@@ -2,6 +2,8 @@ package dashboard
 
 import (
 	"fmt"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -191,9 +193,13 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 		if ctx.Res != nil && ctx.Res.Body != nil {
 			r.RespSize = len(ctx.Res.Body)
 		}
+		r.Slow = c.cfg.SlowRequestMs > 0 && duration.Microseconds() >= int64(c.cfg.SlowRequestMs)*1000
 		if c.cfg.Requests {
 			r.Headers = maskHeaders(c.cfg, selectHeaders(ctx))
 			r.TimelineID = reqID
+			// TimelineID is set whether or not a timeline was recorded (a request nobody was
+			// watching has none), so the page cannot tell from it whether "view" leads anywhere.
+			r.HasTimeline = rec != nil
 		}
 		if status >= 500 {
 			r.Error = fmt.Sprintf("HTTP %d", status)
@@ -219,13 +225,14 @@ func Middleware(c *Collector) breeze.HandlerFunc {
 		}
 		if rec != nil {
 			tl := Timeline{
-				ID:     reqID,
-				Time:   start,
-				Method: method,
-				Path:   path,
-				Status: status,
-				Total:  duration.Microseconds(),
-				Steps:  rec.Build(),
+				ID:           reqID,
+				Time:         start,
+				Method:       method,
+				Path:         path,
+				Status:       status,
+				Total:        duration.Microseconds(),
+				Steps:        rec.Build(),
+				DroppedSteps: rec.Dropped(),
 			}
 			c.RecordTimeline(tl)
 			if c.hub != nil {
@@ -280,6 +287,13 @@ func selectHeaders(ctx *breeze.Context) map[string]string {
 			out[k] = strings.Clone(v)
 		}
 	}
+	// A referrer carries the query string of the page that linked here, which is where
+	// reset tokens, session ids and search terms live. Keep the page, not what was typed into it.
+	if ref := out["referer"]; ref != "" {
+		if i := strings.IndexAny(ref, "?#"); i >= 0 {
+			out["referer"] = ref[:i]
+		}
+	}
 	return out
 }
 
@@ -292,10 +306,16 @@ func selectHeaders(ctx *breeze.Context) map[string]string {
 func clientIP(ctx *breeze.Context) string {
 	if ctx.Req != nil {
 		if xff := ctx.Req.Header["x-forwarded-for"]; xff != "" {
-			if i := strings.IndexByte(xff, ','); i > 0 {
-				return strings.Clone(strings.TrimSpace(xff[:i]))
+			first := xff
+			if i := strings.IndexByte(xff, ','); i >= 0 {
+				first = xff[:i]
 			}
-			return strings.Clone(strings.TrimSpace(xff))
+			// Only an address is believed. The header is whatever the client sent; it ends up
+			// in the requests table, in JSON, and in the persisted unique-IP set, so anything
+			// that is not an IP is dropped and the connection's own address is used instead.
+			if ip := sanitizeIP(first); ip != "" {
+				return strings.Clone(ip)
+			}
 		}
 	}
 	if ctx.Conn != nil {
@@ -306,24 +326,70 @@ func clientIP(ctx *breeze.Context) string {
 	return ""
 }
 
+// maxUserLabel bounds the user label stored on a request record.
+const maxUserLabel = 128
+
+func limitUser(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > maxUserLabel {
+		s = strings.ToValidUTF8(s[:maxUserLabel], "") + "…"
+	}
+	return s
+}
+
 // dashboardUser extracts a username from the context store.
+//
+// It reads the few fields that name a user and nothing else. The fallback used to be
+// fmt.Sprint of whatever the application had stored under "user": a struct with a password
+// hash or a token field printed all of it into the requests table, the WebSocket stream and the
+// persisted records, and a map of JWT claims (a named map type, so not a map[string]any) did the
+// same with every claim in it. A value it cannot name is recorded as "authenticated".
 func dashboardUser(ctx *breeze.Context) string {
 	if v, ok := ctx.Get("user"); ok {
-		if m, ok := v.(map[string]any); ok {
-			if u, ok := m["sub"].(string); ok && u != "" {
-				return u
-			}
-			if u, ok := m["user_id"].(string); ok && u != "" {
-				return u
-			}
-			if u, ok := m["username"].(string); ok && u != "" {
-				return u
-			}
+		if u := userLabel(v); u != "" {
+			return u
 		}
-		return fmt.Sprint(v)
 	}
 	if v, ok := ctx.Get("breeze.dashboard.user"); ok {
-		return fmt.Sprint(v)
+		if s, ok := v.(string); ok {
+			return limitUser(s)
+		}
 	}
 	return ""
+}
+
+func userLabel(v any) string {
+	switch u := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return limitUser(u)
+	case fmt.Stringer:
+		return limitUser(u.String())
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprint(u)
+	}
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Pointer && !rv.IsNil() {
+		rv = rv.Elem()
+	}
+	if rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
+		for _, key := range [...]string{"sub", "user_id", "username"} {
+			x := rv.MapIndex(reflect.ValueOf(key).Convert(rv.Type().Key()))
+			if !x.IsValid() {
+				continue
+			}
+			switch n := x.Interface().(type) {
+			case string:
+				if n != "" {
+					return limitUser(n)
+				}
+			case float64:
+				return strconv.FormatFloat(n, 'f', -1, 64)
+			case int, int64, uint64:
+				return fmt.Sprint(n)
+			}
+		}
+	}
+	return "authenticated"
 }

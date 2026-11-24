@@ -19,6 +19,10 @@ type RequestRecord struct {
 	Headers    map[string]string `json:"headers,omitempty"` // masked
 	Error      string            `json:"error,omitempty"`
 	TimelineID string            `json:"timeline_id,omitempty"`
+	// Slow is set when the request took at least SlowRequestMs; the page highlights these.
+	Slow bool `json:"slow,omitempty"`
+	// HasTimeline is true when a timeline was actually recorded for the request.
+	HasTimeline bool `json:"has_timeline,omitempty"`
 }
 
 // QueryRecord captures one SQL statement executed by the ORM.
@@ -187,6 +191,8 @@ type Timeline struct {
 	Status int            `json:"status"`
 	Total  int64          `json:"total_us"`
 	Steps  []TimelineStep `json:"steps"`
+	// DroppedSteps is how many steps the request produced after the recorder was full.
+	DroppedSteps int `json:"dropped_steps,omitempty"`
 }
 
 // MetricsSnapshot is one point of Go runtime + HTTP metrics time-series.

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
 
-  <title>Breeze Dashboard</title>
+  <title>{{.Data.PageTitle}} · Breeze Dashboard</title>
   <script>
     /* Applied before first paint so the saved theme never flashes the
        wrong palette. Kept inline and tiny for that reason. */
@@ -15,11 +15,13 @@
   <link rel="stylesheet" href="{{.Data.AssetsPath}}/{{.Data.StyleFile}}">
 
 </head>
-<body>
+<body data-base-path="{{.Data.BasePath}}">
+  <a class="skip-link" href="#breeze-app">Skip to content</a>
   <div class="app">
-    <aside class="sidebar">
+    <div class="nav-scrim" id="nav-scrim" aria-hidden="true"></div>
+    <aside class="sidebar" aria-label="Dashboard">
       <div class="sidebar-header">
-         <div class=" "><img class="dashboard-logo" style="width: 100px;height: 100px;" src="{{.Data.AssetsPath}}/logo.png" alt="Breeze"/> </div>
+         <div class=" "><img class="dashboard-logo" style="width: 64px;height: 64px;object-fit:contain" width="64" height="56" src="{{.Data.AssetsPath}}/logo.png" alt="Breeze"/> </div>
         <div>
           <h1>Breeze</h1>
           <div class="sub">Developer Dashboard</div>
@@ -27,15 +29,16 @@
       </div>
       {{component "nav" .}}
       <div class="sidebar-footer">
-        <span><span class="ws-dot off" id="ws-dot"></span><span class="ws-status" id="ws-status">connecting...</span></span>
-        <a href="{{.Data.BasePath}}/logout" class="logout-link" title="Sign out">&#x23FB;</a>
+        <span id="ws-box" data-state="down" role="status" aria-live="polite"><span class="ws-dot off" id="ws-dot"></span><span class="ws-status" id="ws-status">connecting...</span></span>
+        <a href="{{.Data.BasePath}}/logout" class="logout-link" title="Sign out" aria-label="Sign out">&#x23FB;</a>
       </div>
     </aside>
     <main class="main">
       <header class="topbar">
+        <button type="button" class="nav-toggle" id="nav-toggle" aria-label="Open navigation" aria-expanded="false" aria-controls="dashboard-nav"><span aria-hidden="true">&#x2630;</span></button>
         <h2 id="page-title">{{.Data.PageTitle}}</h2>
         <div class="right">
-          <span id="server-time"></span>
+          <span id="server-time" title="Server time of the latest update" aria-label="Server time"></span>
           <button type="button" class="theme-toggle" id="theme-toggle"
                   title="Toggle light / dark" aria-label="Toggle light / dark theme">
             <span class="ico moon">&#x263D;</span><span class="ico sun">&#x2600;</span>
@@ -43,7 +46,7 @@
         </div>
 
       </header>
-      <div class="content" id="breeze-app">
+      <div class="content" id="breeze-app" tabindex="-1">
         {{template "content" .}}
       </div>
     </main>

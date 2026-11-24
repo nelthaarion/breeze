@@ -10,38 +10,19 @@ import (
 	"testing"
 )
 
-// maskLineReference is maskLine as it was before the fast path.
+// maskLineReference is maskLine without the fast path: every line is split into fields, each field is
+// matched, and the fields are joined. The matching itself (findSecret, maskToken) is shared with the
+// function under test, so what this holds the fast path to is "returns the line untouched exactly when
+// the full path would".
 func maskLineReference(cfg Config, s string) string {
 	if s == "" {
 		return s
 	}
-	sensitive := make(map[string]struct{}, len(cfg.MaskedHeaders))
-	for _, h := range cfg.MaskedHeaders {
-		sensitive[strings.ToLower(h)] = struct{}{}
-	}
-	parts := strings.Fields(s)
-	for i, p := range parts {
-		key, sep, ok := sensitiveKeyIn(p, sensitive)
-		if !ok {
-			continue
-		}
-		head, _ := splitAfterValueStart(p, key, sep)
-		parts[i] = head + "••••••" + trailingPunct(p, sep)
-	}
-	return strings.Join(parts, " ")
+	return strings.Join(maskFields(maskKeys(cfg), strings.Fields(s)), " ")
 }
 
 func TestMaskLineMatchesTheOriginalOnAGeneratedCorpus(t *testing.T) {
 	cfg := DefaultConfig()
-	// The premise: no default key is a prefix of another, or the original, which walks a map, would not
-	// be deterministic and there would be nothing to hold the new one to.
-	for _, a := range cfg.MaskedHeaders {
-		for _, b := range cfg.MaskedHeaders {
-			if a != b && strings.HasPrefix(b, a) {
-				t.Fatalf("%q is a prefix of %q: the reference is order-dependent", a, b)
-			}
-		}
-	}
 
 	tokens := []string{
 		// ordinary request-line tokens, as LoggingMiddleware writes them

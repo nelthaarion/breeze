@@ -60,14 +60,19 @@ func (c *cachedDBInspector) Tables() ([]TableInfo, error) {
 	c.mu.RUnlock()
 
 	tables, err := c.inner.Tables()
+	if err != nil {
+		// A failure is not cached. It used to be kept for the whole TTL, so a database
+		// that was down for a second left the browser showing the error for thirty.
+		return tables, err
+	}
 
 	c.mu.Lock()
 	c.tables = append([]TableInfo(nil), tables...)
-	c.tablesErr = err
+	c.tablesErr = nil
 	c.tablesAt = now
 	c.mu.Unlock()
 
-	return tables, err
+	return tables, nil
 }
 
 func (c *cachedDBInspector) TableData(name string, page, pageSize int, search string) (TableData, error) {
@@ -82,12 +87,61 @@ func (c *cachedDBInspector) TableData(name string, page, pageSize int, search st
 	c.dataMu.RUnlock()
 
 	data, err := c.inner.TableData(name, page, pageSize, search)
+	if err != nil {
+		return data, err
+	}
 
 	c.dataMu.Lock()
-	c.data[key] = cachedTableData{data: data, err: err, at: now}
+	c.pruneLocked(now)
+	c.data[key] = cachedTableData{data: data, at: now}
 	c.dataMu.Unlock()
 
-	return data, err
+	return data, nil
+}
+
+// maxCachedPages bounds the page cache. Entries were only ever treated as stale on read, never
+// removed, and the key includes the page, the page size and the search text, so browsing and
+// searching grew the map (each entry holding a page of rows) for as long as the process ran.
+const maxCachedPages = 256
+
+// pruneLocked drops expired entries and, if the cache is still full, the oldest. The caller
+// holds dataMu for writing.
+func (c *cachedDBInspector) pruneLocked(now time.Time) {
+	for key, e := range c.data {
+		if now.Sub(e.at) >= c.dataTTL {
+			delete(c.data, key)
+		}
+	}
+	for len(c.data) >= maxCachedPages {
+		var oldest dbTableDataKey
+		var oldestAt time.Time
+		first := true
+		for key, e := range c.data {
+			if first || e.at.Before(oldestAt) {
+				oldest, oldestAt, first = key, e.at, false
+			}
+		}
+		delete(c.data, oldest)
+	}
+}
+
+// cachedColumns returns the columns of a table from a page that is still fresh in the cache,
+// and whether there was such a page. It never calls the underlying inspector.
+func (c *cachedDBInspector) cachedColumns(table string) ([]TableColumn, bool) {
+	now := time.Now()
+	c.dataMu.RLock()
+	defer c.dataMu.RUnlock()
+	found := false
+	for key, e := range c.data {
+		if key.name != table || e.at.IsZero() || now.Sub(e.at) >= c.dataTTL {
+			continue
+		}
+		found = true
+		if len(e.data.Columns) > 0 {
+			return e.data.Columns, true
+		}
+	}
+	return nil, found
 }
 
 // Invalidate clears cached TableData pages for the given table, forcing

@@ -788,3 +788,177 @@ pre{background:var(--surface2);padding:14px;border-radius:var(--r-md);overflow:a
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
   .card:hover,.arch-card:hover,.health-card:hover,button:hover,.nav-item:hover{transform:none}
 }
+
+
+/* ═══ Review additions ═════════════════════════════════════════════════════
+   Everything below was added in the dashboard review: motion, the mobile
+   drawer, accessibility, toasts, the Database Browser, and small component
+   fixes. It is a block of its own, at the end, so it reads as one piece and
+   can be removed as one piece.
+
+   Motion rules:
+     - Entrances happen once, when something is first built; a value that is
+       refreshed every second only gets a short highlight when it changes.
+     - Movement answers an action (opening, expanding, confirming, a new row
+       arriving). It does not run on its own.
+     - The prefers-reduced-motion block above flattens every animation and
+       transition to nothing, and the script checks the same setting before it
+       starts one of its own. */
+
+:root{
+  --ease-out:cubic-bezier(.2,.7,.2,1);
+  --ease-spring:cubic-bezier(.34,1.4,.5,1);
+  --focus-ring:0 0 0 3px rgba(79,70,229,.28);
+}
+
+/* ─── Keyboard focus ─────────────────────────────────────────────────────── */
+a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible,
+[role="button"]:focus-visible,[role="tab"]:focus-visible,.log-tab:focus-visible,.nav-item:focus-visible{
+  outline:2px solid var(--primary);outline-offset:2px;
+}
+input:focus-visible,textarea:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.skip-link{position:fixed;left:12px;top:-64px;z-index:10001;background:var(--primary);color:#fff;padding:9px 15px;border-radius:12px;font-weight:700;text-decoration:none;transition:top .18s var(--ease-out)}
+.skip-link:focus{top:12px}
+#breeze-app:focus{outline:none}
+
+/* ─── Page and card entrances ─────────────────────────────────────────────── */
+#breeze-app.page-enter{animation:pageIn .38s var(--ease-out) both}
+@keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+.card.reveal{animation:cardRise .5s var(--ease-out) both;animation-delay:calc(var(--i,0) * 45ms)}
+@keyframes cardRise{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
+
+.reveal-in{animation:revealIn .35s var(--ease-out) both}
+@keyframes revealIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* A number that just changed: a ring that fades and a small lift. */
+.card .value{transform-origin:left center}
+.card.tick .value{animation:valueTick .7s ease-out}
+@keyframes valueTick{0%{color:var(--primary);transform:scale(1.045)}100%{transform:none}}
+.card.tick::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;box-shadow:inset 0 0 0 1px var(--primary);opacity:0;animation:ringFlash .7s ease-out}
+@keyframes ringFlash{0%{opacity:.5}100%{opacity:0}}
+
+/* A row that just arrived on a live table. */
+tr.row-new{animation:rowIn .6s var(--ease-out) both}
+@keyframes rowIn{0%{opacity:0;background-color:var(--primary-soft)}35%{opacity:1}100%{opacity:1;background-color:transparent}}
+
+/* ─── Navigation ─────────────────────────────────────────────────────────── */
+.nav-item{position:relative}
+.nav-item::before{content:"";position:absolute;left:3px;top:22%;bottom:22%;width:3px;border-radius:3px;background:var(--primary);transform:scaleY(0);transition:transform .28s var(--ease-spring)}
+.nav-item.active::before{transform:scaleY(1)}
+.nav-item .icon{transition:transform .22s var(--ease-spring),opacity .15s}
+.nav-item:hover .icon{transform:scale(1.12)}
+
+/* ─── Connection indicator ───────────────────────────────────────────────── */
+#ws-box[data-state="live"] .ws-dot.on{animation:livePulse 2.4s ease-out infinite}
+@keyframes livePulse{0%{box-shadow:0 0 0 0 rgba(18,163,122,.5)}70%{box-shadow:0 0 0 8px rgba(18,163,122,0)}100%{box-shadow:0 0 0 0 rgba(18,163,122,0)}}
+#ws-box[data-state="down"] .ws-dot.off{animation:dotDim 1.3s ease-in-out infinite}
+@keyframes dotDim{50%{opacity:.35}}
+
+/* ─── Theme switch: surfaces cross-fade instead of snapping ───────────────── */
+html.theme-fade *,html.theme-fade *::before,html.theme-fade *::after{
+  transition:background-color .3s ease,color .3s ease,border-color .3s ease,box-shadow .3s ease,fill .3s ease,stroke .3s ease!important;
+}
+
+/* ─── Health ─────────────────────────────────────────────────────────────── */
+.health-card.changed{animation:healthChanged 1.1s ease-out}
+@keyframes healthChanged{0%{transform:scale(1.025);box-shadow:0 0 0 3px var(--primary-soft)}100%{transform:none;box-shadow:none}}
+
+/* ─── Timeline steps: expand and collapse ─────────────────────────────────── */
+.t-step>.head{cursor:pointer;border-radius:8px}
+.t-step>.expand{display:grid!important;grid-template-rows:0fr;margin-top:0!important;padding:0!important;background:transparent!important;opacity:0;transition:grid-template-rows .26s var(--ease-out),opacity .2s,margin-top .26s var(--ease-out)}
+.t-step>.expand>.expand-inner{overflow:hidden;min-height:0;padding:0 13px;background:var(--surface2);border-radius:var(--r-md,12px);font-family:var(--mono);font-size:var(--fs-xs)}
+.t-step.open>.expand{grid-template-rows:1fr;opacity:1;margin-top:10px!important}
+.t-step.open>.expand>.expand-inner{padding:13px;transition:padding .26s var(--ease-out)}
+.t-step>.children{animation:revealIn .3s var(--ease-out) both}
+.notice{margin:0 0 12px;padding:10px 14px;border-radius:12px;background:var(--t-yellow);border:1px solid var(--t-yellow-b);color:var(--text);font-size:12px}
+
+/* ─── Charts ─────────────────────────────────────────────────────────────── */
+.chart-card canvas{cursor:crosshair}
+
+/* ─── Toasts ─────────────────────────────────────────────────────────────── */
+.toasts{position:fixed;right:18px;bottom:18px;z-index:10000;display:flex;flex-direction:column;gap:10px;pointer-events:none;width:380px;max-width:calc(100vw - 36px)}
+.toast{pointer-events:auto;display:flex;gap:11px;align-items:flex-start;padding:12px 15px;border-radius:15px;background:var(--surface);color:var(--text);border:1px solid var(--border);box-shadow:0 12px 34px rgba(20,16,60,.2);font-size:13px;line-height:1.45;cursor:pointer;opacity:0;transform:translateY(14px) scale(.97);transition:opacity .22s var(--ease-out),transform .3s var(--ease-spring)}
+.toast.in{opacity:1;transform:none}
+.toast.out{opacity:0;transform:translateX(26px);transition-duration:.2s}
+.toast-dot{flex:none;width:9px;height:9px;border-radius:50%;margin-top:5px;background:var(--primary)}
+.toast.ok .toast-dot{background:var(--green)}
+.toast.error{border-color:var(--t-red-b)}
+.toast.error .toast-dot{background:var(--err)}
+.toast-msg{min-width:0;overflow-wrap:anywhere}
+
+/* ─── Modal ──────────────────────────────────────────────────────────────── */
+.modal-scrim{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(10,8,30,.46);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);opacity:0;transition:opacity .2s}
+.modal-scrim.in{opacity:1}
+.modal{width:580px;max-width:100%;max-height:calc(100vh - 40px);overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:22px;box-shadow:0 30px 80px rgba(10,8,40,.38);padding:24px;transform:translateY(16px) scale(.97);transition:transform .3s var(--ease-spring)}
+.modal-scrim.in .modal{transform:none}
+.modal h3{font-size:var(--fs-lg,16px);font-weight:800;letter-spacing:-.3px;margin-bottom:16px}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+.db-error{color:var(--err);font-size:12px;font-weight:600;min-height:0;margin-top:10px}
+.db-error:empty{display:none}
+
+/* ─── Database Browser ───────────────────────────────────────────────────── */
+.db-side-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.8px;font-weight:800;color:var(--text-muted)}
+.db-tables>input[type="search"]{width:calc(100% - 24px);margin:0 12px 8px}
+.db-list{padding:0 8px 10px}
+.db-table-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border-radius:12px;cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--text-dim);transition:background .15s,color .15s,transform .15s var(--ease-out)}
+.db-table-item:hover{background:var(--primary-soft);color:var(--text);transform:translateX(2px)}
+.db-table-item.active{background:var(--primary-soft);color:var(--primary);font-weight:700}
+.db-table-item .ct{font-size:11px;color:var(--text-muted)}
+.db-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--glass-brd-soft,var(--border))}
+.db-toolbar h3{margin-right:auto;font-size:15px;font-weight:800;display:flex;align-items:center;gap:6px}
+.db-toolbar input[type="search"]{min-width:180px}
+.db-data table th{white-space:nowrap}
+.db-data table td{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono)}
+.db-data .pk{display:inline-block;margin-left:4px;padding:0 6px;border-radius:6px;background:var(--primary-soft);color:var(--primary);font-size:9px;font-weight:800;letter-spacing:.5px}
+.db-data .null{color:var(--text-muted);font-style:italic;font-size:11px}
+.db-actions{white-space:nowrap}
+.db-actions button{padding:3px 10px;font-size:11px}
+.db-pager{display:flex;align-items:center;justify-content:center;gap:14px;padding:12px;border-top:1px solid var(--glass-brd-soft,var(--border));font-size:12px;color:var(--text-dim)}
+.db-note{font-size:11px;color:var(--text-muted)}
+.db-fields{display:grid;gap:14px}
+.db-field label{display:block;font-size:11px;font-weight:700;margin-bottom:5px;color:var(--text-dim)}
+.db-field label small{font-weight:500;color:var(--text-muted);margin-left:4px}
+.db-field input:not([type="checkbox"]),.db-field textarea{width:100%}
+.db-field input[readonly],.db-field textarea[readonly]{opacity:.65}
+.db-field .db-null{display:flex;align-items:center;gap:6px;margin-top:6px;font-weight:600}
+
+/* ─── API Explorer additions ─────────────────────────────────────────────── */
+.api-list-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);font-weight:600}
+.api-list-head input{max-width:150px;text-transform:none;letter-spacing:0}
+.api-doc{padding:0 0 12px;font-size:12px;color:var(--text-dim)}
+.api-doc p{margin-top:4px}
+.api-form .row label small{display:block;font-weight:500;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.6px}
+.api-hint{font-size:11px;color:var(--text-muted);margin-left:8px}
+.api-list .item{transition:background .15s,transform .15s var(--ease-out)}
+.api-list .item:hover{transform:translateX(2px)}
+button.active,button[aria-pressed="true"]{background:var(--primary-soft);color:var(--primary);border-color:var(--primary)}
+
+/* ─── Mobile navigation ──────────────────────────────────────────────────── */
+.nav-toggle{display:none;align-items:center;justify-content:center;width:40px;height:40px;margin-right:10px;flex:none;border-radius:12px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:18px;cursor:pointer;transition:background .15s,transform .15s var(--ease-spring)}
+.nav-toggle:active{transform:scale(.94)}
+.nav-scrim{display:none}
+@media(max-width:900px){
+  .nav-toggle{display:inline-flex}
+  .topbar{display:flex;align-items:center}
+  .topbar h2{margin-right:auto}
+  .sidebar{display:flex;position:fixed;z-index:9500;top:10px;bottom:10px;left:10px;width:min(300px,calc(100vw - 20px));transform:translateX(calc(-100% - 24px));visibility:hidden;transition:transform .34s var(--ease-out),visibility 0s linear .34s;box-shadow:0 30px 80px rgba(10,8,40,.4)}
+  .sidebar .nav{overflow-y:auto}
+  body.nav-open .sidebar{transform:none;visibility:visible;transition:transform .34s var(--ease-out),visibility 0s}
+  .nav-scrim{display:block;position:fixed;inset:0;z-index:9400;background:rgba(10,8,30,.46);opacity:0;pointer-events:none;transition:opacity .28s}
+  body.nav-open .nav-scrim{opacity:1;pointer-events:auto}
+  body.nav-open{overflow:hidden}
+  .toasts{right:12px;left:12px;bottom:12px;width:auto;max-width:none}
+}
+
+/* ─── Review additions, part 2 ─────────────────────────────────────────────── */
+/* The toolbar's controls keep their natural width; the global input/select rule made each one a full row. */
+.db-toolbar input[type="search"]{flex:1 1 220px;width:auto;min-width:160px}
+.db-toolbar select{width:auto;flex:0 0 auto}
+.db-toolbar button{flex:0 0 auto}
+/* Small labels written as spans: the global span font-size rule at the top of this file would enlarge them. */
+.db-data .pk{font-size:9px!important}
+.db-data .null,.db-note{font-size:11px!important}
+.toast-msg{font-size:13px!important}
+/* A header block that leaves the navigation room on a laptop-height window. */
+.sidebar-header{padding:14px 18px 12px}

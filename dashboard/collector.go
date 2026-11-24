@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -113,6 +115,21 @@ type Collector struct {
 	healthMu   sync.RWMutex
 	checks     map[string]HealthCheckFunc
 	lastHealth map[string]HealthStatus
+
+	// probeBusy marks a health probe that has not returned yet, by name, so a probe
+	// that hangs is not started again by every refresh. See runProbe.
+	probeBusy sync.Map
+
+	// Hooks the application provides to make the Cache and Queue controls do something
+	// (see SetCacheClearer and SetJobRetrier).
+	hooksMu    sync.RWMutex
+	cacheClear CacheClearer
+	jobRetry   JobRetrier
+
+	// stopFns release what Install started (the sampler, the hub, the state saver). See Close.
+	closeMu sync.Mutex
+	stopFns []func()
+	closed  bool
 
 	// External connections (databases, caches, queues, etc.) for the
 	// Architecture visualization page.
@@ -547,29 +564,17 @@ func (c *Collector) RecordCacheHit(hit bool) {
 
 // Requests returns a snapshot of the latest N request records.
 func (c *Collector) Requests(n int) []RequestRecord {
-	all := c.requests.Snapshot()
-	if n <= 0 || n >= len(all) {
-		return all
-	}
-	return all[len(all)-n:]
+	return c.requests.Last(n)
 }
 
 // Queries returns a snapshot of the latest N query records.
 func (c *Collector) Queries(n int) []QueryRecord {
-	all := c.queries.Snapshot()
-	if n <= 0 || n >= len(all) {
-		return all
-	}
-	return all[len(all)-n:]
+	return c.queries.Last(n)
 }
 
 // Timelines returns a snapshot of recent timelines.
 func (c *Collector) Timelines(n int) []Timeline {
-	all := c.timelines.Snapshot()
-	if n <= 0 || n >= len(all) {
-		return all
-	}
-	return all[len(all)-n:]
+	return c.timelines.Last(n)
 }
 
 // Logs returns the requested log tab snapshot.
@@ -599,6 +604,21 @@ func (c *Collector) Logs(level string, n int) []LogEntry {
 		return all
 	}
 	return all[len(all)-n:]
+}
+
+// totalDurationUS is the time spent serving every request counted so far, in microseconds:
+// the sum over every route's accumulator plus the requests no route matched.
+func (c *Collector) totalDurationUS() int64 {
+	var sum int64
+	c.routeStatsMu.RLock()
+	for _, acc := range c.routeStats {
+		sum += acc.totalDurUS.Load()
+	}
+	c.routeStatsMu.RUnlock()
+	if c.unmatched != nil && c.unmatched.acc != nil {
+		sum += c.unmatched.acc.totalDurUS.Load()
+	}
+	return sum
 }
 
 // RouteStats returns aggregated per-route statistics.
@@ -691,11 +711,41 @@ func (c *Collector) QueueStats() QueueStat {
 	return c.queue
 }
 
-// RegisterJob records a queued job.
+// maxTrackedJobs bounds the job table. An application that registers every job it runs would
+// otherwise grow it for as long as the process lives.
+const maxTrackedJobs = 5000
+
+// RegisterJob records a queued job. Past maxTrackedJobs the oldest finished job (or, with none
+// finished, the oldest of all) is dropped to make room.
 func (c *Collector) RegisterJob(j QueueJob) {
 	c.queueMu.Lock()
 	defer c.queueMu.Unlock()
+	if _, exists := c.jobs[j.ID]; !exists && len(c.jobs) >= maxTrackedJobs {
+		c.evictJobLocked()
+	}
 	c.jobs[j.ID] = &j
+}
+
+// evictJobLocked drops one job. The caller holds queueMu.
+func (c *Collector) evictJobLocked() {
+	var (
+		victim     string
+		victimAt   time.Time
+		victimDone bool
+		have       bool
+	)
+	for id, j := range c.jobs {
+		done := j.State == "completed" || j.State == "failed"
+		better := !have ||
+			(done && !victimDone) ||
+			(done == victimDone && j.QueuedAt.Before(victimAt))
+		if better {
+			victim, victimAt, victimDone, have = id, j.QueuedAt, done, true
+		}
+	}
+	if have {
+		delete(c.jobs, victim)
+	}
 }
 
 // UpdateJob updates a job's state.
@@ -772,28 +822,141 @@ func (c *Collector) RegisterHealthCheck(name string, fn HealthCheckFunc) {
 	c.checks[name] = fn
 }
 
-// RunHealthChecks runs every registered probe and caches the result.
+// healthProbeTimeout is how long RunHealthChecks waits for one probe.
+const healthProbeTimeout = 5 * time.Second
+
+// RunHealthChecks runs every registered probe and caches the result, in name order.
+//
+// The probes run outside the lock and side by side. It used to hold the read lock for the
+// whole run and write c.lastHealth under it: two refreshes at once (two tabs, the page's
+// poll and its button, the MCP reader) wrote the map concurrently, which the runtime does
+// not recover from — "fatal error: concurrent map writes" takes the whole process down —
+// and one hung probe held the lock against RegisterHealthCheck and stalled every refresh
+// queued behind it. A probe that panics or does not answer within healthProbeTimeout is
+// reported as red instead of taking the request with it.
 func (c *Collector) RunHealthChecks() []HealthStatus {
 	c.healthMu.RLock()
-	defer c.healthMu.RUnlock()
-	out := make([]HealthStatus, 0, len(c.checks))
-	now := time.Now()
+	probes := make(map[string]HealthCheckFunc, len(c.checks))
 	for name, fn := range c.checks {
-		status, msg := "red", "no probe"
-		lat := time.Now()
-		if fn != nil {
-			status, msg = fn()
-		}
-		latency := time.Since(lat)
-		h := HealthStatus{
-			Name:    name,
-			Status:  status,
-			Message: msg,
-			Latency: latency.Microseconds(),
-			Checked: now,
-		}
-		c.lastHealth[name] = h
-		out = append(out, h)
+		probes[name] = fn
 	}
+	c.healthMu.RUnlock()
+
+	names := make([]string, 0, len(probes))
+	for name := range probes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]HealthStatus, len(names))
+	checked := time.Now()
+	var wg sync.WaitGroup
+	for i, name := range names {
+		wg.Add(1)
+		go func(i int, name string, fn HealthCheckFunc) {
+			defer wg.Done()
+			status, msg := "red", "no probe"
+			start := time.Now()
+			if fn != nil {
+				status, msg = c.runProbe(name, fn)
+			}
+			status, msg = normalizeHealth(status, msg)
+			out[i] = HealthStatus{
+				Name:    name,
+				Status:  status,
+				Message: msg,
+				Latency: time.Since(start).Microseconds(),
+				Checked: checked,
+			}
+		}(i, name, probes[name])
+	}
+	wg.Wait()
+
+	c.healthMu.Lock()
+	for _, h := range out {
+		c.lastHealth[h.Name] = h
+	}
+	c.healthMu.Unlock()
 	return out
+}
+
+type probeResult struct{ status, message string }
+
+// runProbe runs one probe with a timeout and a recover. A probe that is still running from
+// an earlier refresh is not started a second time.
+func (c *Collector) runProbe(name string, fn HealthCheckFunc) (string, string) {
+	v, _ := c.probeBusy.LoadOrStore(name, new(atomic.Bool))
+	busy := v.(*atomic.Bool)
+	if !busy.CompareAndSwap(false, true) {
+		return "yellow", "the previous run of this probe has not finished"
+	}
+	done := make(chan probeResult, 1)
+	go func() {
+		defer busy.Store(false)
+		defer func() {
+			if r := recover(); r != nil {
+				done <- probeResult{"red", fmt.Sprintf("probe panicked: %v", r)}
+			}
+		}()
+		status, msg := fn()
+		done <- probeResult{status, msg}
+	}()
+	select {
+	case r := <-done:
+		return r.status, r.message
+	case <-time.After(healthProbeTimeout):
+		return "red", "probe did not answer within " + healthProbeTimeout.String()
+	}
+}
+
+// normalizeHealth maps a probe's status onto the three the page draws. The contract is
+// green, yellow or red, but nothing enforced it, and the status ends up as a CSS class on
+// the page: a probe that answered "ok", or returned an error's text in the status slot,
+// rendered as an unstyled card at best.
+func normalizeHealth(status, msg string) (string, string) {
+	switch s := strings.ToLower(strings.TrimSpace(status)); s {
+	case "green", "yellow", "red":
+		return s, msg
+	case "ok", "up", "healthy", "pass", "passing", "online":
+		return "green", msg
+	case "warn", "warning", "degraded":
+		return "yellow", msg
+	case "down", "fail", "failed", "failing", "error", "critical", "unhealthy":
+		return "red", msg
+	}
+	shown := status
+	if len(shown) > 40 {
+		shown = strings.ToValidUTF8(shown[:40], "") + "…"
+	}
+	note := fmt.Sprintf("unrecognised status %q (a probe returns green, yellow or red)", shown)
+	if msg != "" {
+		note += ": " + msg
+	}
+	return "yellow", note
+}
+
+// onClose registers something Close should release.
+func (c *Collector) onClose(fn func()) {
+	c.closeMu.Lock()
+	c.stopFns = append(c.stopFns, fn)
+	c.closeMu.Unlock()
+}
+
+// Close stops the background work Install started: the metrics sampler, the WebSocket hub's
+// broadcast loop and the state saver (which writes the state one last time, so the counters
+// of the last interval survive a restart). It is safe to call more than once. An application
+// that wants its dashboard counters persisted across a clean shutdown calls it from there.
+func (c *Collector) Close() {
+	c.closeMu.Lock()
+	if c.closed {
+		c.closeMu.Unlock()
+		return
+	}
+	c.closed = true
+	fns := c.stopFns
+	c.stopFns = nil
+	c.closeMu.Unlock()
+	for i := len(fns) - 1; i >= 0; i-- {
+		fns[i]()
+	}
 }

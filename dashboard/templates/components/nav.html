@@ -1,68 +1,82 @@
 {{define "nav"}}
-<nav class="nav" id="dashboard-nav">
+<nav class="nav" id="dashboard-nav" aria-label="Pages">
   <div class="nav-section">Monitor</div>
-  <a class="nav-item{{if eq .Data.Page "overview"}} active{{end}}" href="{{.Data.BasePath}}/overview" data-nav="overview">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 3 12 L 12 3 L 21 12 M 5 10 L 5 20 L 19 20 L 19 10"/></svg>
+  <a class="nav-item{{if eq .Data.Page "overview"}} active{{end}}" href="{{.Data.BasePath}}/overview" data-nav="overview"{{if eq .Data.Page "overview"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 3 12 L 12 3 L 21 12 M 5 10 L 5 20 L 19 20 L 19 10"/></svg>
     <span>Overview</span>
   </a>
-  <a class="nav-item{{if eq .Data.Page "requests"}} active{{end}}" href="{{.Data.BasePath}}/requests" data-nav="requests">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 4 L 4 16 L 8 16 L 8 20 L 12 16 L 20 16 L 20 4 Z"/></svg>
+  <a class="nav-item{{if eq .Data.Page "requests"}} active{{end}}" href="{{.Data.BasePath}}/requests" data-nav="requests"{{if eq .Data.Page "requests"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 4 L 4 16 L 8 16 L 8 20 L 12 16 L 20 16 L 20 4 Z"/></svg>
     <span>Live Requests</span>
   </a>
-  <a class="nav-item{{if eq .Data.Page "queries"}} active{{end}}" href="{{.Data.BasePath}}/queries" data-nav="queries">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12v7c0 1.66 3.58 3 8 3s8-1.34 8-3v-7"/></svg>
+  <a class="nav-item{{if eq .Data.Page "queries"}} active{{end}}" href="{{.Data.BasePath}}/queries" data-nav="queries"{{if eq .Data.Page "queries"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12v7c0 1.66 3.58 3 8 3s8-1.34 8-3v-7"/></svg>
     <span>Database Queries</span>
   </a>
-  <a class="nav-item{{if eq .Data.Page "timeline"}} active{{end}}" href="{{.Data.BasePath}}/timeline" data-nav="timeline">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 4 L 4 20 M 8 6 L 16 6 M 8 10 L 14 10 M 8 14 L 18 14 M 8 18 L 12 18"/></svg>
+  <a class="nav-item{{if eq .Data.Page "timeline"}} active{{end}}" href="{{.Data.BasePath}}/timeline" data-nav="timeline"{{if eq .Data.Page "timeline"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 4 L 4 20 M 8 6 L 16 6 M 8 10 L 14 10 M 8 14 L 18 14 M 8 18 L 12 18"/></svg>
     <span>Timeline</span>
   </a>
   {{if .Data.FleetEnabled}}
-  <a class="nav-item{{if eq .Data.Page "fleet"}} active{{end}}" href="{{.Data.BasePath}}/fleet" data-nav="fleet">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 11L17 6M7 13L17 18"/></svg>
+  <a class="nav-item{{if eq .Data.Page "fleet"}} active{{end}}" href="{{.Data.BasePath}}/fleet" data-nav="fleet"{{if eq .Data.Page "fleet"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 11L17 6M7 13L17 18"/></svg>
     <span>Fleet View</span>
   </a>
   {{end}}
-  <a class="nav-item{{if eq .Data.Page "events"}} active{{end}}" href="{{.Data.BasePath}}/events" data-nav="events">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 13 2 L 4 14 L 11 14 L 11 22 L 20 10 L 13 10 Z"/></svg>
+  <a class="nav-item{{if eq .Data.Page "events"}} active{{end}}" href="{{.Data.BasePath}}/events" data-nav="events"{{if eq .Data.Page "events"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 13 2 L 4 14 L 11 14 L 11 22 L 20 10 L 13 10 Z"/></svg>
     <span>Events</span>
   </a>
-  <a class="nav-item{{if eq .Data.Page "video"}} active{{end}}" href="{{.Data.BasePath}}/video" data-nav="video">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 3 6 L 15 6 L 15 18 L 3 18 Z M 15 10 L 21 7 L 21 17 L 15 14 Z"/></svg>
+  {{if .Data.VideoEnabled}}
+  <a class="nav-item{{if eq .Data.Page "video"}} active{{end}}" href="{{.Data.BasePath}}/video" data-nav="video"{{if eq .Data.Page "video"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 3 6 L 15 6 L 15 18 L 3 18 Z M 15 10 L 21 7 L 21 17 L 15 14 Z"/></svg>
     <span>Video</span>
   </a>
-  <a class="nav-item{{if eq .Data.Page "performance"}} active{{end}}" href="{{.Data.BasePath}}/performance" data-nav="performance">
+  {{end}}
+  <a class="nav-item{{if eq .Data.Page "performance"}} active{{end}}" href="{{.Data.BasePath}}/performance" data-nav="performance"{{if eq .Data.Page "performance"}} aria-current="page"{{end}}>
 
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 3 17 L 9 11 L 13 15 L 21 7 M 14 7 L 21 7 L 21 14"/></svg>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 3 17 L 9 11 L 13 15 L 21 7 M 14 7 L 21 7 L 21 14"/></svg>
     <span>Performance</span>
 
   </a>
 
   <div class="nav-section">Develop</div>
-  <a class="nav-item{{if eq .Data.Page "routes"}} active{{end}}" href="{{.Data.BasePath}}/routes" data-nav="routes">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 6 L 20 6 M 4 12 L 20 12 M 4 18 L 14 18"/></svg>
+  <a class="nav-item{{if eq .Data.Page "routes"}} active{{end}}" href="{{.Data.BasePath}}/routes" data-nav="routes"{{if eq .Data.Page "routes"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 6 L 20 6 M 4 12 L 20 12 M 4 18 L 14 18"/></svg>
     <span>Routes</span>
   </a>
-  <a class="nav-item{{if eq .Data.Page "api"}} active{{end}}" href="{{.Data.BasePath}}/api" data-nav="api">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 4 L 4 20 L 20 20 L 20 4 Z M 8 8 L 16 8 M 8 12 L 16 12 M 8 16 L 13 16"/></svg>
+  <a class="nav-item{{if eq .Data.Page "api"}} active{{end}}" href="{{.Data.BasePath}}/api" data-nav="api"{{if eq .Data.Page "api"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 4 L 4 20 L 20 20 L 20 4 Z M 8 8 L 16 8 M 8 12 L 16 12 M 8 16 L 13 16"/></svg>
     <span>API Explorer</span>
+  </a>
+  <a class="nav-item{{if eq .Data.Page "database"}} active{{end}}" href="{{.Data.BasePath}}/database" data-nav="database"{{if eq .Data.Page "database"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+    <span>Database</span>
   </a>
 
   <div class="nav-section">System</div>
-  <a class="nav-item{{if eq .Data.Page "cache"}} active{{end}}" href="{{.Data.BasePath}}/cache" data-nav="cache">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 7 L 12 3 L 20 7 L 20 17 L 12 21 L 4 17 Z"/></svg>
+  <a class="nav-item{{if eq .Data.Page "cache"}} active{{end}}" href="{{.Data.BasePath}}/cache" data-nav="cache"{{if eq .Data.Page "cache"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 7 L 12 3 L 20 7 L 20 17 L 12 21 L 4 17 Z"/></svg>
     <span>Cache</span>
   </a>
-  <a class="nav-item{{if eq .Data.Page "logs"}} active{{end}}" href="{{.Data.BasePath}}/logs" data-nav="logs">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 4 L 4 20 L 20 20 M 8 8 L 16 8 M 8 12 L 16 12 M 8 16 L 13 16"/></svg>
+  <a class="nav-item{{if eq .Data.Page "queue"}} active{{end}}" href="{{.Data.BasePath}}/queue" data-nav="queue"{{if eq .Data.Page "queue"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/><path d="M18 15l3 3-3 3"/></svg>
+    <span>Queue</span>
+  </a>
+  <a class="nav-item{{if eq .Data.Page "scheduler"}} active{{end}}" href="{{.Data.BasePath}}/scheduler" data-nav="scheduler"{{if eq .Data.Page "scheduler"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+    <span>Scheduler</span>
+  </a>
+  <a class="nav-item{{if eq .Data.Page "logs"}} active{{end}}" href="{{.Data.BasePath}}/logs" data-nav="logs"{{if eq .Data.Page "logs"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 4 4 L 4 20 L 20 20 M 8 8 L 16 8 M 8 12 L 16 12 M 8 16 L 13 16"/></svg>
     <span>Logs</span>
   </a>
-  <a class="nav-item{{if eq .Data.Page "health"}} active{{end}}" href="{{.Data.BasePath}}/health" data-nav="health">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 12 21 C 7 21 3 17 3 12 C 3 7 7 3 12 3 C 17 3 21 7 21 12 C 21 17 17 21 12 21 Z M 9 12 L 11 14 L 15 10"/></svg>
+  <a class="nav-item{{if eq .Data.Page "health"}} active{{end}}" href="{{.Data.BasePath}}/health" data-nav="health"{{if eq .Data.Page "health"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 12 21 C 7 21 3 17 3 12 C 3 7 7 3 12 3 C 17 3 21 7 21 12 C 21 17 17 21 12 21 Z M 9 12 L 11 14 L 15 10"/></svg>
     <span>Health</span>
   </a>
-  <a class="nav-item{{if eq .Data.Page "architecture"}} active{{end}}" href="{{.Data.BasePath}}/architecture" data-nav="architecture">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 12 2 L 2 7 L 12 12 L 22 7 Z M 2 17 L 12 22 L 22 17 M 2 12 L 12 17 L 22 12"/></svg>
+  <a class="nav-item{{if eq .Data.Page "architecture"}} active{{end}}" href="{{.Data.BasePath}}/architecture" data-nav="architecture"{{if eq .Data.Page "architecture"}} aria-current="page"{{end}}>
+    <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M 12 2 L 2 7 L 12 12 L 22 7 Z M 2 17 L 12 22 L 22 17 M 2 12 L 12 17 L 22 12"/></svg>
     <span>Architecture</span>
   </a>
 </nav>

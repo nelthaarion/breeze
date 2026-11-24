@@ -2,9 +2,9 @@ package dashboard
 
 // Config controls every aspect of the Developer Dashboard.
 //
-// When Enabled is false the dashboard middleware installed via Install()
-// short-circuits before doing any work, so production deployments pay zero
-// overhead. Individual collectors can be toggled independently so teams can
+// When Enabled is false, Install builds an inert collector: it starts no
+// goroutines and tunes nothing, and the middleware short-circuits before doing
+// any work, so production deployments pay zero overhead. Individual collectors can be toggled independently so teams can
 // turn on only the signals they care about (e.g. timeline + queries, but not
 // full per-request logging).
 //
@@ -24,8 +24,10 @@ package dashboard
 //	  max_logs: 1000
 //	  slow_query_ms: 100
 type Config struct {
-	// Enabled gates the entire dashboard. When false, the middleware and
-	// WebSocket hub are no-ops and the SPA is not served.
+	// Enabled gates the entire dashboard. When false, the middleware is a
+	// no-op, nothing is sampled and no background goroutine runs. The read API
+	// is still answered (behind the login, with zero counts) so tools can tell
+	// "switched off" from "no traffic"; the live WebSocket is refused.
 	Enabled bool `yaml:"enabled" json:"enabled"`
 
 	// Timeline toggles the per-request timeline profiler.
@@ -35,6 +37,7 @@ type Config struct {
 	Queries bool `yaml:"queries" json:"queries"`
 
 	// Metrics toggles Go runtime metrics collection (GC, heap, goroutines).
+	// When false the 1 Hz sampler is not started.
 	Metrics bool `yaml:"metrics" json:"metrics"`
 
 	// Requests toggles live request tracking.
@@ -44,10 +47,12 @@ type Config struct {
 	// Default: "/dashboard".
 	BasePath string `yaml:"base_path" json:"base_path"`
 
-	// Username and Password are the HTTP Basic Auth credentials required
-	// to access the dashboard. Both must be non-empty for authentication
-	// to be enforced; if either is empty, the dashboard is open. This is
-	// a footgun intended only for local development.
+	// Username and Password are the credentials required to access the
+	// dashboard: the login page exchanges them for an HttpOnly session
+	// cookie, and API clients may present them as HTTP Basic Auth. Both must
+	// be non-empty. If either is empty the dashboard is locked (every request
+	// is answered with HTTP 503 and no data); it never opens because
+	// credentials are missing. Set DisableAuth to run without them.
 	Username string `yaml:"username" json:"username"`
 	Password string `yaml:"password" json:"password"`
 
@@ -66,6 +71,10 @@ type Config struct {
 	// DisableAuth turns off authentication entirely, even if Username and
 	// Password are set. Useful for local development or when auth is
 	// handled by a reverse proxy. Defaults to false.
+	//
+	// Browser requests are still checked for their origin (a page on another
+	// site cannot make the browser write to the dashboard), and the live
+	// WebSocket is still refused to other origins.
 	DisableAuth bool `yaml:"disable_auth" json:"disable_auth"`
 
 	// DevMode links the readable client bundles instead of the minified ones.
@@ -125,7 +134,8 @@ type Config struct {
 	// keeping the heap smaller at the cost of CPU.
 	//
 	// Set to -1 to disable the GC entirely (NOT recommended for production).
-	// Set to 0 to leave the runtime default (100) unchanged.
+	// Set to 0 to leave the runtime default (100) unchanged. A GOGC
+	// environment variable set by the operator takes precedence over this.
 	//
 	// Common values:
 	//   100 — Go default (heap doubles before GC)
@@ -143,7 +153,8 @@ type Config struct {
 	// the peak heap size and never shrink — even after GC reclaims the
 	// objects.
 	//
-	// Set to 0 to leave the runtime default (no limit) unchanged.
+	// Set to 0 to leave the runtime default (no limit) unchanged. A GOMEMLIMIT
+	// environment variable set by the operator takes precedence over this.
 	// Format: bytes. Examples:
 	//   536870912   — 512 MB
 	//  1073741824   — 1 GB

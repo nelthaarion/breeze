@@ -1,6 +1,9 @@
 package dashboard
 
 import (
+	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -139,7 +142,8 @@ type Connection struct {
 	// Driver is the specific technology (e.g. "postgres", "redis", "rabbitmq").
 	Driver string `json:"driver"`
 
-	// Host is the network address (e.g. "10.0.0.5:5432"). Masked if sensitive.
+	// Host is the network address (e.g. "10.0.0.5:5432"). Credentials embedded in it
+	// (user:password@) are masked on the Architecture page.
 	Host string `json:"host"`
 
 	// Database is the DB name (for database connections) or equivalent namespace.
@@ -222,13 +226,62 @@ func (c *Collector) UpdateConnectionPool(id string, inUse, max int) {
 	conn.PoolMax = max
 }
 
-// Connections returns a snapshot of all registered connections.
+// Connections returns a snapshot of all registered connections, ordered by name (then ID).
+//
+// The order used to be that of a map walk, different on every call, so the Architecture
+// diagram reshuffled its nodes at every refresh.
 func (c *Collector) Connections() []Connection {
 	c.connStore.mu.RLock()
-	defer c.connStore.mu.RUnlock()
 	out := make([]Connection, 0, len(c.connStore.connections))
 	for _, conn := range c.connStore.connections {
 		out = append(out, *conn)
 	}
+	c.connStore.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out
+}
+
+// urlCredentials matches the user:password part of a URL.
+var urlCredentials = regexp.MustCompile(`(://[^/\s:@]+):[^@\s/]+@`)
+
+// redactAddress masks a password embedded in a URL ("postgres://app:s3cret@db/orders").
+func redactAddress(s string) string {
+	if !strings.Contains(s, "://") {
+		return s
+	}
+	return urlCredentials.ReplaceAllString(s, "${1}:"+maskedValue+"@")
+}
+
+// redactConnection is what the Architecture page is allowed to show of a connection. The
+// application fills Host, Message and Details with whatever describes the service, and a DSN
+// or a "password" detail is exactly the kind of thing that ends up there.
+func (c *Collector) redactConnection(conn Connection) Connection {
+	keys := c.keysForMasking()
+	conn.Host = redactAddress(conn.Host)
+	conn.Message = redactAddress(maskLineWith(keys, conn.Message))
+	if len(conn.Details) > 0 {
+		details := make(map[string]string, len(conn.Details))
+		for k, v := range conn.Details {
+			name := strings.ToLower(k)
+			secret := false
+			for _, key := range keys {
+				if identEndsWithKey(name, key) {
+					secret = true
+					break
+				}
+			}
+			if secret {
+				details[k] = maskedValue
+			} else {
+				details[k] = redactAddress(maskLineWith(keys, v))
+			}
+		}
+		conn.Details = details
+	}
+	return conn
 }

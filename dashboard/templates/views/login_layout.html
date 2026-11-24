@@ -5,7 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
 
-  <title>Breeze Dashboard — Login</title>
+  <title>Sign in · Breeze Dashboard</title>
+  <script>
+    /* The theme chosen inside the dashboard, applied before first paint. The login page
+       followed only the operating system's preference, so a person who had picked dark in a
+       light-mode OS was flashed a white sign-in page every time the session expired. */
+    (function(){try{var t=localStorage.getItem('breeze-theme');
+      if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+  </script>
   <style>
     /* The login page is served before the stylesheet is reachable, so it
        carries its own copy of the tokens. Kept in step with
@@ -32,7 +39,7 @@
       --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
     }
     @media (prefers-color-scheme:dark){
-      :root{
+      :root:not([data-theme="light"]){
         color-scheme:dark;
         --bg:linear-gradient(155deg,#0d0b1c 0%,#110e26 45%,#150f2a 100%);
         --field-1:#241d55;--field-2:#152a4d;--field-3:#331b4d;
@@ -47,6 +54,21 @@
         --sh-primary:0 8px 24px rgba(111,99,245,.45);
         --sh-focus:0 0 0 3px rgba(139,131,255,.3);
       }
+    }
+    :root[data-theme="dark"]{
+        color-scheme:dark;
+        --bg:linear-gradient(155deg,#0d0b1c 0%,#110e26 45%,#150f2a 100%);
+        --field-1:#241d55;--field-2:#152a4d;--field-3:#331b4d;
+        --glass:linear-gradient(150deg,rgba(38,34,66,.86),rgba(28,25,52,.72));
+        --glass-brd:rgba(255,255,255,.09);
+        --surface:#1a1733;--surface2:#221e40;--border:#302b55;
+        --text:#eeecfb;--text-dim:#a8a2cc;--text-muted:#807aa8;
+        --primary:#8b83ff;--primary-dim:#6f63f5;--primary-lift:#a99fff;--purple:#c084fc;
+        --err:#fb7185;--t-red:rgba(251,113,133,.14);--t-red-b:rgba(251,113,133,.3);
+        --sh-card:0 8px 18px rgba(0,0,0,.45),0 28px 70px rgba(0,0,0,.5);
+        --sh-inset:inset 0 1px 0 rgba(255,255,255,.06);
+        --sh-primary:0 8px 24px rgba(111,99,245,.45);
+        --sh-focus:0 0 0 3px rgba(139,131,255,.3);
     }
     body{
       font-family:var(--sans);

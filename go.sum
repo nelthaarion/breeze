@@ -1,17 +1,11 @@
 github.com/andybalholm/brotli v1.3.0 h1:IdkhjSe/+34U+fP7FSR2Q6Poj1hnHUa2GoWmzXJd6qY=
 github.com/andybalholm/brotli v1.3.0/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
-github.com/goccy/go-json v0.12.0 h1:pD+oWouAiz4yruwXIt/iT+lOMeyhr1aTtxzaMP/RgVI=
-github.com/goccy/go-json v0.12.0/go.mod h1:3NdmfEkZlB7YI5UFw/qdFKq8XN1aiWR0YyRPWZNQltY=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
 github.com/nelthaarion/ants/v2 v2.12.1 h1:UGCNKPiKvumLKdCCPkpjCPdpNnuYkIITiGxu/+lEYTg=
 github.com/nelthaarion/ants/v2 v2.12.1/go.mod h1:f06pdC+hO9q3Qk86+NPaGy0Hq9b+VnYVOSF/bZkoPPM=
 github.com/nelthaarion/gnetplus/v2 v2.5.0 h1:jErCqfgG1K0XKqbfwEdJKk6FP3DsfKcvvbT3mRzGP9Y=
 github.com/nelthaarion/gnetplus/v2 v2.5.0/go.mod h1:pLuYmyAmk0PjHM4Qs6glq/1MJ7ZBA0TnvqQFFaoAB3w=
-github.com/nelthaarion/go-json-plus v0.12.0 h1:pD+oWouAiz4yruwXIt/iT+lOMeyhr1aTtxzaMP/RgVI=
-github.com/nelthaarion/go-json-plus v0.12.0/go.mod h1:3NdmfEkZlB7YI5UFw/qdFKq8XN1aiWR0YyRPWZNQltY=
-github.com/nelthaarion/go-json-plus v1.0.0 h1:WV+Q+tHV4kF4Qu1ZZcHFEB2tGpakqn2P7j/kzjM6f74=
-github.com/nelthaarion/go-json-plus v1.0.0/go.mod h1:4He99vHrOZnIz6n263TVmmnOG6qLJSnrd61ur00sST0=
 github.com/nelthaarion/go-json-plus v1.1.0 h1:UTGDjZkGGW2F7qtrgLcD985rm/coVC0ix01g/FQEFFY=
 github.com/nelthaarion/go-json-plus v1.1.0/go.mod h1:4He99vHrOZnIz6n263TVmmnOG6qLJSnrd61ur00sST0=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=

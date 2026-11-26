@@ -3,8 +3,8 @@ module github.com/nelthaarion/breeze/v2/fleet/transport/eventtransport/backends/
 go 1.27.4
 
 require (
-	github.com/nelthaarion/go-json-plus v0.12.0
 	github.com/nelthaarion/breeze/v2 v2.3.1
+	github.com/nelthaarion/go-json-plus v1.1.0
 	github.com/segmentio/kafka-go v0.4.49
 )
 

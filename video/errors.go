@@ -40,6 +40,12 @@ var (
 	// no part of it overlaps the file. This maps to 416.
 	ErrRangeNotSatisfiable = errors.New("video: range not satisfiable")
 
+	// ErrPathTooLong is returned when the decoded wildcard path exceeds
+	// Config.MaxPathBytes. The client sees 414 rather than a filesystem
+	// lookup or a generic 404, making the input limit diagnosable without
+	// revealing anything about the mount.
+	ErrPathTooLong = errors.New("video: path too long")
+
 	// ErrInvalidConfig is returned by [Mount] when the configuration
 	// cannot produce a working mount. It fails at setup time, never at
 	// request time.
@@ -70,6 +76,8 @@ func statusFor(err error) int {
 		return 200
 	case errors.Is(err, ErrRangeNotSatisfiable):
 		return 416
+	case errors.Is(err, ErrPathTooLong):
+		return 414
 	case errors.Is(err, ErrSignatureRequired),
 		errors.Is(err, ErrInvalidSignature),
 		errors.Is(err, ErrSignatureExpired):

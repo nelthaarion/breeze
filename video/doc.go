@@ -27,8 +27,9 @@
 //	    log.Fatal(err)
 //	}
 //
-// That registers GET and HEAD on "/videos/*filepath". A player pointed at
-// /videos/movie.mp4 will then seek correctly.
+// That registers GET, HEAD and OPTIONS on "/videos/*filepath". A player
+// pointed at /videos/movie.mp4 will then seek correctly, and a browser can
+// complete a configured CORS preflight without touching the media root.
 //
 // # Requests without a Range
 //
@@ -83,8 +84,9 @@
 // # Caching
 //
 // Responses carry an ETag derived from size and mtime, plus Last-Modified.
-// Conditional requests are answered before the file is opened, so a
-// revalidation costs a stat rather than a transfer. If-Range is honoured,
+// Conditional requests are answered after descriptor-backed metadata
+// resolution but before any body bytes are read, so a revalidation costs
+// one open/stat and no transfer. If-Range is honoured,
 // which is what makes a resumed download safe: if the file changed while
 // the client was away, the whole file is sent instead of a slice that would
 // corrupt the client's copy.

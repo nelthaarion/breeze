@@ -21,10 +21,11 @@ import (
 //	    log.Fatalf("video: %v", err)
 //	}
 //
-// Two routes are registered under Prefix + "/*filepath": GET and HEAD.
-// HEAD is registered explicitly because the framework's Method constants
-// do not include it, and a player that cannot ask for a file's length
-// without downloading it will download it just to find out.
+// Three routes are registered under Prefix + "/*filepath": GET, HEAD and
+// OPTIONS. HEAD is registered explicitly because the framework's Method
+// constants do not include it, and a player that cannot ask for a file's
+// length without downloading it will download it just to find out. OPTIONS
+// answers media CORS preflights without touching the filesystem.
 func Mount(r *breeze.Router, cfg Config) error {
 	if r == nil {
 		return fmt.Errorf("%w: router is nil", ErrInvalidConfig)
@@ -43,6 +44,7 @@ func Mount(r *breeze.Router, cfg Config) error {
 	// the workload that makes it unbearable.
 	r.HandleBlocking(breeze.GET, pattern, h)
 	r.HandleBlocking(breeze.Method("HEAD"), pattern, h)
+	r.Handle(breeze.OPTIONS, pattern, h)
 	return nil
 }
 
@@ -68,12 +70,115 @@ func (m *mount) handler() breeze.HandlerFunc {
 		// after a body the client is still reading.
 		ctx.Res = nil
 
+		if ctx.Req.Method == breeze.OPTIONS {
+			// Preflight is deliberately not reported as a media stream:
+			// it transfers no file bytes and must not create a phantom
+			// "(unresolved)" row in the dashboard. A refused preflight is
+			// still a failed request, so surface it through OnError without
+			// pretending it was a file failure.
+			if err := m.serveOptions(ctx, out); err != nil && m.onError != nil {
+				m.onError(ctx, "", err)
+			}
+			return nil
+		}
+
 		name, status, sent, err := m.serve(ctx, out)
 
 		m.report(ctx, name, status, sent, time.Since(started), err)
 
 		return nil
 	}
+}
+
+// serveOptions answers a CORS preflight without normalizing or stat'ing the
+// requested file. The browser is asking whether a method/header combination is
+// allowed, not asking for a representation.
+func (m *mount) serveOptions(ctx *breeze.Context, out sink) error {
+	origin := ctx.Req.Header["origin"]
+	requestedMethod := strings.TrimSpace(ctx.Req.Header["access-control-request-method"])
+	status := 204
+	var reason error
+
+	if requestedMethod != "" && !strings.EqualFold(requestedMethod, "GET") &&
+		!strings.EqualFold(requestedMethod, "HEAD") {
+		status = 405
+		reason = fmt.Errorf("video: preflight method %q is not allowed", requestedMethod)
+	}
+	if origin != "" && (m.anyOrigin || len(m.origins) > 0) {
+		if !m.originAllowed(origin) {
+			status = 403
+			reason = fmt.Errorf("video: origin %q is not allowed", origin)
+		}
+	}
+	if status != 204 {
+		return m.writeErrorResponse(out, origin, status, 0, reason, false)
+	}
+
+	h := newHead(204).
+		set("Cache-Control", "no-store")
+	if m.anyOrigin || len(m.origins) > 0 {
+		h.set("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
+		if origin != "" && m.originAllowed(origin) {
+			if m.anyOrigin {
+				h.set("Access-Control-Allow-Origin", "*")
+			} else {
+				h.set("Access-Control-Allow-Origin", origin)
+			}
+			h.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+			if headers := corsRequestHeaders(ctx.Req.Header["access-control-request-headers"]); headers != "" {
+				h.set("Access-Control-Allow-Headers", headers)
+			}
+			h.set("Access-Control-Max-Age", "600")
+		}
+	}
+	return out.write(h.bytes())
+}
+
+// writeErrorResponse preserves a transport failure alongside the internal
+// request error. The wire status is already chosen, but report needs to know
+// when the peer disappeared while the error response was being written; it
+// must not count that ordinary disconnect as a server failure.
+func (m *mount) writeErrorResponse(out sink, origin string, status int, size int64, cause error, noBody bool) error {
+	if writeErr := m.writeError(out, origin, status, size, noBody); writeErr != nil {
+		return errors.Join(cause, writeErr)
+	}
+	return cause
+}
+
+// originAllowed is the shared allow-list check for ordinary responses and
+// preflight responses.
+func (m *mount) originAllowed(origin string) bool {
+	if m.anyOrigin {
+		return true
+	}
+	_, ok := m.origins[origin]
+	return ok
+}
+
+// corsRequestHeaders echoes only syntactically valid header names. It never
+// reflects commas, CR, or LF from a request into a response header.
+func corsRequestHeaders(raw string) string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" || !validHeaderToken(part) {
+			continue
+		}
+		out = append(out, part)
+	}
+	return strings.Join(out, ", ")
+}
+
+func validHeaderToken(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c)) {
+			continue
+		}
+		return false
+	}
+	return s != ""
 }
 
 // serve carries out one request and reports what happened.
@@ -103,24 +208,26 @@ func (m *mount) serve(ctx *breeze.Context, out sink) (name string, status int, s
 		// The decrypted name still goes through normalize, because the
 		// token proves who issued the link and says nothing about
 		// whether the name inside it is safe to resolve.
-		decoded, terr := m.parseToken(strings.TrimPrefix(raw, "/"))
+		tok, derr := m.decodePath(strings.TrimPrefix(raw, "/"))
+		if derr != nil {
+			status = statusFor(derr)
+			return "", status, 0, m.writeErrorResponse(out, origin, status, 0, derr, head)
+		}
+		decoded, terr := m.parseToken(tok)
 		if terr != nil {
 			status = statusFor(terr)
-			_ = m.writeError(out, origin, status, 0)
-			return "", status, 0, terr
+			return "", status, 0, m.writeErrorResponse(out, origin, status, 0, terr, head)
 		}
 		name, err = m.normalize(decoded)
 		if err != nil {
 			status = statusFor(err)
-			_ = m.writeError(out, origin, status, 0)
-			return name, status, 0, err
+			return name, status, 0, m.writeErrorResponse(out, origin, status, 0, err, head)
 		}
 	} else {
 		name, err = m.normalize(raw)
 		if err != nil {
 			status = statusFor(err)
-			_ = m.writeError(out, origin, status, 0)
-			return name, status, 0, err
+			return name, status, 0, m.writeErrorResponse(out, origin, status, 0, err, head)
 		}
 
 		// Signature and authorisation both run on the normalized name
@@ -128,8 +235,7 @@ func (m *mount) serve(ctx *breeze.Context, out sink) (name string, status int, s
 		// I/O.
 		if err = m.verifySignature(name, ctx.Req.Query.Get("exp"), ctx.Req.Query.Get("sig")); err != nil {
 			status = statusFor(err)
-			_ = m.writeError(out, origin, status, 0)
-			return name, status, 0, err
+			return name, status, 0, m.writeErrorResponse(out, origin, status, 0, err, head)
 		}
 	}
 
@@ -142,23 +248,22 @@ func (m *mount) serve(ctx *breeze.Context, out sink) (name string, status int, s
 			if status == 500 {
 				status = 403
 			}
-			_ = m.writeError(out, origin, status, 0)
-			return name, status, 0, aerr
+			return name, status, 0, m.writeErrorResponse(out, origin, status, 0, aerr, head)
 		}
 	}
 
 	res, err := m.stat(name)
 	if err != nil {
 		status = statusFor(err)
-		_ = m.writeError(out, origin, status, 0)
-		return name, status, 0, err
+		return name, status, 0, m.writeErrorResponse(out, origin, status, 0, err, head)
 	}
+	defer res.close()
 
 	tag := etagFor(res.Size, res.ModTime)
 
-	// A conditional hit ends the request before the file is opened, which
-	// is the entire value of caching: a revalidation costs a stat, not a
-	// transfer.
+	// A conditional hit ends the request before any body bytes are read.
+	// Resolution already opened this descriptor so metadata and streaming
+	// use the same race-free object; revalidation still avoids a transfer.
 	if notModified(ctx.Req.Header["if-none-match"], ctx.Req.Header["if-modified-since"], tag, res.ModTime) {
 		h := newHead(304).
 			set("ETag", tag).
@@ -179,7 +284,7 @@ func (m *mount) serve(ctx *breeze.Context, out sink) (name string, status int, s
 	// mismatch means the stored prefix is stale, so the whole file must
 	// be sent rather than a slice that would corrupt the client's copy.
 	if ir := ctx.Req.Header["if-range"]; ir != "" && rawRange != "" {
-		if !etagMatches(ir, tag) {
+		if !ifRangeMatches(ir, tag, res.ModTime) {
 			rawRange = ""
 		}
 	}
@@ -188,8 +293,7 @@ func (m *mount) serve(ctx *breeze.Context, out sink) (name string, status int, s
 	switch {
 	case errors.Is(rerr, ErrRangeNotSatisfiable):
 		status = 416
-		_ = m.writeError(out, origin, status, res.Size)
-		return name, status, 0, rerr
+		return name, status, 0, m.writeErrorResponse(out, origin, status, res.Size, rerr, head)
 
 	case rng == nil && res.Size == 0:
 		// An empty file is legitimate and must produce a valid 200 with
@@ -198,23 +302,11 @@ func (m *mount) serve(ctx *breeze.Context, out sink) (name string, status int, s
 		rng = &byteRange{Start: 0, End: -1}
 
 	case rng == nil:
-		// No Range header. RFC 9110 permits sending the whole
-		// representation here, and that is what a static file server
-		// does — but for video it is the wrong default: one request
-		// would stream an entire movie through a pooled buffer, and the
-		// client gets no chance to seek until it finishes.
-		//
-		// So the first slice is served as an unsolicited 206 instead.
-		// Content-Range tells the client the full size, so it knows the
-		// duration and that it may seek; every player then continues
-		// with explicit ranges.
-		//
-		// The cap here is ChunkSize, not MaxChunkSize. MaxChunkSize is
-		// the ceiling for a range the client actually asked for, and at
-		// 4 MiB it would not have limited a 512 KiB file at all — the
-		// whole thing would still go out in one response. ChunkSize is
-		// the size of a single write, which is the honest meaning of
-		// "one chunk" and holds regardless of how large the file is.
+		// No Range is a deliberate first-chunk response rather than a
+		// full download. Players learn the total size from Content-Range
+		// and immediately follow up with explicit ranges, while a client
+		// that did not ask for a range never gets an entire movie by
+		// accident. The response is still streamed in ChunkSize writes.
 		status = 206
 		first, _ := byteRange{Start: 0, End: res.Size - 1}.clamp(int64(m.chunk))
 		rng = &first
@@ -340,7 +432,8 @@ func (m *mount) report(ctx *breeze.Context, name string, status int, sent int64,
 		// socket, and a video response must not wait on that. The
 		// framework's own guidance is to use the async form for anything
 		// that performs I/O.
-		_ = events.EmitAsyncBus(m.bus, StreamServed{
+		if emitErr := events.EmitAsyncBus(m.bus, StreamServed{
+			Mount:        m.prefix,
 			File:         name,
 			Status:       status,
 			Bytes:        sent,
@@ -348,7 +441,15 @@ func (m *mount) report(ctx *breeze.Context, name string, status int, sent int64,
 			Partial:      status == 206,
 			Disconnected: gone,
 			Err:          errString(err),
-		})
+		}); emitErr != nil {
+			// The response has already been sent, so an event-bus shutdown
+			// cannot be returned to the player. Retain the scheduling failure
+			// in diagnostics rather than silently losing lifecycle telemetry.
+			// It is deliberately not sent to OnError: that hook describes
+			// request failures, and this request succeeded independently of
+			// its optional telemetry publication.
+			m.eventErrors.Add(1)
+		}
 	}
 }
 
@@ -367,6 +468,11 @@ func errString(err error) string {
 // was partial, how many bytes actually left, whether the viewer walked
 // away mid-stream — have no equivalent in a general HTTP event.
 type StreamServed struct {
+	// Mount is the URL prefix of the mount that served the request. It
+	// distinguishes equal relative names when an application has several
+	// media roots.
+	Mount string
+
 	// File is the path relative to the mount root.
 	File string
 

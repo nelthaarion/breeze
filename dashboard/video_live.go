@@ -54,7 +54,11 @@ type videoSample struct {
 
 // videoFile is the accumulated state of one file being served.
 type videoFile struct {
-	File string `json:"file"`
+	// Mount is the video URL prefix. File names are relative to a mount,
+	// so using File alone as the map key would merge identical names from
+	// different media roots.
+	Mount string `json:"mount,omitempty"`
+	File  string `json:"file"`
 
 	// Requests is every request seen, including errors, so a file that
 	// is failing does not look idle.
@@ -146,6 +150,15 @@ type videoSnapshot struct {
 	ActiveFiles int `json:"active_files"`
 }
 
+func videoFileKey(mount, file string) string {
+	if mount == "" {
+		// Keep events produced by older callers compatible with the old
+		// map shape; they all belong to one implicit mount.
+		return file
+	}
+	return mount + "\x00" + file
+}
+
 // record folds one served request into the tracked state.
 func (v *videoLive) record(e video.StreamServed, at time.Time) {
 	if v == nil {
@@ -160,12 +173,14 @@ func (v *videoLive) record(e video.StreamServed, at time.Time) {
 	if name == "" {
 		name = "(unresolved)"
 	}
+	mount := e.Mount
+	key := videoFileKey(mount, name)
 
-	f := v.files[name]
+	f := v.files[key]
 	if f == nil {
 		v.seq++
-		f = &videoFile{File: name, FirstSeen: at, seq: v.seq}
-		v.files[name] = f
+		f = &videoFile{Mount: mount, File: name, FirstSeen: at, seq: v.seq}
+		v.files[key] = f
 	}
 
 	f.Requests++

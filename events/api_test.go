@@ -506,6 +506,7 @@ func TestOverflowPolicyString(t *testing.T) {
 		p    OverflowPolicy
 		want string
 	}{
+		{OverflowDefault, "default"},
 		{OverflowBlock, "block"},
 		{OverflowSpawn, "spawn"},
 		{OverflowDrop, "drop"},

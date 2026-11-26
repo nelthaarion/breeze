@@ -282,6 +282,41 @@ func TestStatRejectsSymlinkByDefault(t *testing.T) {
 	}
 }
 
+func TestStatRejectsIntermediateSymlinkByDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privilege on Windows")
+	}
+	m, root := testMount(t, map[string]string{"real/clip.mp4": "inside"}, nil)
+	if err := os.Symlink("real", filepath.Join(root, "alias")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if _, err := m.stat("alias/clip.mp4"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound for an intermediate symlink", err)
+	}
+}
+
+func TestStatSymlinkInsideRootAllowedWhenConfigured(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privilege on Windows")
+	}
+	m, root := testMount(t, map[string]string{"real.mp4": "inside"}, func(c *Config) { c.FollowSymlinks = true })
+	if err := os.Symlink("real.mp4", filepath.Join(root, "link.mp4")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	res, err := m.stat("link.mp4")
+	if err != nil {
+		t.Fatalf("inside symlink rejected with FollowSymlinks: %v", err)
+	}
+	defer res.close()
+	out := &bufSink{}
+	if _, err := m.writeBody(out, res, byteRange{0, res.Size - 1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.all(); got != "inside" {
+		t.Fatalf("inside symlink served %q, want inside", got)
+	}
+}
+
 func TestStatSymlinkEscapingRootStillRefused(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation needs privilege on Windows")
@@ -299,6 +334,67 @@ func TestStatSymlinkEscapingRootStillRefused(t *testing.T) {
 	}
 	if _, err := m.stat("link.mp4"); !errors.Is(err, ErrForbiddenPath) {
 		t.Fatalf("err = %v, want ErrForbiddenPath", err)
+	}
+}
+
+func TestRootDescriptorSurvivesRootRename(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("openat2 root anchoring is Linux-specific")
+	}
+	m, root := testMount(t, map[string]string{"clip.mp4": "old content"}, nil)
+	moved := root + "-moved"
+	if err := os.Rename(root, moved); err != nil {
+		t.Skipf("root rename unsupported: %v", err)
+	}
+	res, err := m.stat("clip.mp4")
+	if err != nil {
+		t.Fatalf("descriptor-backed root became unavailable after rename: %v", err)
+	}
+	defer res.close()
+	out := &bufSink{}
+	if _, err := m.writeBody(out, res, byteRange{0, res.Size - 1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.all(); got != "old content" {
+		t.Fatalf("root descriptor served %q after rename, want old content", got)
+	}
+}
+
+func TestResolvedDescriptorSurvivesPathReplacement(t *testing.T) {
+	m, root := testMount(t, map[string]string{"clip.mp4": "old content"}, nil)
+	res, err := m.stat("clip.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.close()
+	replacement := filepath.Join(root, "replacement.mp4")
+	if err := os.WriteFile(replacement, []byte("new content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, filepath.Join(root, "clip.mp4")); err != nil {
+		t.Skipf("atomic replacement unsupported: %v", err)
+	}
+	out := &bufSink{}
+	if _, err := m.writeBody(out, res, byteRange{0, int64(len("old content")) - 1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.all(); got != "old content" {
+		t.Fatalf("stream reopened the replaced path: got %q, want old descriptor contents", got)
+	}
+}
+
+func TestMountClonesSecret(t *testing.T) {
+	secret := []byte("original secret")
+	now := time.Unix(1700000000, 0)
+	m, _ := testMount(t, nil, func(c *Config) {
+		c.Secret = secret
+		c.Clock = func() time.Time { return now }
+	})
+	secret[0] = 'X'
+	q := SignAt([]byte("original secret"), "clip.mp4", now.Add(time.Hour))
+	exp, sig := parseQuery(t, q)
+	if err := m.verifySignature("clip.mp4", exp, sig); err != nil {
+		t.Fatalf("mount secret changed when caller mutated Config.Secret: %v", err)
 	}
 }
 
@@ -345,8 +441,22 @@ func TestMountDefaults(t *testing.T) {
 	if m.maxChunk != DefaultMaxChunkSize {
 		t.Fatalf("maxChunk = %d", m.maxChunk)
 	}
+	if m.maxPath != DefaultMaxPathBytes {
+		t.Fatalf("maxPath = %d", m.maxPath)
+	}
 	if m.cache != DefaultCacheControl {
 		t.Fatalf("cache = %q", m.cache)
+	}
+	secured, _ := testMount(t, nil, func(c *Config) { c.Secret = []byte("secret") })
+	if secured.cache != DefaultSignedCacheControl {
+		t.Fatalf("signed cache = %q, want %q", secured.cache, DefaultSignedCacheControl)
+	}
+	custom, _ := testMount(t, nil, func(c *Config) {
+		c.Secret = []byte("secret")
+		c.CacheControl = "public, max-age=30"
+	})
+	if custom.cache != "public, max-age=30" {
+		t.Fatalf("explicit signed cache = %q", custom.cache)
 	}
 	// "-" is the documented way to suppress the header entirely.
 	off, _ := testMount(t, nil, func(c *Config) { c.CacheControl = "-" })
@@ -522,6 +632,17 @@ func TestNormalizeRejectsDotDotEvenWhenHarmless(t *testing.T) {
 	}
 }
 
+func TestNormalizeEnforcesDecodedPathLimit(t *testing.T) {
+	m, _ := testMount(t, nil, func(c *Config) { c.MaxPathBytes = 12 })
+	if _, err := m.normalize("1234567890123.mp4"); !errors.Is(err, ErrPathTooLong) {
+		t.Fatalf("long decoded path error = %v, want ErrPathTooLong", err)
+	}
+	// The escaped byte is decoded before the byte limit is measured.
+	if _, err := m.normalize("123456789%32.mp4"); !errors.Is(err, ErrPathTooLong) {
+		t.Fatalf("escaped decoded path error = %v, want ErrPathTooLong", err)
+	}
+}
+
 func TestStatusFor(t *testing.T) {
 	cases := map[error]int{
 		nil:                      200,
@@ -530,6 +651,7 @@ func TestStatusFor(t *testing.T) {
 		ErrDirectory:             404,
 		ErrUnsupportedType:       404,
 		ErrRangeNotSatisfiable:   416,
+		ErrPathTooLong:           414,
 		ErrSignatureRequired:     403,
 		ErrInvalidSignature:      403,
 		ErrSignatureExpired:      403,

@@ -35,11 +35,12 @@ func (r byteRange) contentRange(size int64) string {
 // The three-way return is what makes the caller's logic honest, because
 // HTTP distinguishes three outcomes that are easy to conflate:
 //
-//   - (nil, nil): serve the whole file with 200. This covers an absent
-//     header and, deliberately, a malformed one: RFC 9110 §14.2 requires
-//     a server to ignore a Range it cannot parse rather than reject it,
-//     so a broken proxy that mangles the header degrades to a normal
-//     download instead of breaking playback.
+//   - (nil, nil): use the mount's normal no-range response. For a non-empty
+//     file that is a bounded first chunk with 206; for an empty file it is
+//     200. This covers an absent header and, deliberately, a malformed one:
+//     RFC 9110 §14.2 requires a server to ignore a Range it cannot parse
+//     rather than reject it, so a broken proxy that mangles the header still
+//     gets the same bounded playback response.
 //   - (r, nil): serve r with 206.
 //   - (nil, ErrRangeNotSatisfiable): the header parsed but asks for bytes
 //     that do not exist. This is 416, and the caller must add

@@ -29,6 +29,7 @@ import (
 	"time"
 
 	breeze "github.com/nelthaarion/breeze/v2"
+	"github.com/nelthaarion/breeze/v2/events"
 )
 
 // The body every test serves: 100 bytes of a repeating digit pattern, so an
@@ -181,6 +182,14 @@ func TestServeStatus200OnlyForEmptyFile(t *testing.T) {
 	r.wantHeader(t, "Accept-Ranges", "bytes")
 }
 
+func TestHeadErrorHasHeadersButNoBody(t *testing.T) {
+	m, _ := bodyMount(t, nil)
+	r := serveReq(t, m, breeze.Method("HEAD"), "absent.mp4", nil)
+	r.wantStatus(t, 404)
+	r.wantHeader(t, "Content-Length", strconv.Itoa(len("Not Found")))
+	r.wantBody(t, "")
+}
+
 // TestServeStatus206ForValidRange is the ordinary seek.
 func TestServeStatus206ForValidRange(t *testing.T) {
 	m, _ := bodyMount(t, nil)
@@ -215,20 +224,15 @@ func TestServeStatus206ForValidRange(t *testing.T) {
 	}
 }
 
-// TestServeStatus206WithoutRange is the row most likely to be "corrected" by
-// someone reading RFC 9110 in isolation: no Range legally permits a 200 with
-// the whole representation, and this package deliberately does not do that.
-// Sending the first chunk as an unsolicited 206 is what states the total size
-// up front, so the player can seek instead of waiting out a whole movie.
+// TestServeStatus206WithoutRange pins the deliberate first-chunk contract:
+// a player that does not send a Range still gets a bounded prefix and the full
+// size in Content-Range, then continues with explicit ranges.
 func TestServeStatus206WithoutRange(t *testing.T) {
-	// A chunk smaller than the file, so "first chunk" is observably not
-	// "whole file".
 	m, _ := bodyMount(t, func(c *Config) { c.ChunkSize = 32 })
 
 	r := serveGET(t, m, "clip.mp4", nil)
 	r.wantNoError(t)
 	r.wantStatus(t, 206)
-	// The size in Content-Range is the full 100, not the 32 that was sent.
 	r.wantHeader(t, "Content-Range", "bytes 0-31/100")
 	r.wantHeader(t, "Content-Length", "32")
 	r.wantSentBody(t, testBody[:32])
@@ -256,6 +260,16 @@ func TestServeStatus206ForMalformedRange(t *testing.T) {
 			r.wantHeader(t, "Content-Range", "bytes 0-31/100")
 			r.wantSentBody(t, testBody[:32])
 		})
+	}
+}
+
+func TestServePathTooLongReturns414(t *testing.T) {
+	m, _ := bodyMount(t, func(c *Config) { c.MaxPathBytes = 4 })
+	r := serveGET(t, m, "clip.mp4", nil)
+	r.wantStatus(t, 414)
+	r.wantBody(t, "URI Too Long")
+	if !errors.Is(r.err, ErrPathTooLong) {
+		t.Fatalf("err = %v, want ErrPathTooLong", r.err)
 	}
 }
 
@@ -575,6 +589,17 @@ func TestServeSuccessHeaders(t *testing.T) {
 	// A mount can be pointed at a directory that also holds .m3u8 manifests,
 	// which are text a browser could be talked into rendering.
 	r.wantHeader(t, "X-Content-Type-Options", "nosniff")
+
+	now := time.Unix(1700000000, 0)
+	secret := []byte("signed-secret")
+	signed, _ := bodyMount(t, func(c *Config) {
+		c.Secret = secret
+		c.Clock = func() time.Time { return now }
+	})
+	q := SignAt(secret, "clip.mp4", now.Add(time.Hour))
+	sr := serveGET(t, signed, "clip.mp4?"+q, map[string]string{"range": "bytes=0-4"})
+	sr.wantNoError(t)
+	sr.wantHeader(t, "Cache-Control", DefaultSignedCacheControl)
 }
 
 // TestServeIfRange guards a resumed download. A mismatch means the client's
@@ -603,6 +628,33 @@ func TestServeIfRange(t *testing.T) {
 		// Back to the first chunk: the client must restart, not resume.
 		r.wantHeader(t, "Content-Range", "bytes 0-31/100")
 		r.wantSentBody(t, testBody[:32])
+	})
+
+	t.Run("matching date honours the range", func(t *testing.T) {
+		r := serveGET(t, m, "clip.mp4", map[string]string{
+			"range":    "bytes=50-59",
+			"if-range": httpTime(info.ModTime().Add(time.Hour).Unix()),
+		})
+		r.wantStatus(t, 206)
+		r.wantHeader(t, "Content-Range", "bytes 50-59/100")
+	})
+
+	t.Run("stale date discards the range", func(t *testing.T) {
+		r := serveGET(t, m, "clip.mp4", map[string]string{
+			"range":    "bytes=50-59",
+			"if-range": httpTime(info.ModTime().Add(-time.Hour).Unix()),
+		})
+		r.wantStatus(t, 206)
+		r.wantHeader(t, "Content-Range", "bytes 0-31/100")
+	})
+
+	t.Run("weak tag is not strong enough", func(t *testing.T) {
+		r := serveGET(t, m, "clip.mp4", map[string]string{
+			"range":    "bytes=50-59",
+			"if-range": "W/" + tag,
+		})
+		r.wantStatus(t, 206)
+		r.wantHeader(t, "Content-Range", "bytes 0-31/100")
 	})
 
 	t.Run("without a range it is inert", func(t *testing.T) {
@@ -678,6 +730,104 @@ func TestServeCORS(t *testing.T) {
 		r.wantNoHeader(t, "Access-Control-Allow-Origin")
 		r.wantNoHeader(t, "Vary")
 	})
+}
+
+func serveOPTIONS(t *testing.T, m *mount, headers map[string]string) *bufSink {
+	t.Helper()
+	ctx := breeze.NewContext(breeze.OPTIONS, m.prefix+"/clip.mp4")
+	ctx.SetParam("filepath", "clip.mp4")
+	for k, v := range headers {
+		ctx.Req.Header[strings.ToLower(k)] = v
+	}
+	out := &bufSink{}
+	_ = m.serveOptions(ctx, out)
+	return out
+}
+
+func TestServeOptionsCORS(t *testing.T) {
+	const allowed = "https://app.example"
+	m, _ := bodyMount(t, func(c *Config) { c.AllowedOrigins = []string{allowed} })
+
+	out := serveOPTIONS(t, m, map[string]string{
+		"Origin":                         allowed,
+		"Access-Control-Request-Method":  "GET",
+		"Access-Control-Request-Headers": "Range, If-Range",
+	})
+	if got := out.status(); got != "HTTP/1.1 204 No Content" {
+		t.Fatalf("preflight status = %q", got)
+	}
+	if got := out.headerValue("Access-Control-Allow-Origin"); got != allowed {
+		t.Fatalf("allow origin = %q", got)
+	}
+	if got := out.headerValue("Access-Control-Allow-Methods"); got != "GET, HEAD, OPTIONS" {
+		t.Fatalf("allow methods = %q", got)
+	}
+	if got := out.headerValue("Access-Control-Allow-Headers"); got != "Range, If-Range" {
+		t.Fatalf("allow headers = %q", got)
+	}
+	if got := out.headerValue("Vary"); !strings.Contains(got, "Access-Control-Request-Headers") {
+		t.Fatalf("Vary = %q", got)
+	}
+	if body := out.body(); body != "" {
+		t.Fatalf("204 preflight wrote a body: %q", body)
+	}
+
+	refused := serveOPTIONS(t, m, map[string]string{"Origin": "https://evil.example"})
+	if got := refused.status(); got != "HTTP/1.1 403 Forbidden" {
+		t.Fatalf("refused preflight status = %q", got)
+	}
+
+	badMethod := serveOPTIONS(t, m, map[string]string{
+		"Origin":                        allowed,
+		"Access-Control-Request-Method": "POST",
+	})
+	if got := badMethod.status(); got != "HTTP/1.1 405 Method Not Allowed" {
+		t.Fatalf("bad-method preflight status = %q", got)
+	}
+	if got := badMethod.headerValue("Allow"); got != "GET, HEAD, OPTIONS" {
+		t.Fatalf("Allow = %q", got)
+	}
+
+	sanitized := serveOPTIONS(t, m, map[string]string{
+		"Origin":                         allowed,
+		"Access-Control-Request-Headers": "Range, bad header, X-Ok, Evil\r\nInjected: yes",
+	})
+	if got := sanitized.headerValue("Access-Control-Allow-Headers"); got != "Range, X-Ok" {
+		t.Fatalf("sanitized allow headers = %q", got)
+	}
+
+	plain, _ := bodyMount(t, nil)
+	if got := serveOPTIONS(t, plain, map[string]string{"Origin": allowed}).status(); got != "HTTP/1.1 204 No Content" {
+		t.Fatalf("unconfigured preflight status = %q", got)
+	}
+}
+
+func TestHandlerReportsRefusedPreflightThroughOnError(t *testing.T) {
+	calls := 0
+	m, _ := bodyMount(t, func(c *Config) {
+		c.AllowedOrigins = []string{"https://app.example"}
+		c.OnError = func(_ *breeze.Context, name string, err error) {
+			calls++
+			if name != "" {
+				t.Errorf("preflight error name = %q, want empty", name)
+			}
+			if err == nil {
+				t.Error("preflight refusal did not provide an error")
+			}
+		}
+	})
+	ctx := breeze.NewContext(breeze.OPTIONS, m.prefix+"/clip.mp4")
+	ctx.SetParam("filepath", "clip.mp4")
+	ctx.Conn = &queuedConn{}
+	ctx.Req.Header["origin"] = "https://evil.example"
+	ctx.Req.Header["access-control-request-method"] = "GET"
+
+	if err := m.handler()(ctx); err != nil {
+		t.Fatalf("handler returned %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("OnError calls = %d, want 1", calls)
+	}
 }
 
 // TestServeOpaqueToken covers the mode where the URL carries a sealed token
@@ -791,6 +941,37 @@ func TestServeReportsShortSendOnDisconnect(t *testing.T) {
 	}
 	if r.sent != 0 {
 		t.Errorf("sent = %d, want 0: no chunk was accepted", r.sent)
+	}
+}
+
+func TestServeErrorWriteFailureIsReportedAsDisconnect(t *testing.T) {
+	m, _ := bodyMount(t, nil)
+	// The error head itself fails, so there is no status line to assert on;
+	// the internal miss and the transport failure must both survive in err.
+	out := &bufSink{failAt: 1}
+	r := serveReqWith(t, m, breeze.GET, "absent.mp4", nil, out)
+	if r.status != 404 {
+		t.Fatalf("status = %d, want 404", r.status)
+	}
+	if r.err == nil || !isPeerGone(r.err) {
+		t.Fatalf("err = %v, want a peer-disconnect classification", r.err)
+	}
+}
+
+func TestReportCountsClosedEventBusWithoutFalselyFailingRequest(t *testing.T) {
+	var hookCalls int
+	m, _ := bodyMount(t, func(c *Config) {
+		c.DisableEvents = false
+		c.Bus = events.New()
+		c.OnError = func(_ *breeze.Context, _ string, _ error) { hookCalls++ }
+	})
+	m.bus.Close()
+	m.report(breeze.NewContext(breeze.GET, "/videos/clip.mp4"), "clip.mp4", 200, 1, time.Millisecond, nil)
+	if got := m.eventErrors.Load(); got != 1 {
+		t.Fatalf("eventErrors = %d, want 1", got)
+	}
+	if hookCalls != 0 {
+		t.Fatalf("OnError called %d time(s) for a successful request with failed telemetry", hookCalls)
 	}
 }
 

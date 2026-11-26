@@ -40,11 +40,16 @@ func (m AsyncMode) String() string {
 type OverflowPolicy int
 
 const (
+	// OverflowDefault selects the documented default, [OverflowSpawn]. It
+	// occupies the zero value so a zero Config can have a non-blocking
+	// default while callers can still request [OverflowBlock] explicitly.
+	OverflowDefault OverflowPolicy = iota
+
 	// OverflowBlock makes the emitting goroutine wait for a free slot.
 	// This applies backpressure to the producer. Do not use it from a
 	// network event-loop goroutine, where blocking stalls every
 	// connection on the reactor.
-	OverflowBlock OverflowPolicy = iota
+	OverflowBlock
 
 	// OverflowSpawn runs the listener in a fresh goroutine when the queue
 	// is full. Emit never blocks, at the cost of unbounded goroutines
@@ -61,6 +66,8 @@ const (
 // String implements fmt.Stringer.
 func (p OverflowPolicy) String() string {
 	switch p {
+	case OverflowDefault:
+		return "default"
 	case OverflowBlock:
 		return "block"
 	case OverflowSpawn:
@@ -203,6 +210,13 @@ func (c Config) normalize() Config {
 	}
 	if c.OnPanic == nil {
 		c.OnPanic = defaultPanicHandler
+	}
+	// OverflowPolicy's zero value is a configuration sentinel, not a
+	// scheduling policy. Keeping OverflowBlock as a named non-zero value is
+	// important: it preserves an explicit way to request backpressure while
+	// making Config{} honour the documented non-blocking default.
+	if c.AsyncOverflow == OverflowDefault {
+		c.AsyncOverflow = OverflowSpawn
 	}
 	c.Metrics = !c.DisableMetrics
 	return c

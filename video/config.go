@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,10 +34,23 @@ const (
 	// (RFC 9110 §14.4).
 	DefaultMaxChunkSize = 4 << 20
 
-	// DefaultCacheControl is conservative: media is immutable in
-	// practice but the URL is not content-addressed, so a day of caching
-	// with revalidation is the safe default.
+	// DefaultMaxPathBytes bounds the decoded request path. A media URL is
+	// not a place for arbitrarily large input: without a limit, a client
+	// can force repeated percent-decoding, splitting and filesystem checks
+	// with a single request and make the dashboard retain very large file
+	// names. The limit is deliberately far above normal nested media paths.
+	DefaultMaxPathBytes = 4096
+
+	// DefaultCacheControl is conservative for unsigned URLs: media is
+	// immutable in practice but the URL is not content-addressed, so a day
+	// of caching with revalidation is the safe default.
 	DefaultCacheControl = "public, max-age=86400"
+
+	// DefaultSignedCacheControl prevents a public/shared cache from serving
+	// a signed URL after its capability has expired. Applications that use
+	// immutable, content-addressed URLs may explicitly opt into a different
+	// policy with Config.CacheControl.
+	DefaultSignedCacheControl = "private, no-store"
 )
 
 // defaultExtensions is the allow-list applied when Config.Extensions is
@@ -117,6 +131,11 @@ type Config struct {
 	// [DefaultChunkSize].
 	ChunkSize int
 
+	// MaxPathBytes is the maximum decoded URL path accepted by the mount.
+	// Defaults to [DefaultMaxPathBytes]. A non-positive value selects the
+	// default; this is a safety limit, not a filesystem filename limit.
+	MaxPathBytes int
+
 	// MaxChunkSize caps the bytes returned for one request when the
 	// client sends an open-ended range. Defaults to
 	// [DefaultMaxChunkSize]; a negative value disables the cap and
@@ -145,8 +164,10 @@ type Config struct {
 	// neither required nor consulted in this mode.
 	Opaque bool
 
-	// CacheControl is sent on successful responses. Defaults to
-	// [DefaultCacheControl]. Set to "-" to omit the header entirely.
+	// CacheControl is sent on successful responses. It defaults to
+	// [DefaultCacheControl] for unsigned mounts and
+	// [DefaultSignedCacheControl] when Secret is set. Set to "-" to omit
+	// the header entirely. An explicit value always wins.
 	CacheControl string
 
 	// AllowedOrigins enables CORS for exactly these origins. A single
@@ -195,12 +216,18 @@ type Config struct {
 // Config means request handling never re-derives defaults, re-cleans the
 // root, or re-parses the extension list: all of that happens once.
 type mount struct {
-	root       string
+	root string
+	// rootDir is an open handle to the resolved root. On Linux it is used
+	// as the dirfd for openat2, keeping the containment check and the file
+	// open in one kernel operation. Other platforms leave it nil and use
+	// the checked absolute path fallback.
+	rootDir    *os.File
 	prefix     string
 	exts       map[string]struct{}
 	allowHid   bool
 	followLink bool
 	chunk      int
+	maxPath    int
 	maxChunk   int64
 	cache      string
 	origins    map[string]struct{}
@@ -234,6 +261,7 @@ type mount struct {
 	partial      atomic.Uint64
 	failedReqs   atomic.Uint64
 	disconnects  atomic.Uint64
+	eventErrors  atomic.Uint64
 	bytesSent    atomic.Uint64
 	lastServedNs atomic.Int64
 }
@@ -266,6 +294,11 @@ func newMount(cfg Config) (*mount, error) {
 	}
 	if !info.IsDir() {
 		return nil, fmt.Errorf("%w: Root %q is not a directory", ErrInvalidConfig, cfg.Root)
+	}
+
+	maxPath := cfg.MaxPathBytes
+	if maxPath <= 0 {
+		maxPath = DefaultMaxPathBytes
 	}
 
 	prefix := cfg.Prefix
@@ -320,7 +353,11 @@ func newMount(cfg Config) (*mount, error) {
 
 	cache := cfg.CacheControl
 	if cache == "" {
-		cache = DefaultCacheControl
+		if len(cfg.Secret) > 0 {
+			cache = DefaultSignedCacheControl
+		} else {
+			cache = DefaultCacheControl
+		}
 	}
 
 	if cache == "-" {
@@ -362,19 +399,27 @@ func newMount(cfg Config) (*mount, error) {
 		col = nil
 	}
 
+	rootDir, err := openRootDir(real)
+	if err != nil {
+		return nil, fmt.Errorf("%w: opening Root %q: %v", ErrInvalidConfig, cfg.Root, err)
+	}
+	secret := append([]byte(nil), cfg.Secret...)
+
 	m := &mount{
 		root:       real,
+		rootDir:    rootDir,
 		prefix:     prefix,
 		exts:       exts,
 		allowHid:   cfg.AllowHidden,
 		followLink: cfg.FollowSymlinks,
 		chunk:      chunk,
+		maxPath:    maxPath,
 		maxChunk:   maxChunk,
 		cache:      cache,
 		origins:    origins,
 		anyOrigin:  anyOrigin,
 		authorize:  cfg.Authorize,
-		secret:     cfg.Secret,
+		secret:     secret,
 		opaque:     cfg.Opaque,
 		clock:      clock,
 
@@ -382,6 +427,13 @@ func newMount(cfg Config) (*mount, error) {
 		col:     col,
 		onError: cfg.OnError,
 		bufs:    newBufferPool(chunk),
+	}
+	if rootDir != nil {
+		runtime.SetFinalizer(m, func(m *mount) {
+			if m.rootDir != nil {
+				_ = m.rootDir.Close()
+			}
+		})
 	}
 	// One registry append per mount, at construction. The request path is
 	// untouched; see diag.go.

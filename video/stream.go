@@ -150,16 +150,15 @@ func (m *mount) copyRange(w sink, f *os.File, r byteRange) (int64, error) {
 	return sent, nil
 }
 
-// writeBody opens the file and streams the selected range.
+// writeBody streams the descriptor opened during resolution. It must not
+// reopen the request path: containment and policy were established for this
+// descriptor, and a second path lookup would reintroduce a symlink/replacement
+// race.
 func (m *mount) writeBody(w sink, res resolved, r byteRange) (int64, error) {
-	f, err := os.Open(res.Path)
-	if err != nil {
-		// The file existed at stat time and does not now, or permissions
-		// changed underneath. Either way the client learns nothing.
-		return 0, err
+	if res.file == nil {
+		return 0, os.ErrInvalid
 	}
-	defer f.Close()
-	return m.copyRange(w, f, r)
+	return m.copyRange(w, res.file, r)
 }
 
 // errText is the body sent with an error status.
@@ -175,12 +174,13 @@ func errText(status int) string {
 	return "Error"
 }
 
-// writeError sends a complete error response.
+// writeError sends a complete error response. When noBody is true it emits
+// the same headers but omits the reason-phrase body, as required for HEAD.
 //
 // It is a no-op once anything has been written: a 404 appended to a
 // half-streamed 206 would be parsed by the client as body content, which
 // is worse than an abruptly closed connection.
-func (m *mount) writeError(w sink, origin string, status int, size int64) error {
+func (m *mount) writeError(w sink, origin string, status int, size int64, noBody ...bool) error {
 	if cs, ok := w.(*connSink); ok && cs.wrote {
 		return nil
 	}
@@ -199,10 +199,16 @@ func (m *mount) writeError(w sink, origin string, status int, size int64) error 
 	// Advertising range support on a rejection is what lets a player
 	// recover instead of falling back to a full download.
 	h.set("Accept-Ranges", "bytes")
+	if status == 405 {
+		h.set("Allow", "GET, HEAD, OPTIONS")
+	}
 	m.applyCORS(h, origin)
 
 	if err := w.write(h.bytes()); err != nil {
 		return err
+	}
+	if len(noBody) > 0 && noBody[0] {
+		return nil
 	}
 	return w.write([]byte(body))
 }
@@ -222,10 +228,7 @@ func (m *mount) applyCORS(h *head, origin string) {
 	if origin == "" {
 		return
 	}
-	allowed := m.anyOrigin
-	if !allowed {
-		_, allowed = m.origins[origin]
-	}
+	allowed := m.originAllowed(origin)
 	if !allowed {
 		return
 	}

@@ -10,6 +10,20 @@ import (
 
 // ─── Worker pool overflow policies ────────────────────────────────────────
 
+func TestConfigNormalizesDocumentedOverflowDefault(t *testing.T) {
+	defaultBus := New(Config{Async: AsyncWorkerPool, Workers: 1, QueueSize: 1})
+	if got := defaultBus.Config().AsyncOverflow; got != OverflowSpawn {
+		t.Fatalf("zero AsyncOverflow normalized to %v, want OverflowSpawn", got)
+	}
+	defaultBus.Close()
+
+	blockingBus := New(Config{Async: AsyncWorkerPool, AsyncOverflow: OverflowBlock})
+	if got := blockingBus.Config().AsyncOverflow; got != OverflowBlock {
+		t.Fatalf("explicit AsyncOverflow normalized to %v, want OverflowBlock", got)
+	}
+	blockingBus.Close()
+}
+
 // TestPoolOverflowDrop verifies that OverflowDrop discards work rather
 // than blocking or spawning once the queue is saturated.
 func TestPoolOverflowDrop(t *testing.T) {
@@ -76,6 +90,52 @@ func TestPoolOverflowSpawn(t *testing.T) {
 	}
 
 	close(release)
+}
+
+// TestPoolCloseWaitsForOverflow verifies that work spawned outside the
+// bounded queue is part of shutdown too.
+func TestPoolCloseWaitsForOverflow(t *testing.T) {
+	p := newWorkerPool(1, 1, OverflowSpawn)
+	workerRelease := make(chan struct{})
+	workerStarted := make(chan struct{})
+	if !p.submit(func() {
+		close(workerStarted)
+		<-workerRelease
+	}) {
+		t.Fatal("worker task rejected")
+	}
+	<-workerStarted
+	if !p.submit(func() {}) {
+		t.Fatal("queue task rejected")
+	}
+
+	overflowStarted := make(chan struct{})
+	overflowRelease := make(chan struct{})
+	if !p.submit(func() {
+		close(overflowStarted)
+		<-overflowRelease
+	}) {
+		t.Fatal("overflow task rejected")
+	}
+	<-overflowStarted
+
+	close(workerRelease)
+	closed := make(chan struct{})
+	go func() {
+		p.close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("pool close returned while an overflow task was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(overflowRelease)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("pool close did not wait for overflow task completion")
+	}
 }
 
 // TestPoolOverflowBlock verifies that OverflowBlock applies backpressure:

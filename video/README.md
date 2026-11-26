@@ -12,7 +12,7 @@ if err := video.Mount(router, video.Config{Root: "./media"}); err != nil {
 }
 ```
 
-That registers `GET` and `HEAD` on `/videos/*filepath`.
+That registers `GET`, `HEAD` and `OPTIONS` on `/videos/*filepath`.
 
 Try it:
 
@@ -110,10 +110,11 @@ it cannot be extended by editing the query string.
 ## Caching
 
 `ETag` (size + mtime) and `Last-Modified` on every success. Conditional
-requests are answered **before the file is opened**, so a revalidation costs
-a stat instead of a transfer. `If-None-Match` takes precedence over
-`If-Modified-Since`, because a date is only second-accurate and would keep
-serving a stale body for up to a second after an edit.
+requests are answered after descriptor-backed metadata resolution but before
+any body bytes are read, so a revalidation costs one open/stat and no transfer.
+`If-None-Match` takes precedence over `If-Modified-Since`, because a date is
+only second-accurate and would keep serving a stale body for up to a second
+after an edit.
 
 `If-Range` is honoured, which is what makes a resumed download safe: if the
 file changed while the client was away, the whole file is sent rather than a
@@ -179,8 +180,9 @@ tab is a live view, not the historical record.
 | `AllowHidden` | `false` | Dotfiles stay unreachable. |
 | `FollowSymlinks` | `false` | Target must still resolve inside `Root`. |
 | `ChunkSize` | 256 KiB | Bytes per write. |
+| `MaxPathBytes` | 4096 | Decoded wildcard-path limit; oversized paths get 414. |
 | `MaxChunkSize` | 4 MiB | Cap for open-ended ranges; negative disables. |
-| `CacheControl` | `public, max-age=86400` | `"-"` omits the header. |
+| `CacheControl` | unsigned: `public, max-age=86400`; signed: `private, no-store` | `"-"` omits the header. |
 | `AllowedOrigins` | none | `"*"` allows any; `Vary: Origin` always sent. |
 | `Authorize` | nil | Runs on the clean name, before any disk access. |
 | `Secret` | nil | Enables signed URLs. |

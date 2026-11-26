@@ -23,7 +23,9 @@ import (
 // inventing a phrase.
 var httpReason = map[int]string{
 	200: "OK",
+	204: "No Content",
 	206: "Partial Content",
+	414: "URI Too Long",
 	304: "Not Modified",
 	403: "Forbidden",
 	404: "Not Found",
@@ -169,6 +171,22 @@ func etagMatches(headerValue, tag string) bool {
 		}
 	}
 	return false
+}
+
+// ifRangeMatches applies the stronger If-Range comparison rules. Unlike
+// If-None-Match, a weak entity-tag is not sufficient, and "*" is not a valid
+// If-Range validator. A valid HTTP date matches when the representation has
+// not been modified after that second.
+func ifRangeMatches(value, tag string, modTime int64) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "*" || strings.HasPrefix(value, "W/") {
+		return false
+	}
+	if strings.HasPrefix(value, "\"") {
+		return value == tag
+	}
+	date, err := parseHTTPTime(value)
+	return err == nil && modTime <= date
 }
 
 // notModified reports whether the client's cached copy is still current.

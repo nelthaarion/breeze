@@ -2783,8 +2783,9 @@ function renderVideo(){
     var errs = f.errors ? '<span class="badge red">'+fmtNum(f.errors)+'</span>' : '-';
     var cached = f.not_modified ? fmtNum(f.not_modified) : '-';
 
+    var fileLabel = f.mount ? f.mount+' · '+f.file : f.file;
     html += '<tr>'+
-      '<td style="font-family:var(--mono);font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis">'+escapeHTML(f.file)+'</td>'+
+      '<td style="font-family:var(--mono);font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis">'+escapeHTML(fileLabel)+'</td>'+
       '<td>'+badge+'</td>'+
       '<td style="font-family:var(--mono)">'+fmtRate(f.bytes_per_sec)+'</td>'+
       '<td>'+fmtBytes(f.bytes)+'</td>'+

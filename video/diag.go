@@ -46,22 +46,24 @@ func (m *mount) probe() diag.Report {
 	bytes := m.bytesSent.Load()
 
 	detail := map[string]any{
-		"prefix":       m.prefix,
-		"root":         m.root,
-		"extensions":   m.extensionList(),
-		"requests":     served,
-		"partial":      m.partial.Load(),
-		"failed":       failed,
-		"disconnects":  m.disconnects.Load(),
-		"bytes_sent":   bytes,
-		"chunk_bytes":  m.chunk,
-		"signed_urls":  len(m.secret) > 0,
-		"opaque_names": m.opaque,
-		"authorizer":   m.authorize != nil,
-		"bus_attached": m.bus != nil,
-		"collector":    m.col != nil,
-		"hidden_files": m.allowHid,
-		"follow_links": m.followLink,
+		"prefix":         m.prefix,
+		"root":           m.root,
+		"extensions":     m.extensionList(),
+		"requests":       served,
+		"partial":        m.partial.Load(),
+		"failed":         failed,
+		"disconnects":    m.disconnects.Load(),
+		"event_errors":   m.eventErrors.Load(),
+		"bytes_sent":     bytes,
+		"chunk_bytes":    m.chunk,
+		"max_path_bytes": m.maxPath,
+		"signed_urls":    len(m.secret) > 0,
+		"opaque_names":   m.opaque,
+		"authorizer":     m.authorize != nil,
+		"bus_attached":   m.bus != nil,
+		"collector":      m.col != nil,
+		"hidden_files":   m.allowHid,
+		"follow_links":   m.followLink,
 	}
 	if m.maxChunk > 0 {
 		detail["max_chunk_bytes"] = m.maxChunk
@@ -89,12 +91,15 @@ func (m *mount) probe() diag.Report {
 			"every file under the root is publicly readable by anyone who can guess its name.")
 	}
 	if m.followLink {
-		notes = append(notes, "FollowSymlinks is on, so a symlink inside the root can serve a file "+
-			"outside it.")
+		notes = append(notes, "FollowSymlinks is on, so symlinks inside the root may serve other files "+
+			"inside that root; targets outside it are still refused.")
 	}
 	if m.bus == nil && m.col == nil {
 		notes = append(notes, "No event bus or observability collector is attached, so this mount's "+
 			"activity does not reach the dashboard's Video page. The counters above are unaffected.")
+	}
+	if dropped := m.eventErrors.Load(); dropped > 0 {
+		notes = append(notes, fmt.Sprintf("%d StreamServed event(s) could not be scheduled, usually because the event bus was closed during shutdown.", dropped))
 	}
 
 	// A failure rate above a tenth of requests is a mount that is not working —

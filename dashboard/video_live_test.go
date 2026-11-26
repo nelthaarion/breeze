@@ -67,6 +67,28 @@ func TestVideoLiveGroupsByFile(t *testing.T) {
 	}
 }
 
+func TestVideoLiveSeparatesMountsWithSameRelativeFile(t *testing.T) {
+	v := newVideoLive()
+	now := time.Now()
+	v.record(video.StreamServed{Mount: "/media", File: "clip.mp4", Bytes: 10}, now)
+	v.record(video.StreamServed{Mount: "/archive", File: "clip.mp4", Bytes: 20}, now)
+
+	snap := v.Snapshot()
+	if len(snap.Files) != 2 {
+		t.Fatalf("same relative file from two mounts collapsed into %d row(s)", len(snap.Files))
+	}
+	seen := map[string]bool{}
+	for _, f := range snap.Files {
+		seen[f.Mount] = true
+		if f.File != "clip.mp4" {
+			t.Errorf("file = %q, want clip.mp4", f.File)
+		}
+	}
+	if !seen["/media"] || !seen["/archive"] {
+		t.Fatalf("mounts in snapshot = %v", seen)
+	}
+}
+
 // TestVideoLiveRateUsesWindow guards the deliberate choice to divide by the
 // window rather than by the span between samples. Dividing by the span
 // would turn two adjacent requests into an absurd rate.

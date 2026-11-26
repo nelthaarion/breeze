@@ -104,14 +104,22 @@ func (p *workerPool) submit(task func()) bool {
 			return false
 		}
 
-	default: // OverflowSpawn
+	default: // OverflowSpawn (and the defensive fallback for an unknown value)
 		select {
 		case p.tasks <- task:
 			p.queued.Add(1)
 			return true
 		default:
 			p.spawned.Add(1)
-			go task()
+			// The task is outside the worker goroutines, so the worker
+			// WaitGroup must account for it explicitly. Without this Add,
+			// Close could return while an overflow listener still held
+			// application state or was about to emit another event.
+			p.wg.Add(1)
+			go func() {
+				defer p.wg.Done()
+				task()
+			}()
 			return true
 		}
 	}

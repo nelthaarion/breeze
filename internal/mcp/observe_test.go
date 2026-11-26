@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // recorder is a Logger that keeps what it was given.

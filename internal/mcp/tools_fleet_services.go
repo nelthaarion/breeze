@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // fleetNow is the clock silence is measured against. A variable so a test can fix it.

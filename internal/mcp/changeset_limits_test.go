@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // newChangeSetFixture writes the smallest thing a change set can be opened over.

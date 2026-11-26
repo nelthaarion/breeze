@@ -42,7 +42,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // hostAccessFlags are the docker flags that let a container reach the host, or let a
@@ -213,7 +213,7 @@ func (o *dockerOptions) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// unknownJSONField extracts the field name from github.com/goccy/go-json's unknown-field error.
+// unknownJSONField extracts the field name from github.com/nelthaarion/go-json-plus's unknown-field error.
 //
 // The error is unexported and carries no structure, so its text is parsed. That is
 // fragile in principle and safe in practice: the fallback is returning the raw error,

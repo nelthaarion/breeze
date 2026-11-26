@@ -67,7 +67,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // --- Routing -----------------------------------------------------------------
@@ -513,7 +513,7 @@ func BenchmarkZZPipelineDispatch(b *testing.B) {
 
 // BenchmarkZZJSONMapHandler is the shape cmd/main.go's handlers use:
 // json.Marshal over a freshly built map. The map allocates, its keys hash, and
-// github.com/goccy/go-json walks it by reflection, sorting the keys before writing them.
+// github.com/nelthaarion/go-json-plus walks it by reflection, sorting the keys before writing them.
 func BenchmarkZZJSONMapHandler(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
@@ -525,7 +525,7 @@ func BenchmarkZZJSONMapHandler(b *testing.B) {
 }
 
 // BenchmarkZZJSONStructHandler marshals the same payload from a struct.
-// github.com/goccy/go-json caches a per-type encoder, so a struct skips both the map
+// github.com/nelthaarion/go-json-plus caches a per-type encoder, so a struct skips both the map
 // allocation and the key sort while staying ordinary idiomatic Go.
 func BenchmarkZZJSONStructHandler(b *testing.B) {
 	type user struct {

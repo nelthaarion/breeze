@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 
 	"github.com/nelthaarion/breeze/v2/internal/authguard"
 )

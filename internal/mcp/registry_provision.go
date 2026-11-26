@@ -43,7 +43,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // registryFileName is the file, kept next to the orchestrator's own binary.

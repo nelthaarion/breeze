@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // Storage is the interface for persisting dashboard state across restarts.

@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // TestContextBind_JSONSuccess tests binding JSON body into a struct.

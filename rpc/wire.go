@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"sync"
 
-	json "github.com/goccy/go-json"
+	json "github.com/nelthaarion/go-json-plus"
 )
 
 // wire.go — serializing responses.

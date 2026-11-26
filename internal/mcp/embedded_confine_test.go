@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // resetConfinement puts the process-wide policy back to "nobody has decided" for one test

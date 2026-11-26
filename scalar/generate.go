@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // Generate builds and returns the full OpenAPI 3.1 JSON document from all

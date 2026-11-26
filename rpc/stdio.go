@@ -16,7 +16,7 @@ package rpc
 //	        half a request.
 //	stdio   one JSON value per line, because that is what the peer writes.
 //
-// Newline framing is safe here for the same reason it is safe in MCP: github.com/goccy/go-json
+// Newline framing is safe here for the same reason it is safe in MCP: github.com/nelthaarion/go-json-plus
 // escapes literal newlines inside strings as \n, so a marshalled JSON value never
 // contains a bare newline. A line is therefore always a whole message.
 

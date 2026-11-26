@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // runChainFor builds a one-route app, dispatches a request through the real chain

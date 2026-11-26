@@ -23,7 +23,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // signalSources are the sources the observability collector records, mirrored from

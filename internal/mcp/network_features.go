@@ -29,7 +29,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // featuresPath is where the convenience endpoint lives.

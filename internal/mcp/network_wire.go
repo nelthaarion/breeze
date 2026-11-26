@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // codeTransport is the JSON-RPC error code used for a transport-level refusal.

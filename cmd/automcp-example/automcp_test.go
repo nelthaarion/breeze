@@ -35,7 +35,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 
 	"github.com/golang-jwt/jwt/v5"
 

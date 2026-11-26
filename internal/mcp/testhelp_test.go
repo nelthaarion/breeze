@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // mustJSON encodes tool arguments the way the JSON-RPC layer would deliver them.

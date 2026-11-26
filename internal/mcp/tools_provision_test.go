@@ -27,7 +27,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // fakeDocker records the commands it was given and answers them plausibly.

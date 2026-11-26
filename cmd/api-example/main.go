@@ -177,7 +177,7 @@ func main() {
 		if h := app.Hub(); h != nil {
 			count = h.Count()
 		}
-		// A struct, not map[string]int64. github.com/goccy/go-json caches an encoder per
+		// A struct, not map[string]int64. github.com/nelthaarion/go-json-plus caches an encoder per
 		// type, so a struct writes its fields directly; a map is allocated,
 		// hashed, reflected over, and has its keys sorted before anything is
 		// written. That is ~780ns against ~170ns for identical output — more

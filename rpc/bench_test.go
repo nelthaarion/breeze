@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	json "github.com/goccy/go-json"
+	json "github.com/nelthaarion/go-json-plus"
 )
 
 // bench_test.go — the hot path.

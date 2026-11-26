@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // scopedServer builds a network server with a known token and scope, plus an httptest

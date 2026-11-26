@@ -19,7 +19,7 @@
 // internal/generator directly keeps the error as an error.
 package mcp
 
-import "github.com/goccy/go-json"
+import "github.com/nelthaarion/go-json-plus"
 
 // protocolVersion is the MCP revision this server implements.
 //

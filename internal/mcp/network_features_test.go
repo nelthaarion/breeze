@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // fetchFeatures calls GET /mcp/features and returns the status and decoded body.

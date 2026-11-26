@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // TestModeHasNoDefault is the central assertion of Part 9. Every construction path

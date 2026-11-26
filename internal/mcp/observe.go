@@ -25,7 +25,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // EventKind is what happened. A closed set, so a consumer can switch on it.

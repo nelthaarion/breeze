@@ -25,7 +25,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // withWorkspace confines the process to roots for the duration of one test.

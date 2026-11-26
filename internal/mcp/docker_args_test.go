@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // TestProvisionRefusesEveryHostAccessOption is the request half.

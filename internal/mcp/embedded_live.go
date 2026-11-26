@@ -30,7 +30,7 @@ package mcp
 import (
 	"strings"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 
 	"github.com/nelthaarion/breeze/v2/internal/livesource"
 )

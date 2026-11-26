@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	json "github.com/goccy/go-json"
+	json "github.com/nelthaarion/go-json-plus"
 )
 
 // rpc_test.go — conformance against the JSON-RPC 2.0 specification.

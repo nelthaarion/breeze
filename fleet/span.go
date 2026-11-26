@@ -20,7 +20,7 @@ package fleet
 // one trace, so the payload cannot vary by how it was delivered.
 
 import (
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 
 	"github.com/nelthaarion/breeze/v2/dashboard"
 )

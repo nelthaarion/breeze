@@ -41,7 +41,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // Docker timeouts, per operation. They differ because the operations do: a build

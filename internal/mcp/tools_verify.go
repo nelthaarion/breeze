@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 func registerVerificationTools(s *Server) {

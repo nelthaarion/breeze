@@ -30,7 +30,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 const (

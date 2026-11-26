@@ -2200,7 +2200,7 @@ should not degrade superlinearly:
 
 The three pieces that are hot on every message — framing, method lookup, and
 error serialisation — are all allocation-free. The remaining allocations are in
-`github.com/goccy/go-json` unmarshalling of params and the result value, which is where the
+`github.com/nelthaarion/go-json-plus` unmarshalling of params and the result value, which is where the
 next round of tightening belongs if the numbers ever justify it. Nothing has been
 optimised speculatively beyond that point.
 
@@ -2746,7 +2746,7 @@ same two-field JSON payload, three ways:
 | hand-appended into a pooled buffer | **15.6** | **0** | **0** |
 
 Marshalling a **map** costs more than twice the framework's entire request
-path. `github.com/goccy/go-json` caches an encoder per type, so a struct writes its fields
+path. `github.com/nelthaarion/go-json-plus` caches an encoder per type, so a struct writes its fields
 directly, while a map is allocated, hashed, reflected over, and has its keys
 sorted before a byte is written — for identical output. Prefer a struct in any
 handler that is on a hot path; drop to hand-appending only where it measurably

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"runtime/debug"
 
-	json "github.com/goccy/go-json"
+	json "github.com/nelthaarion/go-json-plus"
 	"github.com/nelthaarion/gnetplus/v2"
 )
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // tokenResponse is the standard RFC 6749 token endpoint response. Providers

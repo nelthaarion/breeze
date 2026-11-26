@@ -101,7 +101,7 @@ Same name, different package, **different behaviour** — the dangerous kind:
 
 | Path | Symbol | Verdict |
 |---|---|---|
-| `dashboard/api.go:787` | `jsonStringField` | Dead. Its own comment claims it avoids `github.com/goccy/go-json` "on the hot path" while calling `strings.Index(string(body), …)`, which allocates a copy of the body. Superseded. |
+| `dashboard/api.go:787` | `jsonStringField` | Dead. Its own comment claims it avoids `github.com/nelthaarion/go-json-plus` "on the hot path" while calling `strings.Index(string(body), …)`, which allocates a copy of the body. Superseded. |
 | `dashboard/cpu.go:31` | `currentMaxProcs` | Dead, **and its comment describes a different function**: "numCPU is captured at package init" — there is no `numCPU`. |
 | `dashboard/embed.go:26` | `templatesDir` | Write-only. `dashboard/api.go:79` assigns it; nothing reads it. |
 | `dashboard/sampler.go:199` | `procPid` | Dead. Comment: "pid is cached so we don't re-read on every sample" — nothing samples it. |

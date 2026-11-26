@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // newTestNetwork builds a network server over the real tool registry with a known

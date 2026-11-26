@@ -18,7 +18,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // newStdioFixture returns a stdio server over the given input, with two methods

@@ -46,7 +46,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 
 	"github.com/nelthaarion/breeze/v2/events"
 	kafka "github.com/segmentio/kafka-go"

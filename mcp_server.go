@@ -42,7 +42,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 
 	"fmt"
 	"log"

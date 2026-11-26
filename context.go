@@ -3,9 +3,9 @@ package breeze
 import (
 	"strings"
 
-	"github.com/goccy/go-json"
 	"github.com/nelthaarion/breeze/v2/binding"
 	"github.com/nelthaarion/gnetplus/v2"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // Pre-built common response headers. These are reused across all responses

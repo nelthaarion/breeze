@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	jsonx "github.com/goccy/go-json"
+	jsonx "github.com/nelthaarion/go-json-plus"
 	"github.com/nelthaarion/breeze/v2/dashboard"
 )
 

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/goccy/go-json"
+	"github.com/nelthaarion/go-json-plus"
 )
 
 // Source is a function that populates a destination struct from a data source

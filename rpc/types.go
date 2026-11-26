@@ -1,6 +1,6 @@
 package rpc
 
-import json "github.com/goccy/go-json"
+import json "github.com/nelthaarion/go-json-plus"
 
 // Version is the only value the "jsonrpc" member may take (spec §4).
 const Version = "2.0"

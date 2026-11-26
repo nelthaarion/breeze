@@ -3,6 +3,7 @@ package breeze
 import (
 	"bytes"
 	"encoding/binary"
+	"math/bits"
 	"net/url"
 	"strings"
 )
@@ -66,31 +67,43 @@ const (
 // inside values are legal but rare.
 func scanValue(b []byte, i int) int {
 	n := len(b)
-	// Sixteen bytes per step while the input is long enough: two words tested
-	// together, so the loop overhead is paid once per two words. Header values
-	// are the bulk of a request (User-Agent, Accept, Cookie), and most of them
-	// are longer than eight bytes.
+	// Sixteen bytes per step while the input is long enough. When any lane is
+	// flagged (< 0x20 or == 0x7f), the lowest flagged bit gives the exact byte
+	// index via TZCNT, jumping straight to CR without a redundant 8-byte pass
+	// or scalar walk. Only HTAB (legal but rare inside values) resumes scanning.
 	for i+16 <= n {
 		w1 := binary.LittleEndian.Uint64(b[i:])
-		w2 := binary.LittleEndian.Uint64(b[i+8:])
-		lt1 := (w1 - 0x2020202020202020) &^ w1 & lanesHigh
-		lt2 := (w2 - 0x2020202020202020) &^ w2 & lanesHigh
 		x1 := w1 ^ 0x7f7f7f7f7f7f7f7f
+		if m1 := (((w1 - 0x2020202020202020) &^ w1) | ((x1 - lanesOne) &^ x1)) & lanesHigh; m1 != 0 {
+			i += bits.TrailingZeros64(m1) >> 3
+			if b[i] != '\t' {
+				return i
+			}
+			i++
+			continue
+		}
+		w2 := binary.LittleEndian.Uint64(b[i+8:])
 		x2 := w2 ^ 0x7f7f7f7f7f7f7f7f
-		eq1 := (x1 - lanesOne) &^ x1 & lanesHigh
-		eq2 := (x2 - lanesOne) &^ x2 & lanesHigh
-		if lt1|lt2|eq1|eq2 != 0 {
-			break
+		if m2 := (((w2 - 0x2020202020202020) &^ w2) | ((x2 - lanesOne) &^ x2)) & lanesHigh; m2 != 0 {
+			i += 8 + (bits.TrailingZeros64(m2) >> 3)
+			if b[i] != '\t' {
+				return i
+			}
+			i++
+			continue
 		}
 		i += 16
 	}
 	for i+8 <= n {
 		w := binary.LittleEndian.Uint64(b[i:])
-		lt := (w - 0x2020202020202020) &^ w & lanesHigh
 		x := w ^ 0x7f7f7f7f7f7f7f7f
-		eq := (x - lanesOne) &^ x & lanesHigh
-		if lt|eq != 0 {
-			break
+		if m := (((w - 0x2020202020202020) &^ w) | ((x - lanesOne) &^ x)) & lanesHigh; m != 0 {
+			i += bits.TrailingZeros64(m) >> 3
+			if b[i] != '\t' {
+				return i
+			}
+			i++
+			continue
 		}
 		i += 8
 	}
@@ -109,11 +122,9 @@ func scanTarget(b []byte, i int) int {
 	n := len(b)
 	for i+8 <= n {
 		w := binary.LittleEndian.Uint64(b[i:])
-		lt := (w - 0x2121212121212121) &^ w & lanesHigh
 		x := w ^ 0x7f7f7f7f7f7f7f7f
-		eq := (x - lanesOne) &^ x & lanesHigh
-		if lt|eq != 0 {
-			break
+		if m := (((w - 0x2121212121212121) &^ w) | ((x - lanesOne) &^ x)) & lanesHigh; m != 0 {
+			return i + (bits.TrailingZeros64(m) >> 3)
 		}
 		i += 8
 	}
@@ -121,6 +132,53 @@ func scanTarget(b []byte, i int) int {
 		i++
 	}
 	return i
+}
+
+// indexCRLFCRLF returns the index of the first "\r\n\r\n" in b, or -1.
+// Small header blocks (<= 512 bytes, covering nearly every HTTP request) scan
+// 8 bytes at a time via inline SWAR to avoid per-line bytes.IndexByte call
+// overhead; larger buffers use SIMD bytes.IndexByte for maximum bandwidth.
+func indexCRLFCRLF(b []byte) int {
+	n := len(b)
+	if n < 4 {
+		return -1
+	}
+	limit := n - 2
+	if n <= 512 {
+		const nlMask = 0x0a0a0a0a0a0a0a0a
+		i := 1
+		for i+8 <= limit {
+			w := binary.LittleEndian.Uint64(b[i:]) ^ nlMask
+			if m := (w - lanesOne) &^ w & lanesHigh; m != 0 {
+				pos := i + (bits.TrailingZeros64(m) >> 3)
+				if b[pos-1] == '\r' && b[pos+1] == '\r' && b[pos+2] == '\n' {
+					return pos - 1
+				}
+				i = pos + 1
+				continue
+			}
+			i += 8
+		}
+		for ; i < limit; i++ {
+			if b[i] == '\n' && b[i-1] == '\r' && b[i+1] == '\r' && b[i+2] == '\n' {
+				return i - 1
+			}
+		}
+		return -1
+	}
+	off := 1
+	for off < limit {
+		rel := bytes.IndexByte(b[off:limit], '\n')
+		if rel < 0 {
+			return -1
+		}
+		i := off + rel
+		if b[i-1] == '\r' && b[i+1] == '\r' && b[i+2] == '\n' {
+			return i - 1
+		}
+		off = i + 1
+	}
+	return -1
 }
 
 // indexCRLF returns the index of the first "\r\n" in b, or -1. A lone CR does
@@ -190,39 +248,104 @@ const (
 // the only bytes net/url acts on besides '&' and '=' — and at most
 // maxFastQueryParams parameters, every key and value is exactly the substring
 // it was cut from, which is also what net/url returns, so the result is built
-// directly with one backing array for all first values. Anything else is
-// handed to net/url unchanged, so escapes, semicolons, parameter limits and
-// every error stay its business.
+// directly with a freshly allocated map and one backing array for all first
+// values. Anything else is handed to net/url unchanged, so escapes,
+// semicolons, parameter limits and every error stay its business.
 //
-// The returned strings are substrings of raw, exactly as with net/url when
-// nothing needs unescaping: they live as long as the header block does.
+// Plainness validation and '&'/'=' splitting are fused into a single walk over
+// raw: all five special bytes ('%', '&', '+', ';', '=') are <= '=' (0x3d), so
+// ordinary ASCII identifier/value bytes skip the switch in one comparison.
+//
+// The returned url.Values map and its backing []string array are freshly
+// allocated and never reused or cleared across requests, so callers may retain
+// req.Query safely. The returned strings are substrings of raw, exactly as
+// with net/url when nothing needs unescaping: they live as long as the header
+// block does.
 func parseRequestQuery(raw string) (url.Values, error) {
 	if queryFastOK && len(raw) <= maxFastQueryBytes {
-		n := 1
+		var (
+			keys  [maxFastQueryParams]string
+			rvals [maxFastQueryParams]string
+			count int
+		)
+		segStart := 0
+		eqPos := -1
+		seps := 0
 		plain := true
 		for i := 0; i < len(raw); i++ {
-			switch raw[i] {
+			c := raw[i]
+			if c > '=' {
+				continue
+			}
+			switch c {
+			case '&':
+				seps++
+				if seps >= maxFastQueryParams {
+					plain = false
+					break
+				}
+				if i > segStart {
+					if eqPos >= 0 {
+						keys[count] = raw[segStart:eqPos]
+						rvals[count] = raw[eqPos+1 : i]
+					} else {
+						keys[count] = raw[segStart:i]
+						rvals[count] = ""
+					}
+					count++
+				}
+				segStart = i + 1
+				eqPos = -1
+			case '=':
+				if eqPos < 0 {
+					eqPos = i
+				}
 			case '%', '+', ';':
 				plain = false
-			case '&':
-				n++
+			}
+			if !plain {
+				break
 			}
 		}
-		if plain && n <= maxFastQueryParams {
-			m := make(url.Values, n)
-			vals := make([]string, 0, n)
-			for rest := raw; rest != ""; {
-				var seg string
-				seg, rest, _ = strings.Cut(rest, "&")
-				if seg == "" {
-					continue
-				}
-				key, value, _ := strings.Cut(seg, "=")
-				if old, dup := m[key]; dup {
-					m[key] = append(old, value)
+		if plain && segStart < len(raw) {
+			if count >= maxFastQueryParams {
+				plain = false
+			} else {
+				if eqPos >= 0 {
+					keys[count] = raw[segStart:eqPos]
+					rvals[count] = raw[eqPos+1:]
 				} else {
-					vals = append(vals, value)
-					m[key] = vals[len(vals)-1 : len(vals) : len(vals)]
+					keys[count] = raw[segStart:]
+					rvals[count] = ""
+				}
+				count++
+			}
+		}
+		if plain {
+			if count == 0 {
+				return make(url.Values), nil
+			}
+			m := make(url.Values, count)
+			vals := make([]string, count)
+
+			vIdx := 0
+			for i := 0; i < count; i++ {
+				key := keys[i]
+				val := rvals[i]
+				dup := false
+				for j := 0; j < vIdx; j++ {
+					if keys[j] == key {
+						dup = true
+						break
+					}
+				}
+				if dup {
+					m[key] = append(m[key], val)
+				} else {
+					keys[vIdx] = key
+					vals[vIdx] = val
+					m[key] = vals[vIdx : vIdx+1 : vIdx+1]
+					vIdx++
 				}
 			}
 			return m, nil

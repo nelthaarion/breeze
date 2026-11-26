@@ -2,10 +2,46 @@ package breeze
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
 	"unsafe"
+)
+
+const (
+	// Immutable bump-allocated header block slabs for ownHeaders == true on
+	// pooled requests (req.useSlab == true). Each issued slice uses a 3-index
+	// slice into a monotonically-advancing offset on req.slab, so bytes handed
+	// out are never overwritten even if a handler stashes req.Path or
+	// req.Header strings past releaseRequest.
+	headerSlabSize    = 4096
+	headerSlabMaxItem = 2048
+)
+
+type headerSlab struct {
+	buf [headerSlabSize]byte
+	off int
+}
+
+func (req *HTTPRequest) allocHeaderBlock(n int) []byte {
+	if !req.useSlab || n > headerSlabMaxItem {
+		return make([]byte, n)
+	}
+	s := req.slab
+	if s == nil || headerSlabSize-s.off < n {
+		s = new(headerSlab)
+		req.slab = s
+	}
+	start := s.off
+	end := start + n
+	s.off = end
+	return s.buf[start:end:end]
+}
+
+const (
+	http11LE uint64 = 'H' | 'T'<<8 | 'T'<<16 | 'P'<<24 | '/'<<32 | '1'<<40 | '.'<<48 | '1'<<56
+	http10LE uint64 = 'H' | 'T'<<8 | 'T'<<16 | 'P'<<24 | '/'<<32 | '1'<<40 | '.'<<48 | '0'<<56
 )
 
 // ErrBodyTooLarge reports a request whose body exceeds the server's configured
@@ -116,9 +152,7 @@ func promoteRequest(req *HTTPRequest, data []byte, maxBodies ...int64) error {
 	if len(maxBodies) > 0 {
 		maxBody = maxBodies[0]
 	}
-	clear(req.Header)
-	req.Query = nil
-	req.Body = nil
+	resetForReparse(req)
 	_, err := fillHTTPRequest(req, data, true, maxBody)
 	return err
 }
@@ -239,7 +273,7 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	}
 
 	// ── Find header boundary ───────────────────────────────────────────────
-	headerEnd := bytes.Index(data[:scanLen], crlfcrlf)
+	headerEnd := indexCRLFCRLF(data[:scanLen])
 	if headerEnd < 0 {
 		if len(data) > maxRequestHeaderBytes {
 			return 0, ErrHeadersTooLarge
@@ -253,26 +287,38 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 	// ── Establish the bytes all strings will view ──────────────────────────
 	header := data[:headerEnd]
 	if ownHeaders {
-		owned := make([]byte, headerEnd)
+		owned := req.allocHeaderBlock(headerEnd)
 		copy(owned, header)
 		header = owned
 		req.owned = owned
 	}
 
 	// ── Parse request line ─────────────────────────────────────────────────
-	lineEnd := indexCRLF(header)
-	if lineEnd < 0 {
-		return 0, errMalformedRequestLine
-	}
-	methodBytes, path, query, http10, err := parseRequestLine(header[:lineEnd])
-	if err != nil {
-		return 0, err
+	var (
+		method  Method
+		path    []byte
+		query   []byte
+		lineEnd int
+		http10  bool
+	)
+	if m, p, q, le, h10, ok := parseRequestLineDirect(header); ok {
+		method, path, query, lineEnd, http10 = m, p, q, le, h10
+	} else {
+		lineEnd = indexCRLF(header)
+		if lineEnd < 0 {
+			return 0, errMalformedRequestLine
+		}
+		methodBytes, p, q, h10, err := parseRequestLine(header[:lineEnd])
+		if err != nil {
+			return 0, err
+		}
+		method, path, query, http10 = internMethod(methodBytes), p, q, h10
 	}
 
 	if req.Header == nil {
 		req.Header = make(map[string]string, 8)
 	}
-	req.Method = internMethod(methodBytes)
+	req.Method = method
 	req.Path = b2s(path)
 
 	if len(query) > 0 {
@@ -301,20 +347,31 @@ func fillHTTPRequest(req *HTTPRequest, data []byte, ownHeaders bool, maxBody int
 // arise once the blank line has been seen.
 func fillInPlace(req *HTTPRequest, data []byte, scanLen int, maxBody int64) (consumed int, err error, handled bool) {
 	buf := data[:scanLen]
-
-	lineEnd := indexCRLF(buf)
-	if lineEnd < 0 {
-		// No CRLF at all, so no CRLFCRLF either.
-		return headNotComplete(req, len(data))
-	}
-	methodBytes, path, query, http10, perr := parseRequestLine(buf[:lineEnd])
-	if perr != nil {
-		return 0, nil, false
+	var (
+		method  Method
+		path    []byte
+		query   []byte
+		lineEnd int
+		http10  bool
+	)
+	if m, p, q, le, h10, ok := parseRequestLineDirect(buf); ok {
+		method, path, query, lineEnd, http10 = m, p, q, le, h10
+	} else {
+		lineEnd = indexCRLF(buf)
+		if lineEnd < 0 {
+			// No CRLF at all, so no CRLFCRLF either.
+			return headNotComplete(req, len(data))
+		}
+		methodBytes, p, q, h10, perr := parseRequestLine(buf[:lineEnd])
+		if perr != nil {
+			return 0, nil, false
+		}
+		method, path, query, http10 = internMethod(methodBytes), p, q, h10
 	}
 	if req.Header == nil {
 		req.Header = make(map[string]string, 8)
 	}
-	req.Method = internMethod(methodBytes)
+	req.Method = method
 	req.Path = b2s(path)
 	if len(query) > 0 {
 		q, qerr := parseRequestQuery(b2s(query))
@@ -360,7 +417,9 @@ func headNotComplete(req *HTTPRequest, dataLen int) (int, error, bool) {
 // resetForReparse returns req to the state it had before a fillInPlace attempt
 // that gave no verdict, so the exact path can start over on it.
 func resetForReparse(req *HTTPRequest) {
-	clear(req.Header)
+	if len(req.Header) > 0 {
+		clear(req.Header)
+	}
 	req.Method = ""
 	req.Path = ""
 	req.Query = nil
@@ -596,18 +655,24 @@ var (
 func parseRequestLine(rl []byte) (method, path, query []byte, http10 bool, err error) {
 	n := len(rl)
 	i := 0
-	for i < n && tokenChar[rl[i]] {
-		i++
+	if n >= 14 && rl[0] == 'G' && rl[1] == 'E' && rl[2] == 'T' && rl[3] == ' ' {
+		i = 3
+	} else if n >= 15 && rl[0] == 'P' && rl[1] == 'O' && rl[2] == 'S' && rl[3] == 'T' && rl[4] == ' ' {
+		i = 4
+	} else {
+		for i < n && tokenChar[rl[i]] {
+			i++
+		}
 	}
 	if i > 0 && i < n && rl[i] == ' ' {
 		ts := i + 1
 		te := scanTarget(rl, ts)
 		if te > ts && te < n && rl[te] == ' ' && n-te-1 == 8 {
-			v := b2s(rl[te+1:])
-			if v == "HTTP/1.1" || v == "HTTP/1.0" {
+			v64 := binary.LittleEndian.Uint64(rl[te+1:])
+			if v64 == http11LE || v64 == http10LE {
 				target := rl[ts:te]
 				path, query = splitPathQuery(target)
-				return rl[:i], path, query, v == "HTTP/1.0", nil
+				return rl[:i], path, query, v64 == http10LE, nil
 			}
 		}
 	}
@@ -646,6 +711,82 @@ func parseRequestLineSlow(requestLine []byte) (method, path, query []byte, http1
 	}
 	path, query = splitPathQuery(rawPath)
 	return methodBytes, path, query, version == "HTTP/1.0", nil
+}
+
+// parseRequestLineDirect parses standard "METHOD /target HTTP/1.x\r\n" directly
+// from the start of buf in one pass without searching for CRLF first. Returns
+// ok=false on any non-standard method, target form, or malformed line so the
+// caller falls back to indexCRLF + parseRequestLine with identical semantics.
+func parseRequestLineDirect(buf []byte) (method Method, path, query []byte, lineEnd int, http10, ok bool) {
+	n := len(buf)
+	if n < 16 {
+		return "", nil, nil, 0, false, false
+	}
+	var ts int
+	switch buf[0] {
+	case 'G':
+		if buf[1] == 'E' && buf[2] == 'T' && buf[3] == ' ' {
+			method = "GET"
+			ts = 4
+		} else {
+			return "", nil, nil, 0, false, false
+		}
+	case 'P':
+		if buf[1] == 'O' && buf[2] == 'S' && buf[3] == 'T' && buf[4] == ' ' {
+			method = "POST"
+			ts = 5
+		} else if buf[1] == 'U' && buf[2] == 'T' && buf[3] == ' ' {
+			method = "PUT"
+			ts = 4
+		} else if buf[1] == 'A' && buf[2] == 'T' && buf[3] == 'C' && buf[4] == 'H' && buf[5] == ' ' {
+			method = "PATCH"
+			ts = 6
+		} else {
+			return "", nil, nil, 0, false, false
+		}
+	case 'D':
+		if buf[1] == 'E' && buf[2] == 'L' && buf[3] == 'E' && buf[4] == 'T' && buf[5] == 'E' && buf[6] == ' ' {
+			method = "DELETE"
+			ts = 7
+		} else {
+			return "", nil, nil, 0, false, false
+		}
+	case 'H':
+		if buf[1] == 'E' && buf[2] == 'A' && buf[3] == 'D' && buf[4] == ' ' {
+			method = "HEAD"
+			ts = 5
+		} else {
+			return "", nil, nil, 0, false, false
+		}
+	case 'O':
+		if buf[1] == 'P' && buf[2] == 'T' && buf[3] == 'I' && buf[4] == 'O' && buf[5] == 'N' && buf[6] == 'S' && buf[7] == ' ' {
+			method = "OPTIONS"
+			ts = 8
+		} else {
+			return "", nil, nil, 0, false, false
+		}
+	default:
+		return "", nil, nil, 0, false, false
+	}
+
+	te := scanTarget(buf, ts)
+	// Require origin-form target ('/...'), single space, 8-byte HTTP/1.x, and CRLF.
+	if te == ts || buf[ts] != '/' || te+11 > n || buf[te] != ' ' {
+		return "", nil, nil, 0, false, false
+	}
+	v := binary.LittleEndian.Uint64(buf[te+1:])
+	if v == http11LE {
+		http10 = false
+	} else if v == http10LE {
+		http10 = true
+	} else {
+		return "", nil, nil, 0, false, false
+	}
+	if buf[te+9] != '\r' || buf[te+10] != '\n' {
+		return "", nil, nil, 0, false, false
+	}
+	path, query = splitPathQuery(buf[ts:te])
+	return method, path, query, te + 9, http10, true
 }
 
 // parseHeaderLineSlow parses the header line that starts at pos in header the
@@ -853,20 +994,26 @@ const (
 // ApacheBench without -k, waits for the server to close the socket to know the
 // response has ended, and the server never did.
 func connectionMode(http10 bool, value string) uint8 {
+	if value == "" {
+		if http10 {
+			return connModeClose
+		}
+		return connModeKeepAlive
+	}
 	// A single "keep-alive" or "close" token, in any ASCII case, is nearly every
 	// Connection header there is. Answer it without splitting and folding; the
 	// general loop below still decides everything else, including values that
 	// only Unicode case folding would match.
 	switch len(value) {
 	case 10:
-		if asciiEqualFold(value, "keep-alive") {
+		if value == "keep-alive" || asciiEqualFold(value, "keep-alive") {
 			if http10 {
 				return connModeKeepAlive10
 			}
 			return connModeKeepAlive
 		}
 	case 5:
-		if asciiEqualFold(value, "close") {
+		if value == "close" || asciiEqualFold(value, "close") {
 			return connModeClose
 		}
 	}

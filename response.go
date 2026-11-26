@@ -125,6 +125,18 @@ func releaseWireBuf(bp *[]byte) {
 //   - The buffer is grown once, to the exact size for the precomputed path.
 //   - strconv.AppendInt writes the content length straight into the buffer.
 func (r *HTTPResponse) AppendTo(buf []byte) []byte {
+	// Ultra-fast path: 200 OK with a standard pre-rendered content type.
+	// raw200 fuses status line + Content-Type + "Content-Length: " into one copy.
+	if r.rawHeaders != nil && r.raw200 != nil && (r.Status == 200 || r.Status == 0) {
+		body := r.Body
+		need := len(r.raw200) + 24 + len(body)
+		buf = grow(buf, need)
+		buf = append(buf, r.raw200...)
+		buf = appendContentLength(buf, len(body))
+		buf = append(buf, "\r\n\r\n"...)
+		return append(buf, body...)
+	}
+
 	line := statusLine(r.Status)
 
 	if r.preBuilt != nil {
@@ -153,10 +165,11 @@ func (r *HTTPResponse) AppendTo(buf []byte) []byte {
 		}
 		if bodyAllowed {
 			buf = append(buf, clHeader...)
-			buf = strconv.AppendInt(buf, int64(len(body)), 10)
+			buf = appendContentLength(buf, len(body))
+			buf = append(buf, "\r\n\r\n"...)
+		} else {
 			buf = append(buf, "\r\n"...)
 		}
-		buf = append(buf, "\r\n"...)
 		return append(buf, body...)
 	}
 
@@ -173,10 +186,11 @@ func (r *HTTPResponse) AppendTo(buf []byte) []byte {
 		buf = append(buf, r.rawHeaders...)
 		if bodyAllowed {
 			buf = append(buf, clHeader...)
-			buf = strconv.AppendInt(buf, int64(len(body)), 10)
+			buf = appendContentLength(buf, len(body))
+			buf = append(buf, "\r\n\r\n"...)
+		} else {
 			buf = append(buf, "\r\n"...)
 		}
-		buf = append(buf, "\r\n"...)
 		return append(buf, body...)
 	}
 
@@ -234,6 +248,21 @@ func (r *HTTPResponse) AppendTo(buf []byte) []byte {
 	return append(buf, body...)
 }
 
+// appendContentLength appends a non-negative integer in base 10 without
+// calling strconv.AppendInt for small response bodies (< 1000 bytes).
+func appendContentLength(buf []byte, n int) []byte {
+	if n < 10 {
+		return append(buf, byte('0'+n))
+	}
+	if n < 100 {
+		return append(buf, byte('0'+n/10), byte('0'+n%10))
+	}
+	if n < 1000 {
+		return append(buf, byte('0'+n/100), byte('0'+(n/10)%10), byte('0'+n%10))
+	}
+	return strconv.AppendInt(buf, int64(n), 10)
+}
+
 func responseMustNotHaveBody(status int) bool {
 	return (status >= 100 && status < 200) || status == 204 || status == 304
 }
@@ -243,12 +272,7 @@ func validResponseHeaderName(name string) bool {
 		return false
 	}
 	for i := 0; i < len(name); i++ {
-		c := name[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-		case c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' ||
-			c == '+' || c == '-' || c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~':
-		default:
+		if !tokenChar[name[i]] {
 			return false
 		}
 	}

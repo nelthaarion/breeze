@@ -44,11 +44,20 @@ import "sync"
 //     while an event loop acquires for a different request.
 
 var contextPool = sync.Pool{
-	New: func() any { return &Context{} },
+	New: func() any {
+		c := &Context{}
+		c.req.Header = make(map[string]string, 8)
+		c.req.useSlab = true
+		c.res.bodyBuf = make([]byte, 0, 256)
+		c.wireBuf = make([]byte, 0, 2048)
+		return c
+	},
 }
 
 var responsePool = sync.Pool{
-	New: func() any { return &HTTPResponse{} },
+	New: func() any {
+		return &HTTPResponse{bodyBuf: make([]byte, 0, 256)}
+	},
 }
 
 // requestPool stores *HTTPRequest together with its header map.
@@ -75,7 +84,7 @@ var responsePool = sync.Pool{
 //     what makes the pooling worthwhile.
 var requestPool = sync.Pool{
 	New: func() any {
-		return &HTTPRequest{Header: make(map[string]string, 8)}
+		return &HTTPRequest{Header: make(map[string]string, 8), useSlab: true}
 	},
 }
 
@@ -123,46 +132,57 @@ func acquireContext() *Context {
 	return contextPool.Get().(*Context)
 }
 
+// resetContextInPlace clears all per-request state on ctx while keeping its
+// embedded request/response storage hot for reuse across inline pipelined
+// requests on the same OnTraffic event.
+func resetContextInPlace(ctx *Context) {
+	// Reset the embedded response in place; a caller-supplied custom *HTTPResponse
+	// is simply detached.
+	if ctx.Res != nil {
+		if ctx.Res == &ctx.res {
+			resetResponse(&ctx.res)
+		}
+		ctx.Res = nil
+	}
+	// Clear inline route params so GC does not pin request buffers.
+	for i := 0; i < ctx.numParams; i++ {
+		ctx.inlineParams[i] = paramEntry{}
+	}
+	ctx.numParams = 0
+	// Release any overflow/caller params map.
+	if ctx.params != nil {
+		releaseParams(ctx.params)
+		ctx.params = nil
+	}
+	// Reset the embedded request in place or return a pooled one to requestPool.
+	if ctx.Req != nil {
+		if ctx.Req == &ctx.req {
+			resetRequest(&ctx.req)
+		} else if ctx.reqPooled {
+			releaseRequest(ctx.Req)
+		}
+		ctx.Req = nil
+	}
+	ctx.Conn = nil
+	ctx.reqPooled = false
+	ctx.middlewares = nil
+	ctx.index = -1
+	ctx.store = nil // MUST be nil — TestContextStoreNotRetainedAcrossRequests
+}
+
 // releaseContext resets all fields on ctx and returns it to the pool.
-// If ctx.Res is non-nil, it is also reset and returned to the response pool.
-// If ctx.params is non-nil, it is cleared and returned to the params pool.
-// If ctx.Req is non-nil, it is cleared and returned to the request pool.
 //
 // Safe to call on a nil ctx (no-op).
 func releaseContext(ctx *Context) {
 	if ctx == nil {
 		return
 	}
-	// Release the response to its pool if one was built.
-	if ctx.Res != nil {
-		releaseResponse(ctx.Res)
-		ctx.Res = nil
+	resetContextInPlace(ctx)
+	if cap(ctx.wireBuf) > wireBufMaxKeep {
+		ctx.wireBuf = nil
+	} else {
+		ctx.wireBuf = ctx.wireBuf[:0]
 	}
-	// Release the params map to its pool if one was set (route match or
-	// user SetParam/SetParams). Clear all keys first so the next request
-	// starts with an empty map.
-	if ctx.params != nil {
-		releaseParams(ctx.params)
-		ctx.params = nil
-	}
-	// Release the request and its header map. Only requests that came from
-	// the pool are returned to it — a hand-built Context (NewContext, tests)
-	// owns a request the pool never issued, and recycling it would hand a
-	// caller-visible struct to an unrelated connection.
-	if ctx.Req != nil {
-		if ctx.reqPooled {
-			releaseRequest(ctx.Req)
-		}
-		ctx.Req = nil
-	}
-	// Clear all fields. Order doesn't matter, but be thorough — any
-	// field left populated would leak data into the next request that
-	// acquires this Context from the pool.
-	ctx.Conn = nil
-	ctx.reqPooled = false
-	ctx.middlewares = nil
-	ctx.index = -1
-	ctx.store = nil // MUST be nil — TestContextStoreNotRetainedAcrossRequests
 	contextPool.Put(ctx)
 }
 
@@ -178,22 +198,27 @@ func acquireRequest() *HTTPRequest {
 	return requestPool.Get().(*HTTPRequest)
 }
 
-// releaseRequest clears req and returns it to the pool.
-//
-// owned and Query are dropped rather than reused: string views into owned may
-// have escaped to the caller (see requestPool), and url.ParseQuery always
-// builds a fresh map anyway. Header is cleared in place so its buckets survive.
-func releaseRequest(req *HTTPRequest) {
-	if req == nil {
-		return
+// resetRequest clears req's per-request fields while retaining its pooled
+// Header map for reuse. req.Query is detached without clearing because a
+// handler may retain the url.Values map past release.
+func resetRequest(req *HTTPRequest) {
+	if len(req.Header) > 0 {
+		clear(req.Header)
 	}
-	clear(req.Header)
 	req.Method = ""
 	req.Path = ""
 	req.Query = nil
 	req.Body = nil
 	req.owned = nil
 	req.connMode = connModeKeepAlive
+}
+
+// releaseRequest clears req and returns it to the pool.
+func releaseRequest(req *HTTPRequest) {
+	if req == nil {
+		return
+	}
+	resetRequest(req)
 	requestPool.Put(req)
 }
 
@@ -201,8 +226,8 @@ func releaseRequest(req *HTTPRequest) {
 // The map MUST not be referenced by the caller after this call — it will
 // be reused by a future request.
 func releaseParams(m map[string]string) {
-	for k := range m {
-		delete(m, k)
+	if len(m) > 0 {
+		clear(m)
 	}
 	paramsPool.Put(m)
 }
@@ -214,35 +239,37 @@ func acquireResponse() *HTTPResponse {
 	return responsePool.Get().(*HTTPResponse)
 }
 
-// releaseResponse resets all fields on r and returns it to the pool.
-//
-// The Headers map is set to nil (not cleared in-place) so the GC can
-// collect it. Pooling the map separately is a future optimization.
-// The shared maps (hdrsJSON/hdrsText/hdrsHTML) are package-level vars
-// and are not affected by nil-ing r.Headers.
-func releaseResponse(r *HTTPResponse) {
+// resetResponse clears r's per-request fields while keeping its reusable
+// bodyBuf and jsonEnc ready for the next response.
+func resetResponse(r *HTTPResponse) {
 	r.Status = 0
 	r.Headers = nil
 	r.headersShared = false
 	r.rawHeaders = nil
+	r.raw200 = nil
 	r.ctypePinned = false
 	r.preBuilt = nil
 	r.preHeaders = nil
 	r.sctype = ""
 	r.Body = nil
+	if cap(r.bodyBuf) > wireBufMaxKeep {
+		r.bodyBuf = nil
+	} else {
+		r.bodyBuf = r.bodyBuf[:0]
+	}
+}
+
+// releaseResponse resets all fields on r and returns it to the pool.
+func releaseResponse(r *HTTPResponse) {
+	resetResponse(r)
 	responsePool.Put(r)
 }
 
-// ensureResponse returns a *HTTPResponse for ctx, acquiring one from the
-// pool if ctx.Res is nil. If ctx.Res already exists (e.g., Status was
-// called first), it is reused — no allocation.
-//
-// All body methods (WriteString/JSON/HTML) and SetHeader call this to
-// ensure responses come from the pool rather than via &HTTPResponse{...}
-// literals.
+// ensureResponse returns a *HTTPResponse for ctx, attaching the embedded
+// ctx.res if ctx.Res is nil — zero pool round-trips and zero allocations.
 func (ctx *Context) ensureResponse() *HTTPResponse {
 	if ctx.Res == nil {
-		ctx.Res = acquireResponse()
+		ctx.Res = &ctx.res
 	}
 	return ctx.Res
 }

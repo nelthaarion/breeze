@@ -45,6 +45,10 @@ type route struct {
 	wildcardName string
 	// paramCount is the number of :param segments (pre-counted to pre-size the map)
 	paramCount int
+	// paramNames and paramPos cache each :param's stripped name and segment
+	// index at registration time so bindParams walks only param segments.
+	paramNames []string
+	paramPos   []int
 	// chain is the fully-resolved middleware chain for this route:
 	//   [global_mw..., route_mw..., userHandler]
 	// It is precomputed at registration (Handle) and rebuilt whenever a
@@ -129,6 +133,15 @@ func methodBucket(m Method) int {
 	return bucketOther
 }
 
+// staticLinear is the small-table threshold below which a method bucket scans
+// staticList linearly instead of hashing into static.
+const staticLinear = 8
+
+type staticEntry struct {
+	key string
+	rt  *route
+}
+
 // methodIndex holds the routes registered for one method bucket.
 type methodIndex struct {
 	// routes are this bucket's routes in registration order. Matching walks
@@ -152,6 +165,9 @@ type methodIndex struct {
 	// to check the routes already in the bucket, which costs nothing at request
 	// time and only O(routes²) once at startup.
 	static map[string]*route
+	// staticList mirrors static while len(static) <= staticLinear so small
+	// route tables skip SwissMap hashing. Always gated on static != nil.
+	staticList []staticEntry
 
 	// dynamic holds this bucket's :param and wildcard routes in registration
 	// order — the only routes that can shadow a static path. Kept separate so
@@ -325,13 +341,17 @@ func (r *Router) Handle(method Method, pattern string, handler HandlerFunc, midd
 		}
 	}
 
-	// Pre-compute which segments are params and how many there are.
+	// Pre-compute which segments are params, their stripped names, and their positions.
 	paramIdx := make([]bool, len(segments))
 	paramCount := 0
+	var paramNames []string
+	var paramPos []int
 	for i, s := range segments {
 		if len(s) > 0 && s[0] == ':' {
 			paramIdx[i] = true
 			paramCount++
+			paramNames = append(paramNames, s[1:])
+			paramPos = append(paramPos, i)
 		}
 	}
 
@@ -386,6 +406,8 @@ func (r *Router) Handle(method Method, pattern string, handler HandlerFunc, midd
 		hasWildcard:  hasWildcard,
 		wildcardName: wildcardName,
 		paramCount:   paramCount,
+		paramNames:   paramNames,
+		paramPos:     paramPos,
 		// Precompute the flat [global..., route..., handler] chain so the
 		// request path (OnTraffic → findChain) never allocates a chain slice.
 		chain: r.buildChain(routeMWs, handler),
@@ -450,6 +472,11 @@ func (r *Router) indexRoute(rt *route) {
 	}
 	if _, exists := idx.static[key]; !exists {
 		idx.static[key] = rt
+		if len(idx.static) <= staticLinear {
+			idx.staticList = append(idx.staticList, staticEntry{key: key, rt: rt})
+		} else {
+			idx.staticList = nil
+		}
 	}
 }
 
@@ -495,6 +522,32 @@ func (r *route) matchesSegments(segs []string) bool {
 //     bucket and holds few routes, so it keeps the ordered scan.
 //
 // When params is non-nil it came from the pooled params set and the caller owns it.
+func splitPathSegments(path string, segBuf *[16]string) []string {
+	if path == "" {
+		return segBuf[:0]
+	}
+	reqSegments := segBuf[:0]
+	for {
+		i := strings.IndexByte(path, '/')
+		var seg string
+		if i < 0 {
+			seg = path
+		} else {
+			seg = path[:i]
+		}
+		if len(reqSegments) < len(segBuf) {
+			reqSegments = reqSegments[:len(reqSegments)+1]
+			reqSegments[len(reqSegments)-1] = seg
+		} else {
+			reqSegments = append(reqSegments, seg)
+		}
+		if i < 0 {
+			return reqSegments
+		}
+		path = path[i+1:]
+	}
+}
+
 func (r *Router) lookup(req *HTTPRequest) (matched *route, params map[string]string, autoIndex bool) {
 	path := req.Path
 	if len(path) > 0 && path[0] == '/' {
@@ -508,28 +561,19 @@ func (r *Router) lookup(req *HTTPRequest) (matched *route, params map[string]str
 	idx := &r.byMethod[b]
 
 	if idx.static != nil {
-		if rt := idx.static[path]; rt != nil {
+		if len(idx.staticList) > 0 {
+			for i := range idx.staticList {
+				if idx.staticList[i].key == path {
+					return idx.staticList[i].rt, nil, false
+				}
+			}
+		} else if rt := idx.static[path]; rt != nil {
 			return rt, nil, false
 		}
 	}
 
 	var segBuf [16]string
-	reqSegments := segBuf[:0]
-	if path != "" {
-		start := 0
-		for i := 0; i <= len(path); i++ {
-			if i == len(path) || path[i] == '/' {
-				seg := path[start:i]
-				if len(reqSegments) < len(segBuf) {
-					reqSegments = reqSegments[:len(reqSegments)+1]
-					reqSegments[len(reqSegments)-1] = seg
-				} else {
-					reqSegments = append(reqSegments, seg)
-				}
-				start = i + 1
-			}
-		}
-	}
+	reqSegments := splitPathSegments(path, &segBuf)
 
 	var rt *route
 	if b == bucketOther {
@@ -545,6 +589,52 @@ func (r *Router) lookup(req *HTTPRequest) (matched *route, params map[string]str
 		return nil, nil, true
 	}
 	return nil, nil, false
+}
+
+// lookupInto is lookup writing route parameters into out when they fit within
+// maxInlineParams, avoiding paramsPool and SwissMap hashing on the request hot path.
+func (r *Router) lookupInto(req *HTTPRequest, out *[maxInlineParams]paramEntry) (matched *route, numParams int, overflow map[string]string, autoIndex bool) {
+	path := req.Path
+	if len(path) > 0 && path[0] == '/' {
+		path = path[1:]
+	}
+	if len(path) > 0 && path[len(path)-1] == '/' {
+		path = path[:len(path)-1]
+	}
+
+	b := methodBucket(req.Method)
+	idx := &r.byMethod[b]
+
+	if idx.static != nil {
+		if len(idx.staticList) > 0 {
+			for i := range idx.staticList {
+				if idx.staticList[i].key == path {
+					return idx.staticList[i].rt, 0, nil, false
+				}
+			}
+		} else if rt := idx.static[path]; rt != nil {
+			return rt, 0, nil, false
+		}
+	}
+
+	var segBuf [16]string
+	reqSegments := splitPathSegments(path, &segBuf)
+
+	var rt *route
+	if b == bucketOther {
+		rt = idx.scan(req.Method, reqSegments)
+	} else if idx.root != nil {
+		rt, _ = idx.root.match(reqSegments, 0, nil, maxRouteOrder)
+	}
+	if rt != nil {
+		n, m := bindParamsInto(rt, path, reqSegments, out)
+		return rt, n, m, false
+	}
+
+	if r.autoServeRoot && len(reqSegments) == 0 && b == bucketGET {
+		return nil, 0, nil, true
+	}
+	return nil, 0, nil, false
 }
 
 // Find matches the incoming request to a registered route.
@@ -615,6 +705,22 @@ func (r *Router) findDispatch(req *HTTPRequest) (chain []HandlerFunc, params map
 		return r.preflight, nil, false
 	}
 	return nil, nil, false
+}
+
+// findDispatchInto is findDispatch writing parameters directly into out when
+// they fit within maxInlineParams.
+func (r *Router) findDispatchInto(req *HTTPRequest, out *[maxInlineParams]paramEntry) (chain []HandlerFunc, numParams int, overflow map[string]string, blocking bool) {
+	rt, n, m, autoIndex := r.lookupInto(req, out)
+	if rt != nil {
+		return rt.chain, n, m, rt.blocking
+	}
+	if autoIndex {
+		return r.autoIndexChain, 0, nil, true
+	}
+	if req.Method == OPTIONS && r.preflight != nil {
+		return r.preflight, 0, nil, false
+	}
+	return nil, 0, nil, false
 }
 
 // Middlewares returns the router's global middleware slice. This is used

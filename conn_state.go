@@ -28,11 +28,20 @@ type connState struct {
 	lastRead     atomic.Int64 // coarse unix nanos of the last bytes received
 	partialSince atomic.Int64 // when the current incomplete request began, 0 if none
 	partialHdr   atomic.Bool  // that incomplete request has not finished its headers
+
+	// Event-loop-local shadows of lastRead and partialSince. Only the single
+	// event-loop goroutine owning this connection writes these atomics, so
+	// comparing against the shadow skips the LOCK XCHG memory barrier whenever
+	// the coarse clock tick or cleared state has not changed.
+	lastReadShadow     int64
+	partialSinceShadow int64
 }
 
 func newConnState() *connState {
 	st := &connState{}
-	st.lastRead.Store(coarseNow())
+	now := coarseNow()
+	st.lastReadShadow = now
+	st.lastRead.Store(now)
 	return st
 }
 

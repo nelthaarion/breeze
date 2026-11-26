@@ -5,7 +5,6 @@ import (
 
 	"github.com/nelthaarion/breeze/v2/binding"
 	"github.com/nelthaarion/gnetplus/v2"
-	"github.com/nelthaarion/go-json-plus"
 )
 
 // Pre-built common response headers. These are reused across all responses
@@ -25,7 +24,22 @@ var (
 	rawJSON = []byte("Content-Type: application/json\r\n")
 	rawText = []byte("Content-Type: text/plain\r\n")
 	rawHTML = []byte("Content-Type: text/html; charset=utf-8\r\n")
+
+	raw200JSON  = []byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ")
+	raw200Text  = []byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ")
+	raw200HTML  = []byte("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ")
+	errJSONBody = []byte(`{"message":"error parsing json"}`)
+	emptyBody   = []byte{}
 )
+
+// maxInlineParams is the number of route parameters stored directly inside a
+// Context without touching paramsPool or hashing into a map.
+const maxInlineParams = 8
+
+type paramEntry struct {
+	key string
+	val string
+}
 
 type Context struct {
 	Conn        gnetplus.Conn
@@ -34,6 +48,13 @@ type Context struct {
 	params      map[string]string
 	middlewares []HandlerFunc
 	index       int
+
+	// inlineParams holds route parameters directly on Context for routes with
+	// at most maxInlineParams parameters, eliminating paramsPool, mapassign,
+	// mapaccess, and clear(map) on the hot path. params is used only when a
+	// route exceeds maxInlineParams or a caller passes a map via SetParams.
+	inlineParams [maxInlineParams]paramEntry
+	numParams    int
 
 	// reqPooled records whether Req came from requestPool, so releaseContext
 	// recycles only requests the pool actually issued. A Context built by
@@ -46,6 +67,13 @@ type Context struct {
 	// request context. It is nil until the first Set call, so requests that
 	// don't use it pay zero allocation cost.
 	store map[string]any
+
+	// Embedded reusable response, request, and inline wire buffer eliminate
+	// separate responsePool, requestPool, and wireBufPool round-trips on the
+	// hot path.
+	res     HTTPResponse
+	req     HTTPRequest
+	wireBuf []byte
 }
 
 // setContentType installs a body method's content type without discarding
@@ -88,7 +116,7 @@ type Context struct {
 // response some middleware had already touched would find "text/plain" present and
 // keep it — sending a JSON body labelled as text. The flag distinguishes the caller's
 // choice from a previous body method's default, and only the former is preserved.
-func (r *HTTPResponse) setContentType(shared map[string]string, raw []byte, ctype string) {
+func (r *HTTPResponse) setContentType(shared map[string]string, raw, raw200 []byte, ctype string) {
 	// Static-header response (Context.SetHeaderStatic): the shared preBuilt block
 	// is the source of truth for the wire, so record the content type in sctype —
 	// it is emitted just after the block — and leave preBuilt/preHeaders alone.
@@ -104,12 +132,14 @@ func (r *HTTPResponse) setContentType(shared map[string]string, raw []byte, ctyp
 		r.Headers = shared
 		r.headersShared = true
 		r.rawHeaders = raw
+		r.raw200 = raw200
 		return
 	}
 
 	// A private map: SetHeader has been called, so its contents are the
 	// caller's and must be kept. rawHeaders no longer describes them.
 	r.rawHeaders = nil
+	r.raw200 = nil
 	if r.ctypePinned {
 		return
 	}
@@ -156,9 +186,16 @@ func (ctx *Context) statusOrDefault(def int) int {
 // then be a two-line change instead of a one-line one.
 func (ctx *Context) WriteString(s string) error {
 	r := ctx.ensureResponse()
-	r.Status = ctx.statusOrDefault(200)
-	r.Body = []byte(s)
-	r.setContentType(hdrsText, rawText, "text/plain")
+	if r.Status == 0 {
+		r.Status = 200
+	}
+	if len(s) == 0 && r.bodyBuf == nil {
+		r.Body = emptyBody
+	} else {
+		r.bodyBuf = append(r.bodyBuf[:0], s...)
+		r.Body = r.bodyBuf
+	}
+	r.setContentType(hdrsText, rawText, raw200Text, "text/plain")
 	return nil
 }
 
@@ -176,17 +213,20 @@ func (ctx *Context) WriteString(s string) error {
 // The 400 body is still written first, so a handler that ignores the return value
 // behaves exactly as it did before rather than sending nothing at all.
 func (ctx *Context) JSON(data any) error {
-	d, err := json.Marshal(data)
 	r := ctx.ensureResponse()
-	if err != nil {
-		r.Status = ctx.statusOrDefault(400)
-		r.Body = []byte(`{"message":"error parsing json"}`)
-		r.setContentType(hdrsJSON, rawJSON, "application/json")
+	if err := r.encodeJSONInto(data); err != nil {
+		if r.Status == 0 {
+			r.Status = 400
+		}
+		r.Body = errJSONBody
+		r.setContentType(hdrsJSON, rawJSON, raw200JSON, "application/json")
 		return err
 	}
-	r.Status = ctx.statusOrDefault(200)
-	r.Body = d
-	r.setContentType(hdrsJSON, rawJSON, "application/json")
+	if r.Status == 0 {
+		r.Status = 200
+	}
+	r.Body = r.bodyBuf
+	r.setContentType(hdrsJSON, rawJSON, raw200JSON, "application/json")
 	return nil
 }
 
@@ -194,9 +234,11 @@ func (ctx *Context) JSON(data any) error {
 // anything at all.
 func (ctx *Context) HTML(data []byte) error {
 	r := ctx.ensureResponse()
-	r.Status = ctx.statusOrDefault(200)
+	if r.Status == 0 {
+		r.Status = 200
+	}
 	r.Body = data
-	r.setContentType(hdrsHTML, rawHTML, "text/html; charset=utf-8")
+	r.setContentType(hdrsHTML, rawHTML, raw200HTML, "text/html; charset=utf-8")
 	return nil
 }
 
@@ -399,26 +441,48 @@ func (ctx *Context) MustGet(key string) any {
 
 func (ctx *Context) Param(key string) string {
 	if ctx.params == nil {
+		for i := 0; i < ctx.numParams; i++ {
+			if ctx.inlineParams[i].key == key {
+				return ctx.inlineParams[i].val
+			}
+		}
 		return ""
 	}
 	return ctx.params[key]
 }
 
 func (ctx *Context) GetParam(key string) string {
-	if ctx.params == nil {
-		return ""
-	}
-	return ctx.params[key]
+	return ctx.Param(key)
 }
 
 func (ctx *Context) SetParam(key, value string) {
 	if ctx.params == nil {
-		ctx.params = make(map[string]string)
+		for i := 0; i < ctx.numParams; i++ {
+			if ctx.inlineParams[i].key == key {
+				ctx.inlineParams[i].val = value
+				return
+			}
+		}
+		if ctx.numParams < maxInlineParams {
+			ctx.inlineParams[ctx.numParams] = paramEntry{key: key, val: value}
+			ctx.numParams++
+			return
+		}
+		ctx.params = make(map[string]string, ctx.numParams+1)
+		for i := 0; i < ctx.numParams; i++ {
+			ctx.params[ctx.inlineParams[i].key] = ctx.inlineParams[i].val
+			ctx.inlineParams[i] = paramEntry{}
+		}
+		ctx.numParams = 0
 	}
 	ctx.params[key] = value
 }
 
 func (ctx *Context) SetParams(p map[string]string) {
+	for i := 0; i < ctx.numParams; i++ {
+		ctx.inlineParams[i] = paramEntry{}
+	}
+	ctx.numParams = 0
 	if p == nil {
 		ctx.params = make(map[string]string)
 	} else {
@@ -428,7 +492,14 @@ func (ctx *Context) SetParams(p map[string]string) {
 
 func (ctx *Context) GetParams() map[string]string {
 	if ctx.params == nil {
-		return map[string]string{}
+		if ctx.numParams == 0 {
+			return map[string]string{}
+		}
+		cpy := make(map[string]string, ctx.numParams)
+		for i := 0; i < ctx.numParams; i++ {
+			cpy[ctx.inlineParams[i].key] = ctx.inlineParams[i].val
+		}
+		return cpy
 	}
 	cpy := make(map[string]string, len(ctx.params))
 	for k, v := range ctx.params {
@@ -508,7 +579,8 @@ func (ctx *Context) Next() error {
 // Callers should treat a non-nil return as "response already written" and
 // return early.
 func (ctx *Context) Bind(dst any) error {
-	sources := []binding.Source{}
+	var srcBuf [3]binding.Source
+	sources := srcBuf[:0]
 
 	if ctx.Req != nil && len(ctx.Req.Body) > 0 {
 		sources = append(sources, binding.JSONBody(ctx.Req.Body))
@@ -520,6 +592,13 @@ func (ctx *Context) Bind(dst any) error {
 
 	if len(ctx.params) > 0 {
 		sources = append(sources, binding.Path(ctx.params))
+	} else if ctx.numParams > 0 {
+		m := acquireParams()
+		for i := 0; i < ctx.numParams; i++ {
+			m[ctx.inlineParams[i].key] = ctx.inlineParams[i].val
+		}
+		defer releaseParams(m)
+		sources = append(sources, binding.Path(m))
 	}
 
 	err := binding.Bind(dst, sources...)

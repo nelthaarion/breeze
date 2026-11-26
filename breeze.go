@@ -1,7 +1,6 @@
 package breeze
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -256,7 +255,10 @@ func (s *Breeze) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 	// sync.Map amortised-atomic overhead on the hot path.
 	st := connStateOf(c)
 	if len(data) > 0 {
-		st.lastRead.Store(coarseNow())
+		if now := coarseNow(); now != st.lastReadShadow {
+			st.lastReadShadow = now
+			st.lastRead.Store(now)
+		}
 	}
 
 	// A request handed to the worker pool has not been answered yet. Parsing
@@ -321,18 +323,28 @@ func (s *Breeze) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 
 	closeConn := false
 	progressed := false
+	dispatched := false
+	maxBody := s.MaxRequestBody()
 
 	// Responses to inline requests are collected here and leave in one
 	// Conn.Write, so a pipelined batch costs one write(2) instead of one per
-	// request. The deferred flush covers every return below; paths that must
-	// keep wire order against something else (a direct error write, a worker
-	// dispatch) flush explicitly first.
+	// request.
 	batch := inlineBatch{c: c}
-	defer batch.flush()
+
+	// Acquire at most one Context (with embedded HTTPRequest + HTTPResponse +
+	// inlineParams) for the entire inline batch, resetting it in place between
+	// pipelined requests rather than round-tripping 4-5 sync.Pools per request.
+	var loopCtx *Context
 
 	for len(buf) > 0 {
-		req, consumed, err := parsePooledRequest(buf, !zeroCopy, s.MaxRequestBody())
+		if loopCtx == nil {
+			loopCtx = acquireContext()
+			batch.attach(&loopCtx.wireBuf)
+		}
+		req := &loopCtx.req
+		consumed, err := fillHTTPRequest(req, buf, !zeroCopy, maxBody)
 		if err != nil {
+			resetRequest(req)
 			batch.flush()
 			if errors.Is(err, ErrBodyTooLarge) {
 				_, _ = c.Write(resp413)
@@ -347,18 +359,22 @@ func (s *Breeze) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 			buf = nil
 			break
 		}
-		if req == nil {
+		if consumed == 0 {
+			resetRequest(req)
 			break // incomplete — wait for more data
 		}
 		progressed = true
 		mode := req.connMode
 
-		chain, params, blocking := s.Router.findDispatch(req)
+		chain, numParams, overflowParams, blocking := s.Router.findDispatchInto(req, &loopCtx.inlineParams)
 
 		if chain == nil {
-			releaseRequest(req)
-			if params != nil {
-				releaseParams(params)
+			resetRequest(req)
+			for i := 0; i < numParams; i++ {
+				loopCtx.inlineParams[i] = paramEntry{}
+			}
+			if overflowParams != nil {
+				releaseParams(overflowParams)
 			}
 			w := batch.wire()
 			*w = append(*w, withConnectionHeader(resp404, mode)...)
@@ -370,29 +386,24 @@ func (s *Breeze) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 			// outlives them. A blocking one does: gnet reads over those
 			// bytes as soon as OnTraffic returns, while the worker is still
 			// holding the request. Give it owned memory first.
-			//
-			// This is the whole point of parsing zero-copy by default and
-			// promoting on demand — the requests that pay for isolation are
-			// the ones already committed to disk or network I/O, where a
-			// second pass over bytes still in L1 does not register.
 			if zeroCopy && !goOwned && blocking {
-				// Route params are substrings of req.Path, so they point
-				// into the old bytes too. They have to be re-derived rather
-				// than carried over; the route itself cannot have changed,
-				// since the method and path are the same bytes as before.
-				if params != nil {
-					releaseParams(params)
+				for i := 0; i < numParams; i++ {
+					loopCtx.inlineParams[i] = paramEntry{}
 				}
-				if err := promoteRequest(req, buf, s.MaxRequestBody()); err != nil {
+				if overflowParams != nil {
+					releaseParams(overflowParams)
+					overflowParams = nil
+				}
+				if err := promoteRequest(req, buf, maxBody); err != nil {
 					// Unreachable: the same bytes parsed once already.
-					releaseRequest(req)
+					resetRequest(req)
 					batch.flush()
 					_, _ = c.Write(resp400)
 					closeConn = true
 					buf = nil
 					break
 				}
-				chain, params, _ = s.Router.findDispatch(req)
+				chain, numParams, overflowParams, _ = s.Router.findDispatchInto(req, &loopCtx.inlineParams)
 			}
 
 			// req.Body aliases gnet's buffer unless buf is already Go-owned.
@@ -407,28 +418,28 @@ func (s *Breeze) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 				req.Body = body
 			}
 
-			// chain is the route's PRECOMPUTED [global..., route..., handler]
-			// slice (built at registration). It is read-only at request time —
-			// Context.Next mutates only ctx.index — so we assign it directly
-			// with ZERO per-request allocation.
-			ctx := acquireContext()
-			ctx.Conn = c
-			ctx.Req = req
-			ctx.reqPooled = true
-			ctx.params = params
-			ctx.middlewares = chain
-			ctx.index = -1
+			loopCtx.Conn = c
+			loopCtx.Req = req
+			loopCtx.reqPooled = false
+			loopCtx.numParams = numParams
+			loopCtx.params = overflowParams
+			loopCtx.middlewares = chain
+			loopCtx.index = -1
 
 			if s.inlineExec && !blocking {
 				// Run on this event-loop goroutine and answer with a direct
-				// write. No channel, no handoff, no poller wakeup.
-				s.runInlineBatched(c, ctx, mode, &batch)
+				// write. No channel, no handoff, no poller wakeup; loopCtx is
+				// reset in place for the next pipelined request.
+				s.runInlineBatchedReuse(c, loopCtx, mode, &batch)
 			} else {
 				// Everything answered so far goes out before the worker's
 				// response can be queued behind it.
 				batch.flush()
+				batch.detach()
 				st.busy.Store(true)
-				s.dispatch(c, ctx, st, mode)
+				dispatched = true
+				s.dispatch(c, loopCtx, st, mode)
+				loopCtx = nil // worker owns loopCtx and calls releaseContext
 			}
 		}
 
@@ -438,7 +449,7 @@ func (s *Breeze) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 		// closes from its own write callback, after the bytes are out.
 		if mode == connModeClose {
 			buf = nil
-			if !st.busy.Load() {
+			if !dispatched {
 				closeConn = true
 			}
 			break
@@ -452,9 +463,15 @@ func (s *Breeze) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 
 		// A request just went to a worker: leave the rest for when it is
 		// answered, so responses stay in request order.
-		if st.busy.Load() {
+		if dispatched {
 			break
 		}
+	}
+
+	batch.flush()
+	batch.detach()
+	if loopCtx != nil {
+		releaseContext(loopCtx)
 	}
 
 	// Store leftover bytes (a partial next request) in the connection's own
@@ -462,7 +479,10 @@ func (s *Breeze) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 	// backing array and keeps the fast-path Load above allocation-free.
 	if len(buf) == 0 {
 		st.buf = nil
-		st.partialSince.Store(0)
+		if st.partialSinceShadow != 0 {
+			st.partialSinceShadow = 0
+			st.partialSince.Store(0)
+		}
 		if closeConn {
 			return gnetplus.Close
 		}
@@ -485,19 +505,22 @@ func (s *Breeze) OnTraffic(c gnetplus.Conn) gnetplus.Action {
 	// Timeout bookkeeping, only on the (rare) leftover path. Bytes held back
 	// behind a running request are not an unfinished request, so they do not
 	// start the header clock.
-	if st.busy.Load() {
-		st.partialSince.Store(0)
-	} else {
-		if progressed || st.partialSince.Load() == 0 {
-			st.partialSince.Store(coarseNow())
+	if dispatched || st.busy.Load() {
+		if st.partialSinceShadow != 0 {
+			st.partialSinceShadow = 0
+			st.partialSince.Store(0)
 		}
-		st.partialHdr.Store(!bytes.Contains(buf, headerEnd))
+	} else {
+		if progressed || st.partialSinceShadow == 0 {
+			now := coarseNow()
+			st.partialSinceShadow = now
+			st.partialSince.Store(now)
+		}
+		st.partialHdr.Store(indexCRLFCRLF(buf) < 0)
 	}
 
 	return gnetplus.None
 }
-
-var headerEnd = []byte("\r\n\r\n")
 
 // heldBytesLimit bounds how much a connection may queue behind a running
 // request: the largest legitimate next request, with a floor for unlimited-body
@@ -511,10 +534,13 @@ func (s *Breeze) heldBytesLimit() int {
 
 // inlineBatch accumulates the wire bytes of inline responses for one
 // OnTraffic event. It lives on the event-loop goroutine's stack and is never
-// shared, so it needs no locking.
+// shared, so it needs no locking. When attached to loopCtx.wireBuf (pooled
+// == false), flushing writes and resets the slice in place with zero
+// wireBufPool round-trips.
 type inlineBatch struct {
-	c   gnetplus.Conn
-	buf *[]byte
+	c      gnetplus.Conn
+	buf    *[]byte
+	pooled bool
 }
 
 // inlineBatchFlushAt bounds how much a single event may accumulate before it is
@@ -522,18 +548,39 @@ type inlineBatch struct {
 // response buffer.
 const inlineBatchFlushAt = 64 << 10
 
-// wire returns the batch's buffer, taking one from the pool on first use.
+func (b *inlineBatch) attach(buf *[]byte) {
+	b.buf = buf
+	b.pooled = false
+	*buf = (*buf)[:0]
+}
+
+func (b *inlineBatch) detach() {
+	if b.buf == nil {
+		return
+	}
+	if b.pooled {
+		releaseWireBuf(b.buf)
+	} else {
+		*b.buf = (*b.buf)[:0]
+	}
+	b.buf = nil
+	b.pooled = false
+}
+
+// wire returns the batch's buffer, taking one from the pool on first use if
+// none was attached.
 func (b *inlineBatch) wire() *[]byte {
 	if b.buf == nil {
 		b.buf = acquireWireBuf()
 		*b.buf = (*b.buf)[:0]
+		b.pooled = true
 	}
 	return b.buf
 }
 
-// flush writes whatever has accumulated and returns the buffer to the pool.
-// Conn.Write has finished with the slice by the time it returns, which is what
-// licenses pooling it (see runInline). Safe to call when the batch is empty.
+// flush writes whatever has accumulated and resets the buffer. Conn.Write has
+// finished with the slice by the time it returns, which is what licenses
+// reusing it (see runInline). Safe to call when the batch is empty.
 func (b *inlineBatch) flush() {
 	if b.buf == nil {
 		return
@@ -541,8 +588,50 @@ func (b *inlineBatch) flush() {
 	if len(*b.buf) > 0 {
 		_, _ = b.c.Write(*b.buf)
 	}
-	releaseWireBuf(b.buf)
-	b.buf = nil
+	if b.pooled {
+		releaseWireBuf(b.buf)
+		b.buf = nil
+		b.pooled = false
+	} else {
+		*b.buf = (*b.buf)[:0]
+	}
+}
+
+// runInlineBatchedReuse is runInlineBatched for OnTraffic's reused loopCtx:
+// resets ctx in place on return (and on panic) without round-tripping through
+// contextPool between pipelined requests.
+func (s *Breeze) runInlineBatchedReuse(c gnetplus.Conn, ctx *Context, mode uint8, batch *inlineBatch) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[Breeze][PANIC] %v\n%s\n", r, debug.Stack())
+			batch.flush() // earlier responses first, then the 500
+			c.Write(resp500)
+		}
+		resetContextInPlace(ctx)
+	}()
+
+	if err := ctx.Next(); err != nil {
+		s.handleChainError(ctx, err)
+	}
+	if ctx.Res == nil {
+		return
+	}
+
+	if mode != connModeKeepAlive {
+		batch.flush()
+		bp := acquireWireBuf()
+		*bp = ctx.Res.AppendTo(*bp)
+		*bp = withConnectionHeader(*bp, mode)
+		_, _ = c.Write(*bp)
+		releaseWireBuf(bp)
+		return
+	}
+
+	w := batch.wire()
+	*w = ctx.Res.AppendTo(*w)
+	if len(*w) >= inlineBatchFlushAt {
+		batch.flush()
+	}
 }
 
 // runInlineBatched is runInline for the pipelined hot path: the response is

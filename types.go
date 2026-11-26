@@ -1,6 +1,10 @@
 package breeze
 
-import "net/url"
+import (
+	"net/url"
+
+	"github.com/nelthaarion/go-json-plus"
+)
 
 // Method defines the HTTP method type.
 type Method string
@@ -48,6 +52,12 @@ const (
 // req.Method is either a package-level constant (no allocation) or a
 // freshly copied string for unknown methods — it never points into the header
 // block.
+//
+// req.Query is freshly allocated per query-bearing request and is never reused
+// or cleared when the request is released, so retaining req.Query (or slices
+// inside it) past the handler's return is safe against map/slice mutation and
+// concurrent reads. Its unescaped key/value strings inherit the header-block
+// lifetime above, like req.Path.
 type HTTPRequest struct {
 	Method Method
 	Path   string
@@ -68,6 +78,13 @@ type HTTPRequest struct {
 	// explicit "Connection: close"), or an explicit HTTP/1.0 keep-alive that the
 	// response must acknowledge. Set by the parser, consumed by the server.
 	connMode uint8
+
+	// slab holds an immutable bump-allocated 4 KiB arena for ownHeaders == true
+	// copies on pooled requests (useSlab == true). Attached directly to the
+	// pooled HTTPRequest so allocHeaderBlock takes 3 instructions with zero
+	// sync.Pool round-trips; bytes already handed out are never overwritten.
+	slab    *headerSlab
+	useSlab bool
 }
 
 // HTTPResponse represents an HTTP response.
@@ -89,6 +106,10 @@ type HTTPResponse struct {
 	// always falls back to serializing from the map and the two can never
 	// disagree about what the response actually contains.
 	rawHeaders []byte
+	// raw200 is the pre-rendered "HTTP/1.1 200 OK\r\nContent-Type: ...\r\nContent-Length: "
+	// prefix corresponding to rawHeaders. Only consulted when rawHeaders != nil
+	// and Status is 0 or 200, so clearing rawHeaders always invalidates it.
+	raw200 []byte
 	// ctypePinned is true when a caller set Content-Type explicitly through
 	// SetHeader, as opposed to a body method installing its own default.
 	//
@@ -119,4 +140,12 @@ type HTTPResponse struct {
 	// per request. It is serialized as the Content-Type line just after the
 	// block, and answered by GetHeader.
 	sctype string
+
+	// bodyBuf is a reusable scratch buffer backing WriteString and JSON
+	// responses while the HTTPResponse lives in its pool, eliminating the
+	// per-response []byte heap allocation. Discarded on release if it grew past
+	// wireBufMaxKeep.
+	bodyBuf []byte
+	jsonW   responseBodyWriter
+	jsonEnc *json.Encoder
 }

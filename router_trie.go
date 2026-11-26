@@ -7,6 +7,13 @@ const maxRouteOrder = int(^uint(0) >> 1)
 // before it also builds a map: small fan-outs are cheaper to scan than to hash.
 const segNodeLinear = 8
 
+// segChild pairs a static segment name with its child node so linear lookup
+// keeps both fields on the same cache line with a single slice bounds check.
+type segChild struct {
+	key  string
+	node *segNode
+}
+
 // segNode is a node of a method bucket's segment trie.
 //
 // A pattern is a path of segments. A literal segment descends into the static
@@ -22,13 +29,12 @@ const segNodeLinear = 8
 // lets a depth-first walk return the first-registered match without visiting
 // every candidate: the result is identical to scanning the routes in order.
 type segNode struct {
-	keys  []string
-	kids  []*segNode
-	index map[string]*segNode // mirrors keys/kids once len(keys) > segNodeLinear
-	param *segNode
-	exact *route
-	wild  *route
-	min   int
+	children []segChild
+	index    map[string]*segNode // mirrors children once len(children) > segNodeLinear
+	param    *segNode
+	exact    *route
+	wild     *route
+	min      int
 }
 
 func newSegNode() *segNode { return &segNode{min: maxRouteOrder} }
@@ -37,9 +43,9 @@ func (n *segNode) child(seg string) *segNode {
 	if n.index != nil {
 		return n.index[seg]
 	}
-	for i, k := range n.keys {
-		if k == seg {
-			return n.kids[i]
+	for i := range n.children {
+		if n.children[i].key == seg {
+			return n.children[i].node
 		}
 	}
 	return nil
@@ -50,15 +56,14 @@ func (n *segNode) staticChild(seg string) *segNode {
 		return c
 	}
 	c := newSegNode()
-	n.keys = append(n.keys, seg)
-	n.kids = append(n.kids, c)
+	n.children = append(n.children, segChild{key: seg, node: c})
 	switch {
 	case n.index != nil:
 		n.index[seg] = c
-	case len(n.keys) > segNodeLinear:
-		n.index = make(map[string]*segNode, 2*len(n.keys))
-		for i, k := range n.keys {
-			n.index[k] = n.kids[i]
+	case len(n.children) > segNodeLinear:
+		n.index = make(map[string]*segNode, 2*len(n.children))
+		for i := range n.children {
+			n.index[n.children[i].key] = n.children[i].node
 		}
 	}
 	return c
@@ -104,28 +109,52 @@ func (idx *methodIndex) insertTrie(rt *route) {
 
 // match walks segs[depth:] below n and returns the matching route with the lowest
 // registration index, or best when nothing below n beats it.
+//
+// Single-branch nodes descend iteratively with zero recursion; when both a
+// static child and a param child can beat bestIdx, the lower-min branch is
+// explored first to tighten bestIdx before tail-iterating into the other.
 func (n *segNode) match(segs []string, depth int, best *route, bestIdx int) (*route, int) {
-	if n.min >= bestIdx {
-		return best, bestIdx
-	}
-	// Reaching n means depth request segments matched, which is all a wildcard
-	// anchored here needs: it matches the remaining segments, however many.
-	if w := n.wild; w != nil && w.order < bestIdx {
-		best, bestIdx = w, w.order
-	}
-	if depth == len(segs) {
-		if e := n.exact; e != nil && e.order < bestIdx {
-			best, bestIdx = e, e.order
+	for {
+		if n.min >= bestIdx {
+			return best, bestIdx
+		}
+		// Reaching n means depth request segments matched, which is all a wildcard
+		// anchored here needs: it matches the remaining segments, however many.
+		if w := n.wild; w != nil && w.order < bestIdx {
+			best, bestIdx = w, w.order
+		}
+		if depth == len(segs) {
+			if e := n.exact; e != nil && e.order < bestIdx {
+				best, bestIdx = e, e.order
+			}
+			return best, bestIdx
+		}
+		c := n.child(segs[depth])
+		p := n.param
+		if c != nil {
+			if p == nil || p.min >= bestIdx {
+				n = c
+				depth++
+				continue
+			}
+			if c.min < p.min {
+				best, bestIdx = c.match(segs, depth+1, best, bestIdx)
+				n = p
+				depth++
+				continue
+			}
+			best, bestIdx = p.match(segs, depth+1, best, bestIdx)
+			n = c
+			depth++
+			continue
+		}
+		if p != nil {
+			n = p
+			depth++
+			continue
 		}
 		return best, bestIdx
 	}
-	if c := n.child(segs[depth]); c != nil {
-		best, bestIdx = c.match(segs, depth+1, best, bestIdx)
-	}
-	if n.param != nil {
-		best, bestIdx = n.param.match(segs, depth+1, best, bestIdx)
-	}
-	return best, bestIdx
 }
 
 // scan is the ordered scan: the first route of the bucket with this method that
@@ -146,15 +175,40 @@ func bindParams(rt *route, path string, segs []string) map[string]string {
 		return nil
 	}
 	params := acquireParams()
-	for i, rseg := range rt.segments {
-		if rt.paramIndex[i] {
-			params[rseg[1:]] = segs[i]
-		}
+	for i, pos := range rt.paramPos {
+		params[rt.paramNames[i]] = segs[pos]
 	}
 	if rt.hasWildcard {
 		params[rt.wildcardName] = pathTail(path, segs, len(rt.segments))
 	}
 	return params
+}
+
+// bindParamsInto writes the winning route's parameters directly into out when
+// they fit within maxInlineParams, avoiding paramsPool and map hashing on the
+// hot request path. Routes with more than maxInlineParams fall back to
+// bindParams.
+func bindParamsInto(rt *route, path string, segs []string, out *[maxInlineParams]paramEntry) (int, map[string]string) {
+	total := rt.paramCount
+	if rt.hasWildcard {
+		total++
+	}
+	if total == 0 {
+		return 0, nil
+	}
+	if total > maxInlineParams {
+		return 0, bindParams(rt, path, segs)
+	}
+	k := 0
+	for i, pos := range rt.paramPos {
+		out[k] = paramEntry{key: rt.paramNames[i], val: segs[pos]}
+		k++
+	}
+	if rt.hasWildcard {
+		out[k] = paramEntry{key: rt.wildcardName, val: pathTail(path, segs, len(rt.segments))}
+		k++
+	}
+	return k, nil
 }
 
 // pathTail returns strings.Join(segs[k:], "/") without building a new string:

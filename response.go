@@ -75,7 +75,7 @@ func statusLine(code int) []byte {
 // wireBufMaxKeep caps the capacity a buffer may have and still be worth
 // pooling. A response that served a large file would otherwise pin megabytes
 // in the pool for the lifetime of the process.
-const wireBufMaxKeep = 64 << 10
+const wireBufMaxKeep = 128 << 10
 
 // wireBufPool holds scratch buffers for serializing a response inline on the
 // event loop.

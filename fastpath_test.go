@@ -600,11 +600,25 @@ func TestQueryMapConcurrentAccessAfterContextReuse(t *testing.T) {
 		s := strconv.Itoa(i)
 		switch i % 4 {
 		case 0:
-			batch.WriteString("GET /c?id=" + s + "&k=val" + s + "&empty= HTTP/1.1\r\nHost: test\r\n\r\n")
+			batch.WriteString("GET /c?id=")
+			batch.WriteString(s)
+			batch.WriteString("&k=val")
+			batch.WriteString(s)
+			batch.WriteString("&empty= HTTP/1.1\r\nHost: test\r\n\r\n")
 		case 1:
-			batch.WriteString("GET /c?id=" + s + "&tag=a" + s + "&tag=b" + s + "&flag HTTP/1.1\r\nHost: test\r\n\r\n")
+			batch.WriteString("GET /c?id=")
+			batch.WriteString(s)
+			batch.WriteString("&tag=a")
+			batch.WriteString(s)
+			batch.WriteString("&tag=b")
+			batch.WriteString(s)
+			batch.WriteString("&flag HTTP/1.1\r\nHost: test\r\n\r\n")
 		case 2:
-			batch.WriteString("GET /c?id=" + s + "&q=hello+" + s + "%20world HTTP/1.1\r\nHost: test\r\n\r\n")
+			batch.WriteString("GET /c?id=")
+			batch.WriteString(s)
+			batch.WriteString("&q=hello+")
+			batch.WriteString(s)
+			batch.WriteString("%20world HTTP/1.1\r\nHost: test\r\n\r\n")
 		case 3:
 			batch.WriteString("GET /c HTTP/1.1\r\nHost: test\r\n\r\n")
 		}

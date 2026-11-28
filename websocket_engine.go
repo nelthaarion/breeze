@@ -25,6 +25,13 @@ type wsConnState struct {
 	// maxPayload is per-connection so different routes can set different limits.
 	maxPayload int
 
+	// rxBuf carries the tail of a frame that arrived split across reads. It
+	// lives here, on the connection, rather than in a sync.Map keyed by fd: that
+	// map cost a boxed key, a hash lookup and an interface store per WebSocket
+	// message, on the event-loop goroutine, for state only that goroutine
+	// touches. See handleWSTraffic.
+	rxBuf []byte
+
 	// dispatch delivers to the handler in arrival order. See wsDispatchQueue.
 	dispatch *wsDispatchQueue
 }
@@ -452,12 +459,16 @@ func (s *Breeze) handleWSTraffic(c gnetplus.Conn, state *wsConnState) gnetplus.A
 		return gnetplus.None
 	}
 
-	// Accumulate in per-connection reassembly buffer (same pattern as HTTP bufs).
-	var existing []byte
-	if v, ok := s.wsRxBufs.Load(fd); ok {
-		existing = v.([]byte)
+	// Parse straight out of gnet's read buffer when no fragment is left over
+	// from the previous event: a frame that arrives whole — the common case — is
+	// then not copied at all. Only a split frame is carried in state.rxBuf, and
+	// only its undecoded tail is copied, at the end of this function.
+	carried := len(state.rxBuf) > 0
+	buf := raw
+	if carried {
+		state.rxBuf = append(state.rxBuf, raw...)
+		buf = state.rxBuf
 	}
-	buf := append(existing, raw...)
 
 	for len(buf) > 0 {
 		frame, consumed := parseWSFrameWithMask(buf, state.maxPayload, true)
@@ -520,16 +531,23 @@ func (s *Breeze) handleWSTraffic(c gnetplus.Conn, state *wsConnState) gnetplus.A
 		}
 	}
 
-	// Persist leftover bytes.
-	if len(buf) == 0 {
-		s.wsRxBufs.Delete(fd)
-	} else {
+	// Keep the undecoded tail for the next event.
+	switch {
+	case len(buf) == 0:
+		state.rxBuf = nil
+	case carried:
+		// buf is a suffix of state.rxBuf: reslice, and compact if the unused
+		// prefix has grown large.
 		if cap(buf)-len(buf) > compactThreshold {
 			compact := make([]byte, len(buf))
 			copy(compact, buf)
 			buf = compact
 		}
-		s.wsRxBufs.Store(fd, buf)
+		state.rxBuf = buf
+	default:
+		// buf still aliases gnet's read buffer, which is reused as soon as this
+		// call returns, so the tail has to be copied out.
+		state.rxBuf = append(state.rxBuf[:0], buf...)
 	}
 
 	return gnetplus.None
@@ -620,8 +638,6 @@ func (s *Breeze) cleanupWS(fd int, wc *WSConn, state *wsConnState, code uint16, 
 	if _, loaded := s.wsConns.LoadAndDelete(fd); loaded {
 		s.wsCount.Add(-1)
 	}
-	s.wsRxBufs.Delete(fd)
-
 	// push seals the queue, so this is idempotent for the same reason
 	// LoadAndDelete is: both paths into cleanupWS may run for one connection.
 	state.dispatch.push(wsEvent{isClose: true, code: code, reason: reason})
@@ -666,7 +682,6 @@ type wsHubFields struct {
 	wsHub      *WSHub
 	wsHandlers map[string]WSHandler
 	wsConns    sync.Map // fd(int) → *wsConnState
-	wsRxBufs   sync.Map // fd(int) → []byte  reassembly buffer
 
 	// wsCount is the number of entries in wsConns, maintained alongside it so
 	// OnTraffic can skip the map on a server that has no WebSocket

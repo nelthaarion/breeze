@@ -35,6 +35,14 @@ type connState struct {
 	// the coarse clock tick or cleared state has not changed.
 	lastReadShadow     int64
 	partialSinceShadow int64
+
+	// dispatch is the state of the request currently handed to the worker pool,
+	// and wire the buffer its response is serialized into. Both belong to the
+	// connection because only one request per connection can be in flight (busy,
+	// above), so reusing them costs nothing and saves the per-request closures
+	// and response slice the dispatch path used to allocate. See dispatchState.
+	dispatch dispatchState
+	wire     []byte
 }
 
 func newConnState() *connState {

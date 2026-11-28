@@ -714,93 +714,151 @@ func (s *Breeze) runInline(c gnetplus.Conn, ctx *Context, mode uint8) {
 // dispatch hands ctx's chain to the worker pool (or a bare goroutine when no
 // pool is configured) and answers with AsyncWrite, which is the only safe way
 // to write to a connection from off its event loop.
+// dispatchState carries everything a worker needs to answer one request and hand
+// the connection back. It lives on connState, so a blocking request reuses the
+// connection's instance instead of allocating the three closures this path used
+// to build per request (the pool task, the finish closure and the AsyncCallback).
+//
+// Only one request per connection can be in flight — st.busy is what enforces
+// that — so the instance is never shared between two requests. The one place
+// where a new request can start while the previous worker is still winding down
+// is the callback below: done clears busy, and the event loop may dispatch again
+// at once. Run and done therefore copy the fields they still need into locals
+// before clearing the flag; see the comments on each.
+type dispatchState struct {
+	s        *Breeze
+	c        gnetplus.Conn
+	ctx      *Context
+	st       *connState
+	mode     uint8
+	answered bool
+}
+
+// Run is the pool task: execute the chain on a worker and answer the request.
+func (d *dispatchState) Run() {
+	// Locals, not d fields: the event loop may reuse d for the next request as
+	// soon as done clears busy, which can happen while this goroutine is still in
+	// its deferred cleanup.
+	ctx, s := d.ctx, d.s
+	defer s.inflight.Add(-1)
+	// Release defer is registered FIRST so it runs LAST (after the recover
+	// defer). This ensures the response is fully written before the Context is
+	// returned to the pool.
+	defer releaseContext(ctx)
+
+	// Recover from panics in handlers so a buggy handler does not crash the
+	// worker goroutine.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[Breeze][PANIC] %v\n%s\n", r, debug.Stack())
+			d.finish(resp500, false)
+		}
+	}()
+	if err := ctx.Next(); err != nil {
+		// Same contract as runInline: the error resolves to a response before
+		// the write below, so it cannot be lost on the worker path either.
+		s.handleChainError(ctx, err)
+	}
+	if ctx.Res != nil {
+		// Serialized into the connection's own buffer rather than a fresh slice:
+		// gnet's AsyncWrite has finished with the bytes by the time it calls the
+		// completion callback, and the connection cannot start another request
+		// before that callback clears busy — so the buffer's lifetime is exactly
+		// the request's, and the per-response allocation Bytes() used to make is
+		// gone. withConnectionHeader still copies when the request asked to
+		// close, exactly as before; a keep-alive response reuses the buffer.
+		wire := ctx.Res.AppendTo(d.st.wire[:0])
+		d.st.wire = wire
+		d.finish(wire, false)
+	} else {
+		d.finish(nil, false)
+	}
+}
+
+// finish answers the request exactly once, whichever way Run ends.
+//
+// fromLoop reports whether the caller is the connection's event-loop goroutine.
+// The AsyncCallback of the AsyncWrite below always is: gnet runs it from the
+// poller, on the loop that owns the connection. That is what makes it safe for
+// done to read st.buf.
+func (d *dispatchState) finish(wire []byte, fromLoop bool) {
+	if d.answered {
+		return
+	}
+	d.answered = true
+	mode, st := d.mode, d.st
+	wire = withConnectionHeader(wire, mode)
+	if wire == nil {
+		d.done(d.c, fromLoop)
+		return
+	}
+	if err := d.c.AsyncWrite(wire, func(gc gnetplus.Conn, _ error) error {
+		return d.done(gc, true)
+	}); err != nil {
+		st.busy.Store(false)
+	}
+}
+
+// done releases the connection for its next request.
+func (d *dispatchState) done(gc gnetplus.Conn, fromLoop bool) error {
+	// Copied before busy is cleared: from that moment the event loop may hand
+	// this connection — and therefore this dispatchState — to a new request.
+	mode, s, st := d.mode, d.s, d.st
+	st.busy.Store(false)
+	if mode == connModeClose {
+		_ = gc.Close()
+		return nil
+	}
+	// A connection that is holding no bytes behind this request does not need
+	// the wake: nothing is waiting to be parsed, and its next request arrives as
+	// a read event, which starts OnTraffic anyway. Skipping it saves a task, a
+	// queue node and a poller pass per response.
+	if fromLoop && len(st.buf) == 0 {
+		return nil
+	}
+	// Continue with whatever was pipelined behind this request. An upgraded
+	// WebSocket connection is no longer an HTTP stream.
+	if s.wsCount.Load() == 0 {
+		_ = gc.Wake(nil)
+	} else if _, isWS := s.isWSConn(gc.Fd()); !isWS {
+		_ = gc.Wake(nil)
+	}
+	return nil
+}
+
+// dispatch hands ctx's chain to the worker pool (or a bare goroutine when no
+// pool is configured) and answers with AsyncWrite, which is the only safe way
+// to write to a connection from off its event loop.
 func (s *Breeze) dispatch(c gnetplus.Conn, ctx *Context, st *connState, mode uint8) {
-	// Counted here, on the event-loop goroutine, rather than inside exec: a
-	// task that has been submitted but not yet picked up by a worker is still
-	// a request the server accepted and owes an answer, and a Stop that ran
+	// Counted here, on the event-loop goroutine, rather than inside Run: a task
+	// that has been submitted but not yet picked up by a worker is still a
+	// request the server accepted and owes an answer, and a Stop that ran
 	// between the Submit and the worker's first instruction would otherwise
-	// consider it finished. Decremented by exec's own defer, on every path
-	// including a panic. See shutdownFields.inflight for why the inline path
-	// is not counted.
+	// consider it finished. Decremented by Run's own defer, on every path
+	// including a panic. See shutdownFields.inflight for why the inline path is
+	// not counted.
 	s.inflight.Add(1)
 
-	exec := func() {
-		defer s.inflight.Add(-1)
-		// Release defer is registered FIRST so it runs LAST (after the
-		// recover defer). This ensures the response is fully written before
-		// the Context is returned to the pool.
-		defer releaseContext(ctx)
-
-		// finish answers the request and releases the connection for the next
-		// one. Exactly one call per request, whichever way exec ends.
-		answered := false
-		finish := func(wire []byte) {
-			if answered {
-				return
-			}
-			answered = true
-			wire = withConnectionHeader(wire, mode)
-			done := func(gc gnetplus.Conn, _ error) error {
-				st.busy.Store(false)
-				if mode == connModeClose {
-					_ = gc.Close()
-					return nil
-				}
-				// Continue with whatever was pipelined behind this request. An
-				// upgraded WebSocket connection is no longer an HTTP stream.
-				if s.wsCount.Load() == 0 {
-					_ = gc.Wake(nil)
-				} else if _, isWS := s.isWSConn(gc.Fd()); !isWS {
-					_ = gc.Wake(nil)
-				}
-				return nil
-			}
-			if wire == nil {
-				done(c, nil)
-				return
-			}
-			if err := c.AsyncWrite(wire, done); err != nil {
-				st.busy.Store(false)
-			}
-		}
-
-		// Recover from panics in handlers so a buggy handler does not crash
-		// the worker goroutine.
-		defer func() {
-			if r := recover(); r != nil {
-				fmt.Printf("[Breeze][PANIC] %v\n%s\n", r, debug.Stack())
-				finish(resp500)
-			}
-		}()
-		if err := ctx.Next(); err != nil {
-			// Same contract as runInline: the error resolves to a response before
-			// the write below, so it cannot be lost on the worker path either.
-			s.handleChainError(ctx, err)
-		}
-		if ctx.Res != nil {
-			// Bytes allocates: AsyncWrite returns before the write happens
-			// and keeps the slice until the poller drains it, so this one
-			// must not come from wireBufPool.
-			finish(ctx.Res.Bytes())
-		} else {
-			finish(nil)
-		}
-	}
+	// The connection's own dispatch state: no closure, no per-request object.
+	// Reset for this request before the task is handed over.
+	d := &st.dispatch
+	d.s, d.c, d.ctx, d.st, d.mode, d.answered = s, c, ctx, st, mode, false
 
 	if s.Pool != nil {
-		// SubmitErr rather than Submit, because a task the pool refuses is a
-		// task that never runs, and exec's defer is the only thing that would
-		// have decremented the counter Stop waits on. Rejection happens when
-		// the pool has been shut down (Submit is a documented no-op then) or
-		// when an OverflowReject pool is full; in both cases the request is
-		// dropped exactly as it was before, but the shutdown bookkeeping and
-		// the pooled Context are put back rather than leaked.
-		if err := s.Pool.SubmitErr(exec); err != nil {
+		// SubmitTask, not Submit: the task is a pointer the connection already
+		// owns, so nothing is allocated for it. A task the pool refuses never
+		// runs, and Run's defer is the only thing that would have decremented the
+		// counter Stop waits on. Rejection happens when the pool has been shut
+		// down (Submit is a documented no-op then) or when an OverflowReject pool
+		// is full; in both cases the request is dropped exactly as it was before,
+		// but the shutdown bookkeeping and the pooled Context are put back rather
+		// than leaked.
+		if err := s.Pool.SubmitTask(d); err != nil {
 			s.inflight.Add(-1)
 			releaseContext(ctx)
 			// Answer instead of dropping. A silently discarded request leaves the
-			// client waiting on a response that will never come, and the busy
-			// flag set would stall every later request on the connection.
+			// client waiting on a response that will never come, and the busy flag
+			// set would stall every later request on the connection.
 			st.busy.Store(false)
 			_, _ = c.Write(withConnectionHeader(resp503, mode))
 			if mode == connModeClose {
@@ -808,7 +866,7 @@ func (s *Breeze) dispatch(c gnetplus.Conn, ctx *Context, st *connState, mode uin
 			}
 		}
 	} else {
-		go exec()
+		go d.Run()
 	}
 	// Without gnet's pre-block yield (see PollYield) nothing would otherwise let
 	// the worker that was just made runnable have this P before the loop sleeps in

@@ -97,10 +97,22 @@ type WorkerPoolConfig struct {
 	Overflow  OverflowPolicy
 }
 
-// poolTask is the value type enqueued on the tasks channel.
-// One word (8 B on 64-bit) — the func() pointer.
+// PoolTask is a task handed to the pool as an object rather than a closure.
+//
+// Submit takes a func() value, and a func() value that captures anything is a
+// heap allocation on every call. A caller that dispatches one task per request
+// from an object it already owns — a per-connection dispatch state, say — can
+// implement PoolTask on that object and pay nothing per submission.
+type PoolTask interface {
+	Run()
+}
+
+// poolTask is the value type enqueued on the tasks channel: one of fn or run,
+// never both. The struct is copied into the channel, so Submit itself allocates
+// nothing; the closure it is handed does.
 type poolTask struct {
-	fn func()
+	fn  func()
+	run PoolTask
 }
 
 // cacheLine is the coherency granule the CPU actually invalidates. 64 bytes on
@@ -252,7 +264,7 @@ func NewWorkerPool(concurrency int) *WorkerPool {
 // channel is closed and drained.
 func (p *WorkerPool) worker() {
 	for task := range p.tasks {
-		p.runTask(task.fn)
+		p.runTask(task)
 	}
 }
 
@@ -261,7 +273,7 @@ func (p *WorkerPool) worker() {
 // The WaitGroup Done is deferred FIRST so it always runs, even if the
 // recover re-panics. Shared between the worker loop (queued tasks) and
 // the spawn path (OverflowSpawn fallback).
-func (p *WorkerPool) runTask(fn func()) {
+func (p *WorkerPool) runTask(task poolTask) {
 	defer p.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
@@ -269,7 +281,13 @@ func (p *WorkerPool) runTask(fn func()) {
 			fmt.Printf("[Breeze][WorkerPool][PANIC] %v\n%s\n", r, debug.Stack())
 		}
 	}()
-	fn()
+	if task.fn != nil {
+		task.fn()
+		return
+	}
+	if task.run != nil {
+		task.run.Run()
+	}
 }
 
 // Submit enqueues a task for execution by a worker goroutine.
@@ -285,7 +303,7 @@ func (p *WorkerPool) runTask(fn func()) {
 // Submit does NOT return an error. Callers that need to detect rejected
 // tasks should use SubmitErr.
 func (p *WorkerPool) Submit(f func()) {
-	_ = p.submit(f)
+	_ = p.submit(poolTask{fn: f})
 }
 
 // SubmitErr enqueues a task and returns an error if the task was rejected
@@ -295,7 +313,13 @@ func (p *WorkerPool) Submit(f func()) {
 // Returns ErrPoolClosed if the pool is shut down.
 // Returns ErrQueueFull if the queue is full and Overflow == OverflowReject.
 func (p *WorkerPool) SubmitErr(f func()) error {
-	return p.submit(f)
+	return p.submit(poolTask{fn: f})
+}
+
+// SubmitTask is SubmitErr for a task object; see PoolTask. It allocates nothing
+// per submission when the PoolTask is a pointer the caller already owns.
+func (p *WorkerPool) SubmitTask(t PoolTask) error {
+	return p.submit(poolTask{run: t})
 }
 
 // submit is the shared implementation for Submit and SubmitErr.
@@ -305,7 +329,7 @@ func (p *WorkerPool) SubmitErr(f func()) error {
 // the TOCTOU race that existed in the pre-audit version (where closed was
 // an atomic.Bool checked before the send, leaving a window between the
 // check and the send).
-func (p *WorkerPool) submit(f func()) error {
+func (p *WorkerPool) submit(task poolTask) error {
 	p.submitted.Add(1)
 
 	// Fast path: if done is already closed, reject immediately without
@@ -321,8 +345,6 @@ func (p *WorkerPool) submit(f func()) error {
 	// between the done-check above and the send below, the select's
 	// <-p.done case will fire and we decrement the Add before returning.
 	p.wg.Add(1)
-
-	task := poolTask{fn: f}
 
 	switch p.overflow {
 	case OverflowBlock:
@@ -350,7 +372,7 @@ func (p *WorkerPool) submit(f func()) error {
 			p.queued.Add(1)
 		default:
 			p.spawned.Add(1)
-			go p.runTask(f)
+			go p.runTask(task)
 		}
 
 	default:
